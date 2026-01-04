@@ -1,0 +1,84 @@
+"use client";
+
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { db } from "@/lib/firebase/config";
+import {
+  OperationsContext,
+  isTestDataActive,
+  activateTestData,
+  deactivateTestData,
+} from "@/lib/operations";
+
+const MOCK_USER_ID = "dev-user-123"; // Mock user for development
+
+export function useTestSource() {
+  const [isActive, setIsActive] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  // Create operations context
+  const ctx: OperationsContext = useMemo(
+    () => ({
+      db,
+      userId: MOCK_USER_ID,
+    }),
+    []
+  );
+
+  // Check if test source exists on mount
+  useEffect(() => {
+    const checkTestSource = async () => {
+      try {
+        const active = await isTestDataActive(ctx);
+        setIsActive(active);
+      } catch (err) {
+        console.error("Error checking test source:", err);
+        setError(err as Error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    checkTestSource();
+  }, [ctx]);
+
+  const activate = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      await activateTestData(ctx);
+      setIsActive(true);
+    } catch (err) {
+      console.error("Error activating test source:", err);
+      setError(err as Error);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ctx]);
+
+  const deactivate = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      await deactivateTestData(ctx);
+      setIsActive(false);
+    } catch (err) {
+      console.error("Error deactivating test source:", err);
+      setError(err as Error);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ctx]);
+
+  return {
+    isActive,
+    isLoading,
+    error,
+    activate,
+    deactivate,
+  };
+}
