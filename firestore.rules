@@ -3,8 +3,102 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // Development mode - allow all for now
     // TODO: Add proper auth rules before production
+    // The rules below show the intended structure for production
+
     match /{document=**} {
       allow read, write: if true;
     }
+
+    // ============================================
+    // PRODUCTION RULES (currently disabled)
+    // Uncomment and remove the above rule for production
+    // ============================================
+
+    // // Helper function to check if user is authenticated
+    // function isAuthenticated() {
+    //   return request.auth != null;
+    // }
+
+    // // Helper function to check if user owns the document
+    // function isOwner(userId) {
+    //   return isAuthenticated() && request.auth.uid == userId;
+    // }
+
+    // // Helper function to check if user is admin
+    // function isAdmin() {
+    //   return isAuthenticated() && request.auth.token.admin == true;
+    // }
+
+    // // User partners - owned by user
+    // match /partners/{partnerId} {
+    //   allow read: if isAuthenticated() &&
+    //     resource.data.userId == request.auth.uid;
+    //   allow create: if isAuthenticated() &&
+    //     request.resource.data.userId == request.auth.uid;
+    //   allow update, delete: if isAuthenticated() &&
+    //     resource.data.userId == request.auth.uid;
+    // }
+
+    // // Global partners - read by all authenticated, write by admin only
+    // match /globalPartners/{partnerId} {
+    //   allow read: if isAuthenticated();
+    //   allow write: if isAdmin();
+    // }
+
+    // // Promotion candidates - admin only
+    // match /promotionCandidates/{candidateId} {
+    //   allow read, write: if isAdmin();
+    // }
+
+    // // Transactions - owned by user
+    // match /transactions/{transactionId} {
+    //   allow read: if isAuthenticated() &&
+    //     resource.data.userId == request.auth.uid;
+    //   allow create: if isAuthenticated() &&
+    //     request.resource.data.userId == request.auth.uid;
+    //   allow update: if isAuthenticated() &&
+    //     resource.data.userId == request.auth.uid;
+    //   // Delete not allowed - maintain transaction history
+    // }
+
+    // // Sources - owned by user
+    // match /sources/{sourceId} {
+    //   allow read: if isAuthenticated() &&
+    //     resource.data.userId == request.auth.uid;
+    //   allow create: if isAuthenticated() &&
+    //     request.resource.data.userId == request.auth.uid;
+    //   allow update, delete: if isAuthenticated() &&
+    //     resource.data.userId == request.auth.uid;
+    // }
+
+    // // Imports - owned by user
+    // match /imports/{importId} {
+    //   allow read: if isAuthenticated() &&
+    //     resource.data.userId == request.auth.uid;
+    //   allow create: if isAuthenticated() &&
+    //     request.resource.data.userId == request.auth.uid;
+    //   allow delete: if isAuthenticated() &&
+    //     resource.data.userId == request.auth.uid;
+    // }
+
+    // // Receipts - owned by user
+    // match /receipts/{receiptId} {
+    //   allow read: if isAuthenticated() &&
+    //     resource.data.userId == request.auth.uid;
+    //   allow create: if isAuthenticated() &&
+    //     request.resource.data.userId == request.auth.uid;
+    //   allow update, delete: if isAuthenticated() &&
+    //     resource.data.userId == request.auth.uid;
+    // }
+
+    // // Categories - system defaults readable by all, user custom owned by user
+    // match /categories/{categoryId} {
+    //   allow read: if isAuthenticated() &&
+    //     (resource.data.userId == null || resource.data.userId == request.auth.uid);
+    //   allow create: if isAuthenticated() &&
+    //     request.resource.data.userId == request.auth.uid;
+    //   allow update, delete: if isAuthenticated() &&
+    //     resource.data.userId == request.auth.uid;
+    // }
   }
 }

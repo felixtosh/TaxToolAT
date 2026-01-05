@@ -2,24 +2,28 @@
 
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { FileSpreadsheet, Github, Receipt, Building2 } from "lucide-react";
+import { FileSpreadsheet, Receipt, Building2, Users, Settings } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { ChatProvider, ChatSidebar, useChat } from "@/components/chat";
 
 const navItems = [
   { href: "/transactions", label: "Transactions", icon: Receipt },
   { href: "/sources", label: "Accounts", icon: Building2 },
+  { href: "/partners", label: "Partners", icon: Users },
 ];
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+function DashboardContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { isSidebarOpen } = useChat();
 
   return (
-    <div className="min-h-screen bg-background">
+    <div
+      className={cn(
+        "h-screen bg-background transition-all duration-300 ease-in-out overflow-hidden",
+        isSidebarOpen ? "md:ml-80" : "ml-0"
+      )}
+    >
       {/* Header */}
       <header className="border-b bg-card sticky top-0 z-50">
         <div className="container mx-auto px-4 h-14 flex items-center justify-between">
@@ -54,20 +58,29 @@ export default function DashboardLayout({
               Dev Mode
             </span>
             <Button variant="ghost" size="icon" asChild>
-              <a
-                href="https://github.com/felixtosh/TaxToolAT"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Github className="h-4 w-4" />
-              </a>
+              <Link href="/admin/partners">
+                <Settings className="h-4 w-4" />
+              </Link>
             </Button>
           </div>
         </div>
       </header>
 
       {/* Main content */}
-      <main className="container mx-auto px-4 py-6">{children}</main>
+      <main className="h-[calc(100vh-3.5rem)] overflow-hidden">{children}</main>
     </div>
+  );
+}
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <ChatProvider>
+      <ChatSidebar />
+      <DashboardContent>{children}</DashboardContent>
+    </ChatProvider>
   );
 }

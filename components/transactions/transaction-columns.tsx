@@ -6,7 +6,6 @@ import {
   Paperclip,
   CheckCircle2,
   ArrowUpDown,
-  MoreHorizontal,
   Building2,
 } from "lucide-react";
 import { Transaction } from "@/types/transaction";
@@ -14,15 +13,8 @@ import { TransactionSource } from "@/types/source";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -55,36 +47,6 @@ export function getTransactionColumns(
       },
     },
     {
-      accessorKey: "sourceId",
-      header: "Account",
-      cell: ({ row }) => {
-        const sourceId = row.getValue("sourceId") as string | undefined;
-        if (!sourceId) {
-          return <span className="text-muted-foreground">—</span>;
-        }
-        const source = sourceMap.get(sourceId);
-        if (!source) {
-          return <span className="text-muted-foreground text-xs">{sourceId.slice(0, 8)}...</span>;
-        }
-        return (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex items-center gap-1.5 max-w-[120px]">
-                  <Building2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                  <span className="text-sm truncate">{source.name}</span>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="font-medium">{source.name}</p>
-                <p className="text-xs text-muted-foreground font-mono">{source.iban}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        );
-      },
-    },
-    {
       accessorKey: "name",
       header: "Description",
       cell: ({ row }) => (
@@ -96,13 +58,6 @@ export function getTransactionColumns(
             </p>
           )}
         </div>
-      ),
-    },
-    {
-      accessorKey: "partner",
-      header: "Partner/Vendor",
-      cell: ({ row }) => (
-        <span className="text-sm">{row.getValue("partner") || "-"}</span>
       ),
     },
     {
@@ -136,6 +91,13 @@ export function getTransactionColumns(
           </span>
         );
       },
+    },
+    {
+      accessorKey: "partner",
+      header: "Partner/Vendor",
+      cell: ({ row }) => (
+        <span className="text-sm">{row.getValue("partner") || "-"}</span>
+      ),
     },
     {
       accessorKey: "categoryId",
@@ -172,24 +134,32 @@ export function getTransactionColumns(
       },
     },
     {
-      id: "actions",
-      cell: ({ row }) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              className="h-8 w-8 p-0"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem>Edit</DropdownMenuItem>
-            <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ),
+      accessorKey: "sourceId",
+      header: "Account",
+      cell: ({ row }) => {
+        const sourceId = row.getValue("sourceId") as string | undefined;
+        if (!sourceId) {
+          return <span className="text-muted-foreground">—</span>;
+        }
+        const source = sourceMap.get(sourceId);
+        if (!source) {
+          return <span className="text-muted-foreground text-xs">{sourceId.slice(0, 8)}...</span>;
+        }
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-1.5 max-w-[120px]">
+                <Building2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                <span className="text-sm truncate">{source.name}</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">{source.name}</p>
+              <p className="text-xs text-muted-foreground font-mono">{source.iban}</p>
+            </TooltipContent>
+          </Tooltip>
+        );
+      },
     },
   ];
 }

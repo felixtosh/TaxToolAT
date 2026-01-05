@@ -25,7 +25,7 @@ export default function SourcesPage() {
   };
 
   return (
-    <div>
+    <div className="container mx-auto px-4 py-6">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold">Bank Accounts</h1>

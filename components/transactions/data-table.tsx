@@ -60,13 +60,13 @@ export function DataTable<TData extends { id: string }, TValue>({
   };
 
   return (
-    <div className="rounded-lg border bg-card">
+    <div className="flex flex-col h-full overflow-hidden">
       <Table>
-        <TableHeader>
+        <TableHeader className="sticky top-0 z-10 bg-card">
           {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id} className="hover:bg-transparent">
+            <TableRow key={headerGroup.id} className="hover:bg-transparent border-b">
               {headerGroup.headers.map((header) => (
-                <TableHead key={header.id} className="h-11">
+                <TableHead key={header.id} className="h-10 bg-muted/50 first:pl-4 last:pr-4">
                   {header.isPlaceholder
                     ? null
                     : flexRender(
@@ -90,6 +90,7 @@ export function DataTable<TData extends { id: string }, TValue>({
               return (
                 <TableRow
                   key={row.id}
+                  data-transaction-id={original.id}
                   data-state={
                     selectedRowId === original.id ? "selected" : undefined
                   }
@@ -98,11 +99,11 @@ export function DataTable<TData extends { id: string }, TValue>({
                     "cursor-pointer transition-colors",
                     isComplete &&
                       "bg-green-50/70 hover:bg-green-100/70 dark:bg-green-950/20 dark:hover:bg-green-950/30",
-                    selectedRowId === original.id && "bg-muted"
+                    selectedRowId === original.id && "bg-primary/10"
                   )}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} className="py-3">
+                    <TableCell key={cell.id} className="py-2.5 first:pl-4 last:pr-4">
                       {flexRender(
                         cell.column.columnDef.cell,
                         cell.getContext()

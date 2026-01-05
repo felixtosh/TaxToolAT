@@ -1,0 +1,161 @@
+"use client";
+
+import { useRef, useEffect } from "react";
+import { MessageSquare, X, Plus, Send, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
+import { useChat } from "./chat-provider";
+import { MessageBubble } from "./message-bubble";
+import { ConfirmationCard } from "./confirmation-card";
+
+export function ChatSidebar() {
+  const {
+    messages,
+    isLoading,
+    pendingConfirmations,
+    sendMessage,
+    startNewSession,
+    isSidebarOpen,
+    toggleSidebar,
+  } = useChat();
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, pendingConfirmations]);
+
+  // Handle form submission
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const input = inputRef.current;
+    if (!input || !input.value.trim() || isLoading) return;
+
+    const message = input.value.trim();
+    input.value = "";
+    await sendMessage(message);
+  };
+
+  return (
+    <>
+      {/* Toggle button when sidebar is closed */}
+      {!isSidebarOpen && (
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={toggleSidebar}
+          className="fixed left-4 bottom-4 z-50 h-12 w-12 rounded-full shadow-lg"
+          title="Open AI Chat"
+        >
+          <MessageSquare className="h-5 w-5" />
+        </Button>
+      )}
+
+      {/* Sidebar */}
+      <div
+        className={cn(
+          "fixed left-0 top-0 z-40 h-full w-80 transform border-r bg-background transition-transform duration-300 ease-in-out",
+          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+        )}
+      >
+        <div className="flex h-full flex-col">
+          {/* Header */}
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5" />
+              <span className="font-semibold">AI Assistant</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={startNewSession}
+                title="New Chat"
+                className="h-8 w-8"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleSidebar}
+                title="Close"
+                className="h-8 w-8"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Messages */}
+          <ScrollArea className="flex-1 p-4" ref={scrollRef}>
+            <div className="space-y-4">
+              {messages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
+                  <MessageSquare className="mb-4 h-12 w-12 opacity-20" />
+                  <p className="text-sm">Start a conversation with your AI tax assistant.</p>
+                  <p className="mt-2 text-xs">
+                    Try: "Show me my recent transactions" or "Categorize all Amazon purchases"
+                  </p>
+                </div>
+              ) : (
+                messages.map((message) => (
+                  <MessageBubble key={message.id} message={message} />
+                ))
+              )}
+
+              {/* Pending confirmations */}
+              {pendingConfirmations
+                .filter((tc) => tc.status === "pending")
+                .map((toolCall) => (
+                  <ConfirmationCard key={toolCall.id} toolCall={toolCall} />
+                ))}
+
+              {/* Loading indicator */}
+              {isLoading && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="text-sm">Thinking...</span>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+
+          {/* Input */}
+          <div className="border-t p-4">
+            <form ref={formRef} onSubmit={handleSubmit} className="flex gap-2">
+              <Input
+                ref={inputRef}
+                placeholder="Ask about your transactions..."
+                disabled={isLoading}
+                className="flex-1"
+              />
+              <Button type="submit" size="icon" disabled={isLoading}>
+                {isLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {/* Overlay for mobile */}
+      {isSidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/20 md:hidden"
+          onClick={toggleSidebar}
+        />
+      )}
+    </>
+  );
+}

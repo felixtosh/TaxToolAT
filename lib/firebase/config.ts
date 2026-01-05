@@ -3,6 +3,7 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { getStorage, connectStorageEmulator } from "firebase/storage";
+import { getFunctions, connectFunctionsEmulator } from "firebase/functions";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDhxXMbHgaD1z9n0bkuVaSRmmiCrbNL-l4",
@@ -18,6 +19,7 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export const functions = getFunctions(app, "europe-west1");
 
 // Connect to emulators in development
 let emulatorsConnected = false;
@@ -30,6 +32,7 @@ export function connectEmulators() {
   try {
     connectFirestoreEmulator(db, "localhost", 8080);
     connectStorageEmulator(storage, "localhost", 9199);
+    connectFunctionsEmulator(functions, "localhost", 5001);
     emulatorsConnected = true;
     console.log("Connected to Firebase emulators");
   } catch (e) {

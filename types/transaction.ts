@@ -74,6 +74,28 @@ export interface Transaction {
   /** Owner of this transaction */
   userId: string;
 
+  // === Partner Matching ===
+
+  /** Linked partner ID (if matched) */
+  partnerId?: string;
+
+  /** Whether linked partner is global or user-specific */
+  partnerType?: "global" | "user";
+
+  /** Match confidence (0-100) */
+  partnerMatchConfidence?: number;
+
+  /** How the partner was matched: auto (≥95%), manual, or suggestion click */
+  partnerMatchedBy?: "auto" | "manual" | "suggestion";
+
+  /** Top 3 partner suggestions (stored for UI display) */
+  partnerSuggestions?: Array<{
+    partnerId: string;
+    partnerType: "global" | "user";
+    confidence: number;
+    source: "iban" | "vatId" | "website" | "name";
+  }>;
+
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -108,6 +130,12 @@ export interface TransactionFilters {
 
   /** Amount type: positive (income), negative (expense), or all */
   amountType?: "income" | "expense" | "all";
+
+  /** Filter by matched partner ID */
+  partnerId?: string;
+
+  /** Filter by partner match status */
+  hasPartner?: boolean;
 }
 
 export type TransactionSortField = "date" | "name" | "amount" | "partner";

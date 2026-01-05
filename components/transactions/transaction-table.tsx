@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransactions } from "@/hooks/use-transactions";
 import { useSources } from "@/hooks/use-sources";
@@ -9,22 +9,100 @@ import { parseFiltersFromUrl, buildFilterUrl } from "@/lib/filters/url-params";
 import { DataTable } from "./data-table";
 import { getTransactionColumns } from "./transaction-columns";
 import { TransactionToolbar } from "./transaction-toolbar";
-import { TransactionDetailSheet } from "@/components/sidebar/transaction-detail-sheet";
 import { Transaction, TransactionFilters } from "@/types/transaction";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
-export function TransactionTable() {
+interface TransactionTableProps {
+  onSelectTransaction: (transaction: Transaction) => void;
+  selectedTransactionId: string | null;
+}
+
+export function TransactionTable({
+  onSelectTransaction,
+  selectedTransactionId,
+}: TransactionTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   const [searchValue, setSearchValue] = useState("");
-  const [selectedTransaction, setSelectedTransaction] =
-    useState<Transaction | null>(null);
-  const [isSheetOpen, setIsSheetOpen] = useState(false);
 
-  const { transactions, loading, error, updateTransaction } =
-    useTransactions();
+  const { transactions, loading, error } = useTransactions();
   const { sources } = useSources();
+
+  // Scroll to and highlight a transaction by ID
+  const scrollToTransactionById = useCallback((transactionId: string) => {
+    const element = document.querySelector(
+      `[data-transaction-id="${transactionId}"]`
+    );
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+      element.classList.add("animate-pulse", "bg-primary/10");
+      setTimeout(() => {
+        element.classList.remove("animate-pulse", "bg-primary/10");
+      }, 2000);
+    }
+  }, []);
+
+  // Find and open a transaction by ID (for chat UI control)
+  const openTransactionById = useCallback(
+    (transactionId: string) => {
+      const transaction = transactions.find((t) => t.id === transactionId);
+      if (transaction) {
+        onSelectTransaction(transaction);
+      }
+    },
+    [transactions, onSelectTransaction]
+  );
+
+  // Listen for chat UI control events
+  useEffect(() => {
+    const handleOpenTransaction = (
+      e: CustomEvent<{ transactionId: string }>
+    ) => {
+      openTransactionById(e.detail.transactionId);
+    };
+
+    const handleScrollToTransaction = (
+      e: CustomEvent<{ transactionId: string }>
+    ) => {
+      scrollToTransactionById(e.detail.transactionId);
+    };
+
+    const handleHighlightTransaction = (
+      e: CustomEvent<{ transactionId: string }>
+    ) => {
+      scrollToTransactionById(e.detail.transactionId);
+    };
+
+    window.addEventListener(
+      "chat:openTransaction",
+      handleOpenTransaction as EventListener
+    );
+    window.addEventListener(
+      "chat:scrollToTransaction",
+      handleScrollToTransaction as EventListener
+    );
+    window.addEventListener(
+      "chat:highlightTransaction",
+      handleHighlightTransaction as EventListener
+    );
+
+    return () => {
+      window.removeEventListener(
+        "chat:openTransaction",
+        handleOpenTransaction as EventListener
+      );
+      window.removeEventListener(
+        "chat:scrollToTransaction",
+        handleScrollToTransaction as EventListener
+      );
+      window.removeEventListener(
+        "chat:highlightTransaction",
+        handleHighlightTransaction as EventListener
+      );
+    };
+  }, [openTransactionById, scrollToTransactionById]);
 
   // Parse filters from URL
   const filters = useMemo(
@@ -49,38 +127,28 @@ export function TransactionTable() {
   const columns = useMemo(() => getTransactionColumns(sources), [sources]);
 
   const handleRowClick = (transaction: Transaction) => {
-    setSelectedTransaction(transaction);
-    setIsSheetOpen(true);
-  };
-
-  const handleSheetClose = () => {
-    setIsSheetOpen(false);
-    setTimeout(() => setSelectedTransaction(null), 300);
-  };
-
-  const handleTransactionUpdate = async (updates: Partial<Transaction>) => {
-    if (!selectedTransaction) return;
-    await updateTransaction(selectedTransaction.id, updates);
+    onSelectTransaction(transaction);
   };
 
   if (loading) {
     return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-between py-4">
-          <Skeleton className="h-10 w-[300px]" />
-          <Skeleton className="h-10 w-[150px]" />
+      <div className="flex flex-col h-full overflow-hidden bg-background">
+        <div className="flex items-center gap-2 px-4 py-2 border-b bg-background">
+          <Skeleton className="h-9 w-[300px]" />
+          <Skeleton className="h-9 w-[100px]" />
         </div>
-        <div className="rounded-lg border bg-card">
-          {[...Array(8)].map((_, i) => (
+        <div className="flex-1">
+          {[...Array(15)].map((_, i) => (
             <div
               key={i}
-              className="flex items-center space-x-4 p-4 border-b last:border-b-0"
+              className="flex items-center space-x-4 px-4 py-3 border-b last:border-b-0"
             >
-              <Skeleton className="h-4 w-[100px]" />
-              <Skeleton className="h-4 w-[200px]" />
-              <Skeleton className="h-4 w-[150px]" />
-              <Skeleton className="h-4 w-[100px]" />
               <Skeleton className="h-4 w-[80px]" />
+              <Skeleton className="h-4 w-[80px]" />
+              <Skeleton className="h-4 w-[200px]" />
+              <Skeleton className="h-4 w-[120px]" />
+              <Skeleton className="h-4 w-[80px]" />
+              <Skeleton className="h-4 w-[60px]" />
               <Skeleton className="h-4 w-[24px]" />
             </div>
           ))}
@@ -99,7 +167,8 @@ export function TransactionTable() {
   }
 
   return (
-    <>
+    <div className="flex flex-col h-full overflow-hidden bg-background">
+      {/* Fixed toolbar */}
       <TransactionToolbar
         searchValue={searchValue}
         onSearchChange={setSearchValue}
@@ -107,24 +176,17 @@ export function TransactionTable() {
         onFiltersChange={handleFiltersChange}
       />
 
-      <DataTable
-        columns={columns}
-        data={filteredTransactions}
-        onRowClick={handleRowClick}
-        selectedRowId={selectedTransaction?.id}
-      />
-
-      <TransactionDetailSheet
-        transaction={selectedTransaction}
-        source={
-          selectedTransaction
-            ? sources.find((s) => s.id === selectedTransaction.sourceId)
-            : undefined
-        }
-        open={isSheetOpen}
-        onClose={handleSheetClose}
-        onUpdate={handleTransactionUpdate}
-      />
-    </>
+      {/* Scrollable table area */}
+      <div className="flex-1 overflow-auto">
+        <TooltipProvider>
+          <DataTable
+            columns={columns}
+            data={filteredTransactions}
+            onRowClick={handleRowClick}
+            selectedRowId={selectedTransactionId}
+          />
+        </TooltipProvider>
+      </div>
+    </div>
   );
 }
