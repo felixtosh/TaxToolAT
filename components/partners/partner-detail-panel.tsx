@@ -2,12 +2,19 @@
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { X, Building2, Globe, CreditCard, FileText, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { X, Building2, Globe, CreditCard, FileText, Pencil, Trash2, ExternalLink, Receipt, Sparkles, ChevronRight } from "lucide-react";
 import { UserPartner, PartnerFormData } from "@/types/partner";
+import { Transaction } from "@/types/transaction";
 import { usePartners } from "@/hooks/use-partners";
 import { formatIban } from "@/lib/import/deduplication";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AddPartnerDialog } from "./add-partner-dialog";
+import { collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
+import { format } from "date-fns";
+import Link from "next/link";
+
+const MOCK_USER_ID = "dev-user-123";
 
 interface PartnerDetailPanelProps {
   partner: UserPartner;
@@ -17,6 +24,37 @@ interface PartnerDetailPanelProps {
 export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps) {
   const { updatePartner, deletePartner } = usePartners();
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [connectedTransactions, setConnectedTransactions] = useState<Transaction[]>([]);
+  const [transactionCount, setTransactionCount] = useState(0);
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(true);
+
+  // Fetch connected transactions
+  useEffect(() => {
+    async function fetchTransactions() {
+      setIsLoadingTransactions(true);
+      try {
+        const q = query(
+          collection(db, "transactions"),
+          where("userId", "==", MOCK_USER_ID),
+          where("partnerId", "==", partner.id),
+          orderBy("date", "desc"),
+          limit(10)
+        );
+        const snapshot = await getDocs(q);
+        const transactions = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as Transaction[];
+        setConnectedTransactions(transactions);
+        setTransactionCount(snapshot.size);
+      } catch (error) {
+        console.error("Failed to fetch transactions:", error);
+      } finally {
+        setIsLoadingTransactions(false);
+      }
+    }
+    fetchTransactions();
+  }, [partner.id]);
 
   const handleEdit = async (data: PartnerFormData) => {
     await updatePartner(partner.id, data);
@@ -141,6 +179,78 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
             </Badge>
           </div>
         )}
+
+        {/* Learned Patterns */}
+        {partner.learnedPatterns && partner.learnedPatterns.length > 0 && (
+          <div>
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+              <Sparkles className="h-3 w-3 inline mr-1" />
+              Learned Patterns
+            </h3>
+            <div className="space-y-1.5">
+              {partner.learnedPatterns.map((pattern, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <code className="text-xs bg-muted px-2 py-1 rounded font-mono flex-1 truncate">
+                    {pattern.pattern}
+                  </code>
+                  <Badge variant="secondary" className="text-xs shrink-0">
+                    {pattern.confidence}%
+                  </Badge>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {pattern.field}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Connected Transactions */}
+        <div>
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+            <Receipt className="h-3 w-3 inline mr-1" />
+            Connected Transactions
+            {!isLoadingTransactions && (
+              <span className="ml-1 text-foreground">({transactionCount})</span>
+            )}
+          </h3>
+          {isLoadingTransactions ? (
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          ) : connectedTransactions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No transactions connected yet</p>
+          ) : (
+            <div className="space-y-1">
+              {connectedTransactions.map((tx) => (
+                <Link
+                  key={tx.id}
+                  href={`/transactions?selected=${tx.id}`}
+                  className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm truncate">{tx.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {tx.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
+                      {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </Link>
+              ))}
+              {transactionCount > 10 && (
+                <Link
+                  href={`/transactions?partnerId=${partner.id}`}
+                  className="text-xs text-primary hover:underline block mt-2"
+                >
+                  View all {transactionCount} transactions
+                </Link>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Footer Actions */}

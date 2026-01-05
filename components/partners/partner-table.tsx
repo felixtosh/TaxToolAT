@@ -11,13 +11,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 interface PartnerTableProps {
   onSelectPartner?: (partner: UserPartner) => void;
   selectedPartnerId?: string | null;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
 }
 
 export function PartnerTable({
   onSelectPartner,
   selectedPartnerId,
+  searchValue,
+  onSearchChange,
 }: PartnerTableProps) {
-  const [searchValue, setSearchValue] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
 
   const { partners, loading, error, createPartner, deletePartner } = usePartners();
@@ -84,7 +87,7 @@ export function PartnerTable({
     <div className="flex flex-col h-full overflow-hidden bg-background">
       <PartnerToolbar
         searchValue={searchValue}
-        onSearchChange={setSearchValue}
+        onSearchChange={onSearchChange}
         onAddPartner={() => setIsAddDialogOpen(true)}
       />
 

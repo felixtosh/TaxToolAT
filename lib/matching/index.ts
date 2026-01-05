@@ -22,6 +22,9 @@ export {
 export {
   matchTransaction,
   matchTransactionsBatch,
+  matchTransactionByPattern,
+  matchAllTransactionsByPattern,
+  globMatch,
   shouldAutoApply,
   getConfidenceTier,
   getConfidenceColor,

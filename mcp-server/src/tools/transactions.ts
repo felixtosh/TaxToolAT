@@ -10,7 +10,6 @@ import {
   updateDoc,
   Timestamp,
   limit as firestoreLimit,
-  writeBatch,
 } from "firebase/firestore";
 import { OperationsContext } from "../types.js";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -35,18 +34,12 @@ const getTransactionSchema = z.object({
 const updateTransactionSchema = z.object({
   transactionId: z.string().describe("The transaction ID to update"),
   description: z.string().optional().describe("Description for tax purposes"),
-  categoryId: z.string().nullable().optional().describe("Category ID"),
   isComplete: z.boolean().optional().describe("Mark as complete/incomplete"),
 });
 
 // NOTE: delete_transaction tool is intentionally NOT provided.
 // Individual transaction deletion is not allowed - transactions must be
 // deleted together with their source to maintain accounting integrity.
-
-const bulkCategorizeSchema = z.object({
-  transactionIds: z.array(z.string()).describe("Array of transaction IDs"),
-  categoryId: z.string().describe("Category ID to assign"),
-});
 
 // Tool definitions
 export const transactionToolDefinitions: Tool[] = [
@@ -79,16 +72,12 @@ export const transactionToolDefinitions: Tool[] = [
   },
   {
     name: "update_transaction",
-    description: "Update transaction fields like description, category, completion status",
+    description: "Update transaction fields like description and completion status",
     inputSchema: {
       type: "object",
       properties: {
         transactionId: { type: "string", description: "The transaction ID" },
         description: { type: "string", description: "Description for tax purposes" },
-        categoryId: {
-          type: ["string", "null"],
-          description: "Category ID or null to remove",
-        },
         isComplete: { type: "boolean", description: "Mark as complete/incomplete" },
       },
       required: ["transactionId"],
@@ -96,22 +85,6 @@ export const transactionToolDefinitions: Tool[] = [
   },
   // NOTE: delete_transaction is intentionally NOT provided.
   // Transactions must be deleted with their source for accounting integrity.
-  {
-    name: "bulk_categorize",
-    description: "Assign a category to multiple transactions at once",
-    inputSchema: {
-      type: "object",
-      properties: {
-        transactionIds: {
-          type: "array",
-          items: { type: "string" },
-          description: "Array of transaction IDs",
-        },
-        categoryId: { type: "string", description: "Category ID to assign" },
-      },
-      required: ["transactionIds", "categoryId"],
-    },
-  },
 ];
 
 // Helper to format transaction for display
@@ -274,35 +247,6 @@ export async function registerTransactionTools(
 
     // NOTE: delete_transaction case intentionally removed.
     // Transactions must be deleted with their source for accounting integrity.
-
-    case "bulk_categorize": {
-      const { transactionIds, categoryId } = bulkCategorizeSchema.parse(args);
-
-      const batch = writeBatch(ctx.db);
-      const now = Timestamp.now();
-      let updated = 0;
-
-      for (const id of transactionIds) {
-        const docRef = doc(ctx.db, TRANSACTIONS_COLLECTION, id);
-        const snapshot = await getDoc(docRef);
-
-        if (snapshot.exists() && snapshot.data().userId === ctx.userId) {
-          batch.update(docRef, {
-            categoryId,
-            updatedAt: now,
-          });
-          updated++;
-        }
-      }
-
-      await batch.commit();
-
-      return {
-        content: [
-          { type: "text", text: `Categorized ${updated} of ${transactionIds.length} transactions` },
-        ],
-      };
-    }
 
     default:
       return null;

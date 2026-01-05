@@ -52,8 +52,8 @@ export function MappingEditor({
       )}
 
       {/* Column mappings */}
-      <Card>
-        <CardHeader className="pb-3">
+      <Card className="flex flex-col overflow-hidden" style={{ maxHeight: "calc(100vh - 400px)", minHeight: "300px" }}>
+        <CardHeader className="pb-3 flex-shrink-0">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Column Mappings</CardTitle>
             <Badge variant="outline">
@@ -62,7 +62,7 @@ export function MappingEditor({
             </Badge>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex-1 overflow-auto">
           <div className="space-y-2">
             {mappings.map((mapping, index) => {
               // Get sample values for this column

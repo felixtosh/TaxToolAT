@@ -1,27 +1,35 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { format } from "date-fns";
 import Link from "next/link";
+import { httpsCallable } from "firebase/functions";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { PartnerCard } from "@/components/partners/partner-card";
-import { PartnerSuggestions } from "@/components/partners/partner-suggestions";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { usePartnerSuggestions, useAssignedPartner } from "@/hooks/use-partner-suggestions";
-import { Pencil, Check, X, Calendar, Building2, DollarSign, Landmark, ExternalLink, Plus, Link2 } from "lucide-react";
+import { X, Plus, ExternalLink, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { functions } from "@/lib/firebase/config";
+
+// Consistent field row component
+function FieldRow({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
+  return (
+    <div className={cn("flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4", className)}>
+      <span className="text-sm text-muted-foreground shrink-0 sm:w-32">{label}</span>
+      <span className="text-sm">{children}</span>
+    </div>
+  );
+}
 
 interface TransactionDetailsProps {
   transaction: Transaction;
   source?: TransactionSource;
   userPartners: UserPartner[];
   globalPartners: GlobalPartner[];
-  onUpdate: (updates: Partial<Transaction>) => Promise<void>;
   onAssignPartner: (
     partnerId: string,
     partnerType: "global" | "user",
@@ -37,39 +45,40 @@ export function TransactionDetails({
   source,
   userPartners,
   globalPartners,
-  onUpdate,
   onAssignPartner,
   onRemovePartner,
   onCreatePartner,
 }: TransactionDetailsProps) {
-  const [isEditingDescription, setIsEditingDescription] = useState(false);
-  const [description, setDescription] = useState(transaction.description || "");
-  const [isSaving, setIsSaving] = useState(false);
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const matchedTransactionIds = useRef<Set<string>>(new Set());
 
   // Get partner suggestions and assigned partner
   const suggestions = usePartnerSuggestions(transaction, userPartners, globalPartners);
   const assignedPartner = useAssignedPartner(transaction, userPartners, globalPartners);
 
-  // Update local state when transaction changes
+  // Trigger partner matching when opening a transaction without partner/suggestions
   useEffect(() => {
-    setDescription(transaction.description || "");
-  }, [transaction.description]);
+    const shouldMatch =
+      !assignedPartner &&
+      suggestions.length === 0 &&
+      !matchedTransactionIds.current.has(transaction.id);
 
-  const handleSaveDescription = async () => {
-    setIsSaving(true);
-    try {
-      const trimmedDescription = description.trim() || null;
-      await onUpdate({
-        description: trimmedDescription,
-        isComplete: transaction.receiptIds.length > 0 && !!trimmedDescription,
-      });
-      setIsEditingDescription(false);
-    } finally {
-      setIsSaving(false);
+    if (shouldMatch) {
+      matchedTransactionIds.current.add(transaction.id);
+      setIsLoadingSuggestions(true);
+
+      const matchPartners = httpsCallable(functions, "matchPartners");
+      matchPartners({ transactionIds: [transaction.id] })
+        .catch((error) => {
+          console.error("Failed to match partners:", error);
+        })
+        .finally(() => {
+          setIsLoadingSuggestions(false);
+        });
     }
-  };
+  }, [transaction.id, assignedPartner, suggestions.length]);
 
   const handleSelectSuggestion = async (suggestion: PartnerSuggestion) => {
     setIsAssigningPartner(true);
@@ -101,200 +110,119 @@ export function TransactionDetails({
     return partnerId;
   };
 
+  const handleSelectExistingPartner = async (partnerId: string, partnerType: "user" | "global") => {
+    setIsAssigningPartner(true);
+    try {
+      await onAssignPartner(partnerId, partnerType, "manual", 100);
+    } finally {
+      setIsAssigningPartner(false);
+    }
+  };
+
   const formattedAmount = new Intl.NumberFormat("de-DE", {
     style: "currency",
     currency: transaction.currency || "EUR",
   }).format(transaction.amount / 100);
 
   return (
-    <div className="space-y-4">
-      {/* Date */}
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-muted-foreground flex items-center gap-2">
-          <Calendar className="h-4 w-4" />
-          Date
-        </span>
-        <span className="font-medium">
-          {format(transaction.date.toDate(), "MMMM d, yyyy")}
-        </span>
-      </div>
+    <div className="space-y-3">
+      <FieldRow label="Date">
+        {format(transaction.date.toDate(), "MMM d, yyyy")}
+      </FieldRow>
 
-      {/* Transaction Name */}
-      <div>
-        <span className="text-sm text-muted-foreground">Transaction Name</span>
-        <p className="font-medium mt-1">{transaction.name}</p>
-      </div>
+      <FieldRow label="Description">
+        {transaction.name}
+      </FieldRow>
 
-      {/* Amount - prominent display */}
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-muted-foreground flex items-center gap-2">
-          <DollarSign className="h-4 w-4" />
-          Amount
-        </span>
-        <span
-          className={cn(
-            "text-2xl font-bold tabular-nums",
-            transaction.amount < 0 ? "text-red-600" : "text-green-600"
-          )}
-        >
+      <FieldRow label="Amount">
+        <span className={cn("tabular-nums", transaction.amount < 0 ? "text-red-600" : "text-green-600")}>
           {formattedAmount}
         </span>
-      </div>
+      </FieldRow>
 
-      {/* Partner/Vendor (original text from bank) */}
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-muted-foreground flex items-center gap-2">
-          <Building2 className="h-4 w-4" />
-          Partner (Bank)
-        </span>
-        <span className="font-medium text-sm truncate max-w-[180px]">
-          {transaction.partner || "-"}
-        </span>
-      </div>
-
-      {/* Matched Partner Section */}
-      <div className="space-y-3 pt-2 border-t">
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground flex items-center gap-2">
-            <Link2 className="h-4 w-4" />
-            Matched Partner
-          </span>
-          {transaction.partnerMatchConfidence && (
-            <Badge variant="outline" className="text-xs">
-              {transaction.partnerMatchConfidence}% match
-            </Badge>
-          )}
-        </div>
-
-        {assignedPartner ? (
-          <PartnerCard
-            partner={assignedPartner}
-            partnerType={transaction.partnerType || "user"}
-            showRemove
-            onRemove={handleRemovePartner}
-          />
-        ) : (
-          <div className="space-y-3">
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => setIsAddPartnerOpen(true)}
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Partner
-            </Button>
-
-            {suggestions.length > 0 && (
-              <PartnerSuggestions
-                suggestions={suggestions}
-                onSelect={handleSelectSuggestion}
-                isLoading={isAssigningPartner}
-              />
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Editable Description */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-muted-foreground">Cost Description</span>
-          {!isEditingDescription && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsEditingDescription(true)}
-              className="h-7 px-2"
-            >
-              <Pencil className="h-3 w-3 mr-1" />
-              Edit
-            </Button>
-          )}
-        </div>
-
-        {isEditingDescription ? (
-          <div className="space-y-2">
-            <Input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Enter cost description for tax purposes..."
-              autoFocus
-            />
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                onClick={handleSaveDescription}
-                disabled={isSaving}
-              >
-                <Check className="h-3 w-3 mr-1" />
-                Save
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setDescription(transaction.description || "");
-                  setIsEditingDescription(false);
-                }}
-                disabled={isSaving}
-              >
-                <X className="h-3 w-3 mr-1" />
-                Cancel
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <p
-            className={cn(
-              "text-sm",
-              transaction.description
-                ? "text-foreground"
-                : "text-muted-foreground italic"
-            )}
-          >
-            {transaction.description || "No description added"}
-          </p>
-        )}
-      </div>
-
-      {/* Source/Account */}
       {source && (
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground flex items-center gap-2">
-            <Landmark className="h-4 w-4" />
-            Account
-          </span>
+        <FieldRow label="Account">
           <Link
             href={`/sources/${source.id}`}
-            className="font-medium text-primary hover:underline flex items-center gap-1"
+            className="text-primary hover:underline inline-flex items-center gap-1"
           >
             {source.name}
             <ExternalLink className="h-3 w-3" />
           </Link>
-        </div>
+        </FieldRow>
       )}
 
-      {/* Status badges */}
-      <div className="flex gap-2 pt-2">
-        <Badge
-          variant={transaction.receiptIds.length > 0 ? "default" : "outline"}
-        >
-          {transaction.receiptIds.length > 0 ? "Receipt attached" : "No receipt"}
-        </Badge>
-        {transaction.isComplete && (
+      {/* Partner section */}
+      <div className="border-t pt-3 mt-3 -mx-4 px-4">
+        <h3 className="text-sm font-medium mb-2">Partner</h3>
+
+        <FieldRow label="Connect">
+          {assignedPartner ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRemovePartner}
+              className="h-7 px-3 gap-2"
+            >
+              {assignedPartner.name}
+              {transaction.partnerMatchConfidence && (
+                <span className="text-muted-foreground text-xs">({transaction.partnerMatchConfidence}%)</span>
+              )}
+              <X className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+            </Button>
+          ) : isLoadingSuggestions ? (
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsAddPartnerOpen(true)}
+              className="h-7 px-3"
+            >
+              <Plus className="h-3 w-3 mr-1" />
+              Add
+            </Button>
+          )}
+        </FieldRow>
+
+        {/* Partner suggestions when no match */}
+        {!assignedPartner && !isLoadingSuggestions && suggestions.length > 0 && (
+          <div className="sm:ml-36 space-y-1 mt-1">
+            {suggestions.slice(0, 3).map((suggestion) => (
+              <button
+                key={suggestion.partnerId}
+                onClick={() => handleSelectSuggestion(suggestion)}
+                disabled={isAssigningPartner}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+              >
+                <span>{suggestion.partner.name}</span>
+                <span className="text-xs">({suggestion.confidence}%)</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {transaction.isComplete && (
+        <FieldRow label="Status">
           <Badge variant="default" className="bg-green-600 hover:bg-green-700">
             Complete
           </Badge>
-        )}
-      </div>
+        </FieldRow>
+      )}
 
       {/* Add Partner Dialog */}
       <AddPartnerDialog
         open={isAddPartnerOpen}
         onClose={() => setIsAddPartnerOpen(false)}
         onAdd={handleAddPartner}
+        onSelectPartner={handleSelectExistingPartner}
+        onSelectSuggestion={handleSelectSuggestion}
+        suggestions={suggestions}
+        userPartners={userPartners}
+        globalPartners={globalPartners}
         initialData={{
-          name: transaction.partner || undefined,
+          name: transaction.partner || transaction.name || undefined,
           ibans: transaction.partnerIban ? [transaction.partnerIban] : undefined,
         }}
       />

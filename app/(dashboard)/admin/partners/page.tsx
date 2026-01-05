@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { AdminPartnersTable } from "@/components/admin/admin-partners-table";
 import { AddGlobalPartnerDialog } from "@/components/admin/add-global-partner-dialog";
 import { GlobalPartner, GlobalPartnerFormData } from "@/types/partner";
+import { Skeleton } from "@/components/ui/skeleton";
 
-export default function AdminPartnersPage() {
+function AdminPartnersContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const {
     globalPartners,
     promotionCandidates,
@@ -17,10 +21,33 @@ export default function AdminPartnersPage() {
     approveCandidate,
     rejectCandidate,
     generateCandidates,
+    presetPartnersEnabled,
+    presetPartnersLoading,
+    togglePresetPartners,
   } = useGlobalPartners();
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingPartner, setEditingPartner] = useState<GlobalPartner | null>(null);
+
+  // Get search value from URL
+  const searchValue = searchParams.get("search") || "";
+
+  // Update search in URL
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (value) {
+        params.set("search", value);
+      } else {
+        params.delete("search");
+      }
+      const newUrl = params.toString()
+        ? `/admin/partners?${params.toString()}`
+        : "/admin/partners";
+      router.replace(newUrl, { scroll: false });
+    },
+    [router, searchParams]
+  );
 
   const handleAdd = () => {
     setEditingPartner(null);
@@ -68,6 +95,11 @@ export default function AdminPartnersPage() {
         onApprove={handleApprove}
         onReject={handleReject}
         onGenerateCandidates={generateCandidates}
+        searchValue={searchValue}
+        onSearchChange={handleSearchChange}
+        presetPartnersEnabled={presetPartnersEnabled}
+        presetPartnersLoading={presetPartnersLoading}
+        onTogglePresetPartners={togglePresetPartners}
       />
 
       <AddGlobalPartnerDialog
@@ -80,5 +112,38 @@ export default function AdminPartnersPage() {
         editingPartner={editingPartner}
       />
     </div>
+  );
+}
+
+function AdminPartnersFallback() {
+  return (
+    <div className="h-full flex flex-col overflow-hidden bg-card">
+      <div className="flex items-center gap-2 px-4 py-2 border-b">
+        <Skeleton className="h-9 w-[300px]" />
+        <Skeleton className="h-9 w-[100px]" />
+      </div>
+      <div className="flex-1">
+        {[...Array(10)].map((_, i) => (
+          <div
+            key={i}
+            className="flex items-center space-x-4 px-4 py-3 border-b last:border-b-0"
+          >
+            <Skeleton className="h-4 w-[200px]" />
+            <Skeleton className="h-4 w-[100px]" />
+            <Skeleton className="h-4 w-[180px]" />
+            <Skeleton className="h-4 w-[120px]" />
+            <Skeleton className="h-4 w-[24px]" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function AdminPartnersPage() {
+  return (
+    <Suspense fallback={<AdminPartnersFallback />}>
+      <AdminPartnersContent />
+    </Suspense>
   );
 }

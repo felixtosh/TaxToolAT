@@ -3,7 +3,6 @@
  */
 export const TOOLS_REQUIRING_CONFIRMATION = [
   "updateTransaction",
-  "bulkCategorize",
   "createSource",
   "updateSource",
   "deleteSource",
@@ -39,8 +38,11 @@ export interface ConfirmationDetails {
  */
 export function getConfirmationDetails(
   toolName: ConfirmableToolName,
-  args: Record<string, unknown>
+  args?: Record<string, unknown>
 ): ConfirmationDetails {
+  // Handle undefined args
+  const safeArgs = args ?? {};
+
   switch (toolName) {
     case "updateTransaction":
       return {
@@ -48,24 +50,10 @@ export function getConfirmationDetails(
         description: "This will update the transaction with the following changes:",
         impact: "low",
         previewData: filterUndefined({
-          description: args.description,
-          categoryId: args.categoryId,
-          isComplete: args.isComplete,
+          description: safeArgs.description,
+          isComplete: safeArgs.isComplete,
         }),
       };
-
-    case "bulkCategorize": {
-      const count = (args.transactionIds as string[])?.length ?? 0;
-      return {
-        title: "Bulk Categorize Transactions",
-        description: `This will assign a category to ${count} transaction${count !== 1 ? "s" : ""}.`,
-        impact: count > 10 ? "high" : "medium",
-        previewData: {
-          transactionCount: count,
-          categoryId: args.categoryId,
-        },
-      };
-    }
 
     case "createSource":
       return {
@@ -73,9 +61,9 @@ export function getConfirmationDetails(
         description: "This will create a new bank account for importing transactions.",
         impact: "medium",
         previewData: filterUndefined({
-          name: args.name,
-          iban: args.iban,
-          currency: args.currency,
+          name: safeArgs.name,
+          iban: safeArgs.iban,
+          currency: safeArgs.currency,
         }),
       };
 
@@ -85,8 +73,8 @@ export function getConfirmationDetails(
         description: "This will update the bank account details.",
         impact: "low",
         previewData: filterUndefined({
-          name: args.name,
-          bankName: args.bankName,
+          name: safeArgs.name,
+          bankName: safeArgs.bankName,
         }),
       };
 
@@ -97,7 +85,7 @@ export function getConfirmationDetails(
           "This will mark the bank account as inactive. Associated transactions will remain but won't be visible in filters.",
         impact: "high",
         previewData: {
-          sourceId: args.sourceId,
+          sourceId: safeArgs.sourceId,
         },
       };
 
@@ -108,8 +96,8 @@ export function getConfirmationDetails(
           "This will restore the transaction to a previous state. A history entry will be created for this change.",
         impact: "medium",
         previewData: {
-          transactionId: args.transactionId,
-          historyId: args.historyId,
+          transactionId: safeArgs.transactionId,
+          historyId: safeArgs.historyId,
         },
       };
 

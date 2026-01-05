@@ -131,6 +131,36 @@ export function calculateCompanyNameSimilarity(name1: string, name2: string): nu
   return Math.round(((maxLen - distance) / maxLen) * 100);
 }
 
+// ============ Glob Pattern Matching ============
+
+export interface LearnedPattern {
+  pattern: string;
+  field: "partner" | "name";
+  confidence: number;
+}
+
+/**
+ * Match a glob-style pattern against text
+ * Supports * as wildcard (matches any characters)
+ */
+export function globMatch(pattern: string, text: string): boolean {
+  if (!pattern || !text) return false;
+
+  const normalizedText = text.toLowerCase();
+  const normalizedPattern = pattern.toLowerCase();
+
+  // Convert glob to regex: escape special chars, then replace * with .*
+  const regexPattern = normalizedPattern
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&") // Escape regex special chars
+    .replace(/\*/g, ".*"); // * -> .*
+
+  try {
+    return new RegExp(`^${regexPattern}$`).test(normalizedText);
+  } catch {
+    return false;
+  }
+}
+
 // ============ Partner Matching ============
 
 export interface PartnerData {
@@ -140,6 +170,7 @@ export interface PartnerData {
   ibans: string[];
   website?: string;
   vatId?: string;
+  learnedPatterns?: LearnedPattern[];
 }
 
 export interface TransactionData {
@@ -154,7 +185,7 @@ export interface MatchResult {
   partnerType: "global" | "user";
   partnerName: string;
   confidence: number;
-  source: "iban" | "vatId" | "website" | "name";
+  source: "iban" | "vatId" | "website" | "name" | "pattern";
 }
 
 export function matchTransaction(
@@ -203,13 +234,14 @@ function matchSinglePartner(
   partner: PartnerData,
   partnerType: "global" | "user"
 ): MatchResult | null {
-  let bestMatch: MatchResult | null = null;
+  const candidates: MatchResult[] = [];
 
   // 1. IBAN match (100%)
   if (transaction.partnerIban && partner.ibans && partner.ibans.length > 0) {
     const txIban = normalizeIban(transaction.partnerIban);
     for (const iban of partner.ibans) {
       if (normalizeIban(iban) === txIban) {
+        // IBAN match is definitive - return immediately
         return {
           partnerId: partner.id,
           partnerType,
@@ -221,26 +253,39 @@ function matchSinglePartner(
     }
   }
 
-  // 2. Website match (90%)
+  // 2. Learned pattern match (uses AI-generated confidence)
+  if (partner.learnedPatterns && partner.learnedPatterns.length > 0) {
+    for (const lp of partner.learnedPatterns) {
+      const textToMatch = lp.field === "partner" ? transaction.partner : transaction.name;
+      if (textToMatch && globMatch(lp.pattern, textToMatch)) {
+        candidates.push({
+          partnerId: partner.id,
+          partnerType,
+          partnerName: partner.name,
+          confidence: lp.confidence,
+          source: "pattern",
+        });
+      }
+    }
+  }
+
+  // 3. Website match (90%)
   if (partner.website) {
     const normalizedWebsite = normalizeUrl(partner.website);
     const txText = `${transaction.name || ""} ${transaction.partner || ""}`.toLowerCase();
 
     if (txText.includes(normalizedWebsite)) {
-      const match: MatchResult = {
+      candidates.push({
         partnerId: partner.id,
         partnerType,
         partnerName: partner.name,
         confidence: 90,
         source: "website",
-      };
-      if (!bestMatch || match.confidence > bestMatch.confidence) {
-        bestMatch = match;
-      }
+      });
     }
   }
 
-  // 3. Name matching (60-90%)
+  // 4. Name matching (60-90%)
   if (transaction.partner) {
     const namesToCheck = [partner.name, ...(partner.aliases || [])];
 
@@ -249,17 +294,13 @@ function matchSinglePartner(
 
       if (similarity >= 60) {
         const confidence = Math.min(90, 60 + ((similarity - 60) * 30) / 40);
-        const match: MatchResult = {
+        candidates.push({
           partnerId: partner.id,
           partnerType,
           partnerName: partner.name,
           confidence: Math.round(confidence),
           source: "name",
-        };
-
-        if (!bestMatch || match.confidence > bestMatch.confidence) {
-          bestMatch = match;
-        }
+        });
       }
     }
   }
@@ -273,24 +314,27 @@ function matchSinglePartner(
 
       if (similarity >= 70) {
         const confidence = Math.min(85, 60 + ((similarity - 70) * 25) / 30);
-        const match: MatchResult = {
+        candidates.push({
           partnerId: partner.id,
           partnerType,
           partnerName: partner.name,
           confidence: Math.round(confidence),
           source: "name",
-        };
-
-        if (!bestMatch || match.confidence > bestMatch.confidence) {
-          bestMatch = match;
-        }
+        });
       }
     }
   }
 
-  return bestMatch;
+  // Return the best candidate
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return candidates.reduce((best, current) =>
+    current.confidence > best.confidence ? current : best
+  );
 }
 
 export function shouldAutoApply(confidence: number): boolean {
-  return confidence >= 95;
+  return confidence >= 89;
 }

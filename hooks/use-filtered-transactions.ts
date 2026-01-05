@@ -63,11 +63,6 @@ export function useFilteredTransactions(
       result = result.filter((t) => t.amount < 0);
     }
 
-    // Category filter
-    if (filters.categoryId) {
-      result = result.filter((t) => t.categoryId === filters.categoryId);
-    }
-
     // Completion status filter
     if (filters.isComplete !== undefined) {
       result = result.filter((t) => t.isComplete === filters.isComplete);

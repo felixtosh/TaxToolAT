@@ -1,9 +1,11 @@
 "use client";
 
-import { User, Bot, Wrench, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { User, Wrench, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
-import { ChatMessage } from "@/types/chat";
+import { ChatMessage, MessagePart, ToolCall } from "@/types/chat";
 import { Badge } from "@/components/ui/badge";
+import { useChat } from "./chat-provider";
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -11,61 +13,68 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
-  const isAssistant = message.role === "assistant";
 
-  return (
-    <div
-      className={cn(
-        "flex gap-3",
-        isUser ? "flex-row-reverse" : "flex-row"
-      )}
-    >
-      {/* Avatar */}
-      <div
-        className={cn(
-          "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-          isUser ? "bg-primary text-primary-foreground" : "bg-muted"
-        )}
-      >
-        {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
-      </div>
+  // User messages: bubble with icon
+  if (isUser) {
+    return (
+      <div className="flex gap-3 flex-row-reverse">
+        {/* Avatar */}
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+          <User className="h-4 w-4" />
+        </div>
 
-      {/* Content */}
-      <div
-        className={cn(
-          "flex max-w-[85%] flex-col gap-2",
-          isUser ? "items-end" : "items-start"
-        )}
-      >
-        {/* Message text */}
-        {message.content && (
-          <div
-            className={cn(
-              "rounded-lg px-3 py-2 text-sm",
-              isUser
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted"
-            )}
-          >
+        {/* Content */}
+        <div className="flex max-w-[85%] flex-col gap-2 items-end">
+          <div className="rounded-lg px-3 py-2 text-sm bg-primary text-primary-foreground">
             <p className="whitespace-pre-wrap">{message.content}</p>
           </div>
-        )}
-
-        {/* Tool calls */}
-        {message.toolCalls && message.toolCalls.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {message.toolCalls.map((toolCall) => (
-              <ToolCallBadge key={toolCall.id} toolCall={toolCall} />
-            ))}
-          </div>
-        )}
+        </div>
       </div>
+    );
+  }
+
+  // Assistant messages: render parts in order, no icon, no bubble
+  return (
+    <div className="flex flex-col gap-2 max-w-[95%]">
+      {message.parts && message.parts.length > 0 ? (
+        // Render parts in chronological order
+        message.parts.map((part, index) => (
+          <MessagePartRenderer key={index} part={part} />
+        ))
+      ) : (
+        // Fallback to content string
+        message.content && (
+          <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 text-sm">
+            <ReactMarkdown>{message.content}</ReactMarkdown>
+          </div>
+        )
+      )}
     </div>
   );
 }
 
+interface MessagePartRendererProps {
+  part: MessagePart;
+}
+
+function MessagePartRenderer({ part }: MessagePartRendererProps) {
+  if (part.type === "text") {
+    return (
+      <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 text-sm">
+        <ReactMarkdown>{part.text}</ReactMarkdown>
+      </div>
+    );
+  }
+
+  if (part.type === "tool") {
+    return <ToolCallBadge toolCall={part.toolCall} />;
+  }
+
+  return null;
+}
+
 interface ToolCallBadgeProps {
-  toolCall: NonNullable<ChatMessage["toolCalls"]>[number];
+  toolCall: ToolCall;
 }
 
 function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
@@ -91,17 +100,111 @@ function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
       .trim();
   };
 
+  // Check if result is a transaction list
+  const isTransactionList = toolCall.name === "listTransactions" &&
+    Array.isArray(toolCall.result) &&
+    toolCall.result.length > 0;
+
   return (
-    <Badge
-      variant="outline"
-      className={cn(
-        "flex items-center gap-1 text-xs",
-        statusColors[toolCall.status]
+    <div className="flex flex-col gap-2">
+      <Badge
+        variant="outline"
+        className={cn(
+          "flex items-center gap-1 text-xs w-fit",
+          statusColors[toolCall.status]
+        )}
+      >
+        <Wrench className="h-3 w-3" />
+        {formatToolName(toolCall.name)}
+        {statusIcons[toolCall.status]}
+      </Badge>
+
+      {/* Mini-table for transaction results */}
+      {isTransactionList && (
+        <TransactionMiniTable transactions={toolCall.result as TransactionResult[]} />
       )}
-    >
-      <Wrench className="h-3 w-3" />
-      {formatToolName(toolCall.name)}
-      {statusIcons[toolCall.status]}
-    </Badge>
+    </div>
+  );
+}
+
+interface TransactionResult {
+  id: string;
+  date: string;
+  dateFormatted?: string;
+  amount: number;
+  amountFormatted: string;
+  name: string;
+  description: string | null;
+  partner: string;
+  isComplete: boolean;
+  hasReceipts: boolean;
+}
+
+function TransactionMiniTable({ transactions }: { transactions: TransactionResult[] }) {
+  const { uiActions } = useChat();
+
+  const formatDate = (t: TransactionResult) => {
+    // Use pre-formatted date if available
+    if (t.dateFormatted) return t.dateFormatted;
+    const date = new Date(t.date);
+    return date.toLocaleDateString("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    });
+  };
+
+  const formatAmount = (amount: number) => {
+    const euros = amount / 100;
+    return euros.toLocaleString("de-DE", {
+      style: "currency",
+      currency: "EUR"
+    });
+  };
+
+  const handleRowClick = (transactionId: string) => {
+    uiActions.scrollToTransaction(transactionId);
+    uiActions.openTransactionSheet(transactionId);
+  };
+
+  // Show max 5 transactions in mini-table
+  const displayTransactions = transactions.slice(0, 5);
+  const hasMore = transactions.length > 5;
+
+  return (
+    <div className="rounded-md border text-xs overflow-hidden">
+      <table className="w-full">
+        <thead className="bg-muted/50">
+          <tr>
+            <th className="text-left px-2 py-1 font-medium">Date</th>
+            <th className="text-left px-2 py-1 font-medium">Name</th>
+            <th className="text-right px-2 py-1 font-medium">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {displayTransactions.map((t) => (
+            <tr
+              key={t.id}
+              className="border-t border-muted/50 cursor-pointer hover:bg-muted/50 transition-colors"
+              onClick={() => handleRowClick(t.id)}
+            >
+              <td className="px-2 py-1 text-muted-foreground">{formatDate(t)}</td>
+              <td className="px-2 py-1 truncate max-w-[100px]">{t.name}</td>
+              <td className={cn(
+                "px-2 py-1 text-right tabular-nums",
+                t.amount < 0 ? "text-red-600" : "text-green-600"
+              )}>
+                {formatAmount(t.amount)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {hasMore && (
+        <div className="px-2 py-1 text-center text-muted-foreground bg-muted/30 border-t">
+          +{transactions.length - 5} more
+        </div>
+      )}
+    </div>
   );
 }

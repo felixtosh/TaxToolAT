@@ -3,8 +3,8 @@
 import { useState, useMemo } from "react";
 import { GlobalPartner, PromotionCandidate } from "@/types/partner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { SearchButton } from "@/components/ui/search-button";
 import {
   Table,
   TableBody,
@@ -21,7 +21,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Plus,
-  Search,
   X,
   MoreHorizontal,
   Pencil,
@@ -31,6 +30,7 @@ import {
   Check,
   Users,
   RefreshCw,
+  Database,
 } from "lucide-react";
 import { formatIban } from "@/lib/import/deduplication";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -47,6 +47,12 @@ interface AdminPartnersTableProps {
   onReject: (candidateId: string) => Promise<void>;
   onRowClick?: (partner: GlobalPartner) => void;
   selectedRowId?: string | null;
+  onGenerateCandidates?: () => Promise<{ candidatesCreated: number; message: string }>;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+  presetPartnersEnabled?: boolean;
+  presetPartnersLoading?: boolean;
+  onTogglePresetPartners?: (enable: boolean) => Promise<{ enabled: boolean; count: number }>;
 }
 
 export function AdminPartnersTable({
@@ -60,8 +66,32 @@ export function AdminPartnersTable({
   onReject,
   onRowClick,
   selectedRowId,
+  onGenerateCandidates,
+  searchValue,
+  onSearchChange,
+  presetPartnersEnabled,
+  presetPartnersLoading,
+  onTogglePresetPartners,
 }: AdminPartnersTableProps) {
-  const [searchValue, setSearchValue] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleTogglePresetPartners = async () => {
+    if (!onTogglePresetPartners) return;
+    await onTogglePresetPartners(!presetPartnersEnabled);
+  };
+
+  const handleGenerateCandidates = async () => {
+    if (!onGenerateCandidates) return;
+    setIsGenerating(true);
+    try {
+      const result = await onGenerateCandidates();
+      console.log(result.message);
+    } catch (error) {
+      console.error("Failed to generate candidates:", error);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   const filteredPartners = useMemo(() => {
     if (!searchValue) return globalPartners;
@@ -123,23 +153,41 @@ export function AdminPartnersTable({
     <div className="flex flex-col h-full overflow-hidden bg-background">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b bg-background">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search partners..."
-            value={searchValue}
-            onChange={(e) => setSearchValue(e.target.value)}
-            className="pl-9 h-9"
-          />
-          {searchValue && (
-            <button
-              onClick={() => setSearchValue("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 hover:bg-muted rounded p-0.5"
-            >
-              <X className="h-4 w-4 text-muted-foreground hover:text-foreground" />
-            </button>
-          )}
-        </div>
+        <SearchButton
+          value={searchValue}
+          onSearch={onSearchChange}
+          placeholder="Search partners..."
+        />
+
+        <div className="flex-1" />
+
+        {onGenerateCandidates && (
+          <Button
+            onClick={handleGenerateCandidates}
+            size="sm"
+            variant="outline"
+            disabled={isGenerating}
+          >
+            <RefreshCw className={cn("h-4 w-4 mr-2", isGenerating && "animate-spin")} />
+            {isGenerating ? "Scanning..." : "Find Suggestions"}
+          </Button>
+        )}
+
+        {onTogglePresetPartners && (
+          <Button
+            onClick={handleTogglePresetPartners}
+            size="sm"
+            variant={presetPartnersEnabled ? "destructive" : "outline"}
+            disabled={presetPartnersLoading}
+          >
+            <Database className={cn("h-4 w-4 mr-2", presetPartnersLoading && "animate-pulse")} />
+            {presetPartnersLoading
+              ? "Loading..."
+              : presetPartnersEnabled
+              ? "Disable Presets"
+              : "Enable Presets (250)"}
+          </Button>
+        )}
 
         <Button onClick={onAdd} size="sm">
           <Plus className="h-4 w-4 mr-2" />
@@ -233,6 +281,8 @@ export function AdminPartnersTable({
                           ? "Manual"
                           : partner.source === "user_promoted"
                           ? "User"
+                          : partner.source === "preset"
+                          ? "Preset"
                           : "Registry"}
                       </Badge>
                     </TableCell>
@@ -279,7 +329,7 @@ export function AdminPartnersTable({
                 {/* Suggestion Candidates */}
                 {filteredCandidates.map((candidate) => (
                   <TableRow
-                    key={`candidate-${candidate.userPartner.id}`}
+                    key={`candidate-${candidate.id}`}
                     className="bg-muted/10"
                   >
                     <TableCell className="py-2.5 pl-4">
@@ -336,7 +386,7 @@ export function AdminPartnersTable({
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-100"
-                          onClick={() => onReject(candidate.userPartner.id)}
+                          onClick={() => onReject(candidate.id)}
                         >
                           <X className="h-4 w-4" />
                         </Button>
@@ -344,7 +394,7 @@ export function AdminPartnersTable({
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100"
-                          onClick={() => onApprove(candidate.userPartner.id)}
+                          onClick={() => onApprove(candidate.id)}
                         >
                           <Check className="h-4 w-4" />
                         </Button>

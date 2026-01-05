@@ -25,12 +25,31 @@ export function ChatSidebar() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
+  // Scroll to bottom helper
+  const scrollToBottom = () => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, pendingConfirmations]);
+  };
+
+  // Auto-scroll to bottom when new messages arrive or during streaming
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, pendingConfirmations, isLoading]);
+
+  // Focus input when clicking on empty chat area (not when selecting text)
+  const handleSidebarClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    // Don't focus if clicking on interactive elements or text content
+    const isInteractive = target.closest("button, input, a, [role='button'], [tabindex]");
+    const isTextContent = target.closest("p, span, td, th, div.prose, [class*='prose']");
+    const hasSelection = window.getSelection()?.toString();
+
+    // Only focus if clicking truly empty areas and not selecting text
+    if (!isInteractive && !isTextContent && !hasSelection && inputRef.current) {
+      inputRef.current.focus();
+    }
+  };
 
   // Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
@@ -40,6 +59,13 @@ export function ChatSidebar() {
 
     const message = input.value.trim();
     input.value = "";
+
+    // Scroll immediately when sending and keep focus on input
+    setTimeout(() => {
+      scrollToBottom();
+      inputRef.current?.focus();
+    }, 0);
+
     await sendMessage(message);
   };
 
@@ -64,6 +90,7 @@ export function ChatSidebar() {
           "fixed left-0 top-0 z-40 h-full w-80 transform border-r bg-background transition-transform duration-300 ease-in-out",
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
+        onClick={handleSidebarClick}
       >
         <div className="flex h-full flex-col">
           {/* Header */}
@@ -133,8 +160,7 @@ export function ChatSidebar() {
             <form ref={formRef} onSubmit={handleSubmit} className="flex gap-2">
               <Input
                 ref={inputRef}
-                placeholder="Ask about your transactions..."
-                disabled={isLoading}
+                placeholder={isLoading ? "Waiting for response..." : "Ask about your transactions..."}
                 className="flex-1"
               />
               <Button type="submit" size="icon" disabled={isLoading}>

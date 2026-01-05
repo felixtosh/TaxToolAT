@@ -1,15 +1,25 @@
 import { Timestamp } from "firebase/firestore";
 
 /**
+ * A part of a message - either text or a tool call (in chronological order)
+ */
+export type MessagePart =
+  | { type: "text"; text: string }
+  | { type: "tool"; toolCall: ToolCall };
+
+/**
  * A single message in a chat conversation
  */
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
-  createdAt: Timestamp;
+  createdAt: Date | Timestamp;
 
-  /** Tool calls made by the assistant */
+  /** Ordered parts for rendering (text and tool calls in chronological order) */
+  parts?: MessagePart[];
+
+  /** Tool calls made by the assistant (legacy, for backwards compat) */
   toolCalls?: ToolCall[];
 
   /** Results of tool executions */
@@ -23,6 +33,7 @@ export interface ToolCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  result?: unknown;
   status: "pending" | "approved" | "rejected" | "executed";
   requiresConfirmation: boolean;
 }

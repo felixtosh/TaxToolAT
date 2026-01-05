@@ -11,7 +11,11 @@ import {
   Timestamp,
   writeBatch,
   limit,
+  deleteDoc,
 } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/lib/firebase/config";
+import { PRESET_PARTNERS } from "@/lib/data/preset-partners";
 import {
   UserPartner,
   GlobalPartner,
@@ -106,11 +110,12 @@ export async function getUserPartner(
  */
 export async function createUserPartner(
   ctx: OperationsContext,
-  data: PartnerFormData
+  data: PartnerFormData,
+  options?: { globalPartnerId?: string }
 ): Promise<string> {
   const now = Timestamp.now();
 
-  const newPartner = {
+  const newPartner: Record<string, unknown> = {
     userId: ctx.userId,
     name: data.name.trim(),
     aliases: (data.aliases || []).map((a) => a.trim()).filter(Boolean),
@@ -125,6 +130,11 @@ export async function createUserPartner(
     createdAt: now,
     updatedAt: now,
   };
+
+  // Link to global partner if creating from a global suggestion
+  if (options?.globalPartnerId) {
+    newPartner.globalPartnerId = options.globalPartnerId;
+  }
 
   const docRef = await addDoc(collection(ctx.db, PARTNERS_COLLECTION), newPartner);
   return docRef.id;
@@ -210,6 +220,66 @@ export async function findUserPartnerByIban(
   if (snapshot.empty) return null;
 
   return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as UserPartner;
+}
+
+/**
+ * Find user partner by global partner ID (for checking if user already has a local copy)
+ */
+export async function findUserPartnerByGlobalId(
+  ctx: OperationsContext,
+  globalPartnerId: string
+): Promise<UserPartner | null> {
+  const q = query(
+    collection(ctx.db, PARTNERS_COLLECTION),
+    where("userId", "==", ctx.userId),
+    where("isActive", "==", true),
+    where("globalPartnerId", "==", globalPartnerId)
+  );
+
+  const snapshot = await getDocs(q);
+  if (snapshot.empty) return null;
+
+  return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as UserPartner;
+}
+
+/**
+ * Create a local partner from a global partner (full data copy)
+ * Returns existing local partner if one already exists for this global partner
+ */
+export async function createLocalPartnerFromGlobal(
+  ctx: OperationsContext,
+  globalPartnerId: string
+): Promise<{ localPartnerId: string; wasExisting: boolean }> {
+  // Check if user already has a local partner linked to this global partner
+  const existing = await findUserPartnerByGlobalId(ctx, globalPartnerId);
+  if (existing) {
+    return { localPartnerId: existing.id, wasExisting: true };
+  }
+
+  // Fetch the global partner
+  const globalPartner = await getGlobalPartner(ctx, globalPartnerId);
+  if (!globalPartner) {
+    throw new Error(`Global partner ${globalPartnerId} not found`);
+  }
+
+  // Create local partner with full data copy
+  const localPartnerId = await createUserPartner(
+    ctx,
+    {
+      name: globalPartner.name,
+      aliases: globalPartner.aliases,
+      address: globalPartner.address,
+      country: globalPartner.country,
+      vatId: globalPartner.vatId,
+      ibans: globalPartner.ibans,
+      website: globalPartner.website,
+      notes: null,
+      defaultCategoryId: null,
+    },
+    { globalPartnerId }
+  );
+
+  return { localPartnerId, wasExisting: false };
 }
 
 // ============ Global Partners ============
@@ -403,13 +473,46 @@ export async function assignPartnerToTransaction(
     throw new Error(`Transaction ${transactionId} not found or access denied`);
   }
 
+  // If assigning a global partner, create/reuse a local copy instead
+  let finalPartnerId = partnerId;
+  let finalPartnerType: "global" | "user" = partnerType;
+
+  if (partnerType === "global") {
+    const { localPartnerId } = await createLocalPartnerFromGlobal(ctx, partnerId);
+    finalPartnerId = localPartnerId;
+    finalPartnerType = "user";
+  }
+
   await updateDoc(txDoc, {
-    partnerId,
-    partnerType,
+    partnerId: finalPartnerId,
+    partnerType: finalPartnerType,
     partnerMatchedBy: matchedBy,
     partnerMatchConfidence: confidence || (matchedBy === "manual" ? 100 : null),
     updatedAt: Timestamp.now(),
   });
+
+  // Queue partner for pattern learning (non-blocking, debounced)
+  // This helps the system learn from user assignments
+  if (matchedBy === "manual" || matchedBy === "suggestion") {
+    queuePartnerForPatternLearning(finalPartnerId).catch((error) => {
+      console.error("Failed to queue pattern learning:", error);
+      // Don't throw - queueing is non-critical
+    });
+  }
+}
+
+/**
+ * Queue a partner for pattern learning (debounced)
+ * Patterns will be learned in batches every 5 minutes
+ */
+async function queuePartnerForPatternLearning(partnerId: string): Promise<void> {
+  const queueForLearning = httpsCallable<
+    { partnerId: string },
+    { success: boolean }
+  >(functions, "queuePartnerForLearning");
+
+  await queueForLearning({ partnerId });
+  console.log(`Partner ${partnerId} queued for pattern learning`);
 }
 
 /**
@@ -479,6 +582,7 @@ export async function listPromotionCandidates(
   const snapshot = await getDocs(q);
 
   return snapshot.docs.map((doc) => ({
+    id: doc.id,
     ...doc.data(),
   })) as PromotionCandidate[];
 }
@@ -536,4 +640,143 @@ export async function rejectPromotionCandidate(
     reviewedAt: Timestamp.now(),
     reviewedBy: ctx.userId,
   });
+}
+
+// ============ Preset Partners (Admin) ============
+
+/**
+ * Check if preset partners are currently enabled
+ */
+export async function getPresetPartnersStatus(
+  ctx: OperationsContext
+): Promise<{ enabled: boolean; count: number }> {
+  const q = query(
+    collection(ctx.db, GLOBAL_PARTNERS_COLLECTION),
+    where("source", "==", "preset"),
+    where("isActive", "==", true),
+    limit(1)
+  );
+
+  const snapshot = await getDocs(q);
+
+  if (snapshot.empty) {
+    return { enabled: false, count: 0 };
+  }
+
+  // Get full count
+  const countQuery = query(
+    collection(ctx.db, GLOBAL_PARTNERS_COLLECTION),
+    where("source", "==", "preset"),
+    where("isActive", "==", true)
+  );
+  const countSnapshot = await getDocs(countQuery);
+
+  return { enabled: true, count: countSnapshot.size };
+}
+
+/**
+ * Enable preset partners by seeding them into the database
+ */
+export async function enablePresetPartners(
+  ctx: OperationsContext
+): Promise<{ created: number }> {
+  const now = Timestamp.now();
+
+  // Check if already enabled
+  const status = await getPresetPartnersStatus(ctx);
+  if (status.enabled) {
+    return { created: 0 };
+  }
+
+  // Batch write in groups of 500 (Firestore limit)
+  const BATCH_SIZE = 500;
+  let created = 0;
+
+  for (let i = 0; i < PRESET_PARTNERS.length; i += BATCH_SIZE) {
+    const batch = writeBatch(ctx.db);
+    const chunk = PRESET_PARTNERS.slice(i, i + BATCH_SIZE);
+
+    for (const partner of chunk) {
+      const docRef = doc(collection(ctx.db, GLOBAL_PARTNERS_COLLECTION));
+      batch.set(docRef, {
+        name: partner.name,
+        aliases: partner.aliases,
+        address: null,
+        country: partner.country,
+        vatId: partner.vatId || null,
+        ibans: [],
+        website: partner.website || null,
+        externalIds: null,
+        source: "preset",
+        sourceDetails: {
+          contributingUserIds: ["system"],
+          confidence: 100,
+          verifiedAt: now,
+          verifiedBy: "system",
+        },
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+      created++;
+    }
+
+    await batch.commit();
+  }
+
+  return { created };
+}
+
+/**
+ * Disable preset partners by hard-deleting them
+ * (We hard delete because these are system-generated, not user data)
+ */
+export async function disablePresetPartners(
+  ctx: OperationsContext
+): Promise<{ deleted: number }> {
+  const q = query(
+    collection(ctx.db, GLOBAL_PARTNERS_COLLECTION),
+    where("source", "==", "preset")
+  );
+
+  const snapshot = await getDocs(q);
+
+  if (snapshot.empty) {
+    return { deleted: 0 };
+  }
+
+  // Batch delete in groups of 500
+  const BATCH_SIZE = 500;
+  let deleted = 0;
+  const docs = snapshot.docs;
+
+  for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+    const batch = writeBatch(ctx.db);
+    const chunk = docs.slice(i, i + BATCH_SIZE);
+
+    for (const docSnap of chunk) {
+      batch.delete(docSnap.ref);
+      deleted++;
+    }
+
+    await batch.commit();
+  }
+
+  return { deleted };
+}
+
+/**
+ * Toggle preset partners on/off
+ */
+export async function togglePresetPartners(
+  ctx: OperationsContext,
+  enable: boolean
+): Promise<{ enabled: boolean; count: number }> {
+  if (enable) {
+    const result = await enablePresetPartners(ctx);
+    return { enabled: true, count: result.created };
+  } else {
+    const result = await disablePresetPartners(ctx);
+    return { enabled: false, count: result.deleted };
+  }
 }

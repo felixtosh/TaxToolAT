@@ -8,11 +8,33 @@
  * 4. Fuzzy name match (60-90% confidence)
  */
 
-import { UserPartner, GlobalPartner, PartnerMatchResult, MatchSource } from "@/types/partner";
+import { UserPartner, GlobalPartner, PartnerMatchResult, MatchSource, LearnedPattern } from "@/types/partner";
 import { Transaction } from "@/types/transaction";
 import { normalizeIban } from "@/lib/import/deduplication";
 import { normalizeUrl, rootDomainsMatch } from "./url-normalizer";
 import { calculateCompanyNameSimilarity, vatIdsMatch } from "./fuzzy-match";
+
+/**
+ * Match a glob-style pattern against text
+ * Supports * as wildcard (matches any characters)
+ */
+export function globMatch(pattern: string, text: string): boolean {
+  if (!pattern || !text) return false;
+
+  const normalizedText = text.toLowerCase();
+  const normalizedPattern = pattern.toLowerCase();
+
+  // Convert glob to regex: escape special chars, then replace * with .*
+  const regexPattern = normalizedPattern
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&") // Escape regex special chars
+    .replace(/\*/g, ".*"); // * -> .*
+
+  try {
+    return new RegExp(`^${regexPattern}$`).test(normalizedText);
+  } catch {
+    return false;
+  }
+}
 
 type PartnerWithType = (UserPartner | GlobalPartner) & { _type: "user" | "global" };
 
@@ -92,11 +114,34 @@ function matchSinglePartner(
     }
   }
 
-  // 2. VAT ID match (95% confidence)
+  // 2. Learned pattern match (uses AI-determined confidence)
+  // Only for user partners (they have learned patterns)
+  if (partner._type === "user" && "learnedPatterns" in partner) {
+    const userPartner = partner as UserPartner & { _type: "user" };
+    if (userPartner.learnedPatterns && userPartner.learnedPatterns.length > 0) {
+      for (const lp of userPartner.learnedPatterns) {
+        const textToMatch = lp.field === "partner" ? transaction.partner : transaction.name;
+        if (textToMatch && globMatch(lp.pattern, textToMatch)) {
+          const match: PartnerMatchResult = {
+            partnerId: partner.id,
+            partnerType: partner._type,
+            partnerName: partner.name,
+            confidence: lp.confidence,
+            source: "pattern",
+          };
+          if (!bestMatch || match.confidence > bestMatch.confidence) {
+            bestMatch = match;
+          }
+        }
+      }
+    }
+  }
+
+  // 3. VAT ID match (95% confidence)
   // Note: We'd need to extract VAT from transaction - future enhancement
   // For now, VAT matching happens when user explicitly provides VAT
 
-  // 3. Website match (90% confidence)
+  // 4. Website match (90% confidence)
   // Check if partner website appears in transaction name or description
   if (partner.website) {
     const normalizedWebsite = normalizeUrl(partner.website);
@@ -209,6 +254,8 @@ export function getSourceLabel(source: MatchSource): string {
       return "Website Match";
     case "name":
       return "Name Match";
+    case "pattern":
+      return "Pattern Match";
     case "manual":
       return "Manual";
     default:
@@ -231,6 +278,61 @@ export function matchTransactionsBatch(
     const matches = matchTransaction(transaction, userPartners, globalPartners);
     if (matches.length > 0) {
       results.set(transaction.id, matches);
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Fast client-side pattern matching (instant suggestions)
+ * Only checks learned patterns - no IBAN, name, or website matching
+ * Use this for instant UI suggestions without server calls
+ */
+export function matchTransactionByPattern(
+  transaction: Transaction,
+  partners: UserPartner[]
+): PartnerMatchResult | null {
+  if (transaction.partnerId) return null; // Already assigned
+
+  let bestMatch: PartnerMatchResult | null = null;
+
+  for (const partner of partners) {
+    if (!partner.learnedPatterns || partner.learnedPatterns.length === 0) continue;
+
+    for (const lp of partner.learnedPatterns) {
+      const textToMatch = lp.field === "partner" ? transaction.partner : transaction.name;
+      if (textToMatch && globMatch(lp.pattern, textToMatch)) {
+        if (!bestMatch || lp.confidence > bestMatch.confidence) {
+          bestMatch = {
+            partnerId: partner.id,
+            partnerType: "user",
+            partnerName: partner.name,
+            confidence: lp.confidence,
+            source: "pattern",
+          };
+        }
+      }
+    }
+  }
+
+  return bestMatch;
+}
+
+/**
+ * Batch pattern matching for all transactions
+ * Returns a Map of transactionId -> suggested partner match
+ */
+export function matchAllTransactionsByPattern(
+  transactions: Transaction[],
+  partners: UserPartner[]
+): Map<string, PartnerMatchResult> {
+  const results = new Map<string, PartnerMatchResult>();
+
+  for (const transaction of transactions) {
+    const match = matchTransactionByPattern(transaction, partners);
+    if (match) {
+      results.set(transaction.id, match);
     }
   }
 

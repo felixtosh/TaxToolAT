@@ -11,6 +11,7 @@ interface ImportProgressProps {
     imported: number;
     skipped: number;
     errors: number;
+    errorDetails: { row: number; message: string; rowData: Record<string, string> }[];
   } | null;
   isComplete: boolean;
 }
@@ -77,6 +78,11 @@ export function ImportProgress({
           />
         </div>
       )}
+
+      {/* Error details */}
+      {isComplete && results && results.errorDetails.length > 0 && (
+        <ErrorDetailsTable errors={results.errorDetails} />
+      )}
     </div>
   );
 }
@@ -109,6 +115,56 @@ function ResultCard({
             {total !== undefined && ` (${Math.round((value / total) * 100)}%)`}
           </p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+interface ErrorDetailsTableProps {
+  errors: { row: number; message: string; rowData: Record<string, string> }[];
+}
+
+function ErrorDetailsTable({ errors }: ErrorDetailsTableProps) {
+  // Get all unique column names from error rows
+  const columns = errors.length > 0
+    ? Object.keys(errors[0].rowData)
+    : [];
+
+  return (
+    <div className="mt-6 border rounded-lg overflow-hidden">
+      <div className="bg-destructive/10 px-4 py-2 border-b flex items-center gap-2">
+        <XCircle className="h-4 w-4 text-destructive" />
+        <span className="font-medium text-sm">
+          {errors.length} Error{errors.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      <div className="max-h-[300px] overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 sticky top-0">
+            <tr>
+              <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Row</th>
+              <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Error</th>
+              {columns.map((col) => (
+                <th key={col} className="text-left px-3 py-2 font-medium whitespace-nowrap max-w-[150px] truncate">
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {errors.map((error, idx) => (
+              <tr key={idx} className="border-t hover:bg-muted/30">
+                <td className="px-3 py-2 text-muted-foreground">{error.row}</td>
+                <td className="px-3 py-2 text-destructive whitespace-nowrap">{error.message}</td>
+                {columns.map((col) => (
+                  <td key={col} className="px-3 py-2 max-w-[150px] truncate" title={error.rowData[col] || ""}>
+                    {error.rowData[col] || "-"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

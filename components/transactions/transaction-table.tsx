@@ -1,31 +1,39 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useMemo, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransactions } from "@/hooks/use-transactions";
 import { useSources } from "@/hooks/use-sources";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { parseFiltersFromUrl, buildFilterUrl } from "@/lib/filters/url-params";
+import { matchAllTransactionsByPattern } from "@/lib/matching";
 import { DataTable } from "./data-table";
 import { getTransactionColumns } from "./transaction-columns";
 import { TransactionToolbar } from "./transaction-toolbar";
 import { Transaction, TransactionFilters } from "@/types/transaction";
+import { UserPartner, GlobalPartner } from "@/types/partner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 interface TransactionTableProps {
   onSelectTransaction: (transaction: Transaction) => void;
   selectedTransactionId: string | null;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+  userPartners?: UserPartner[];
+  globalPartners?: GlobalPartner[];
 }
 
 export function TransactionTable({
   onSelectTransaction,
   selectedTransactionId,
+  searchValue,
+  onSearchChange,
+  userPartners = [],
+  globalPartners = [],
 }: TransactionTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-
-  const [searchValue, setSearchValue] = useState("");
 
   const { transactions, loading, error } = useTransactions();
   const { sources } = useSources();
@@ -123,8 +131,17 @@ export function TransactionTable({
     router.push(url);
   };
 
-  // Create columns with sources lookup - must be before conditional returns
-  const columns = useMemo(() => getTransactionColumns(sources), [sources]);
+  // Compute pattern-based suggestions for unassigned transactions (instant, client-side)
+  const patternSuggestions = useMemo(
+    () => matchAllTransactionsByPattern(transactions, userPartners),
+    [transactions, userPartners]
+  );
+
+  // Create columns with sources and partners lookup - must be before conditional returns
+  const columns = useMemo(
+    () => getTransactionColumns(sources, userPartners, globalPartners, patternSuggestions),
+    [sources, userPartners, globalPartners, patternSuggestions]
+  );
 
   const handleRowClick = (transaction: Transaction) => {
     onSelectTransaction(transaction);
@@ -171,7 +188,7 @@ export function TransactionTable({
       {/* Fixed toolbar */}
       <TransactionToolbar
         searchValue={searchValue}
-        onSearchChange={setSearchValue}
+        onSearchChange={onSearchChange}
         filters={filters}
         onFiltersChange={handleFiltersChange}
       />

@@ -13,6 +13,8 @@ import {
   listPromotionCandidates,
   approvePromotionCandidate,
   rejectPromotionCandidate,
+  getPresetPartnersStatus,
+  togglePresetPartners,
 } from "@/lib/operations";
 
 const GLOBAL_PARTNERS_COLLECTION = "globalPartners";
@@ -26,6 +28,8 @@ export function useGlobalPartners() {
   const [promotionCandidates, setPromotionCandidates] = useState<PromotionCandidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [presetPartnersEnabled, setPresetPartnersEnabled] = useState(false);
+  const [presetPartnersLoading, setPresetPartnersLoading] = useState(false);
 
   const ctx: OperationsContext = useMemo(
     () => ({
@@ -34,6 +38,19 @@ export function useGlobalPartners() {
     }),
     []
   );
+
+  // Check preset partners status on mount
+  useEffect(() => {
+    const checkPresetStatus = async () => {
+      try {
+        const status = await getPresetPartnersStatus(ctx);
+        setPresetPartnersEnabled(status.enabled);
+      } catch (err) {
+        console.error("Error checking preset partners status:", err);
+      }
+    };
+    checkPresetStatus();
+  }, [ctx]);
 
   // Realtime listener for global partners
   useEffect(() => {
@@ -139,6 +156,21 @@ export function useGlobalPartners() {
     return result.data;
   }, [loadPromotionCandidates]);
 
+  // Toggle preset partners on/off
+  const togglePreset = useCallback(
+    async (enable: boolean): Promise<{ enabled: boolean; count: number }> => {
+      setPresetPartnersLoading(true);
+      try {
+        const result = await togglePresetPartners(ctx, enable);
+        setPresetPartnersEnabled(result.enabled);
+        return result;
+      } finally {
+        setPresetPartnersLoading(false);
+      }
+    },
+    [ctx]
+  );
+
   return {
     globalPartners,
     promotionCandidates,
@@ -152,5 +184,8 @@ export function useGlobalPartners() {
     rejectCandidate,
     refreshCandidates: loadPromotionCandidates,
     generateCandidates,
+    presetPartnersEnabled,
+    presetPartnersLoading,
+    togglePresetPartners: togglePreset,
   };
 }

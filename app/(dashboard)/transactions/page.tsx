@@ -6,6 +6,16 @@ import { TransactionTable } from "@/components/transactions/transaction-table";
 import { TransactionDetailPanel } from "@/components/transactions/transaction-detail-panel";
 import { useTransactions } from "@/hooks/use-transactions";
 import { useSources } from "@/hooks/use-sources";
+import { usePartners } from "@/hooks/use-partners";
+import { useGlobalPartners } from "@/hooks/use-global-partners";
+import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
+import {
+  parseFiltersFromUrl,
+  saveFiltersToStorage,
+  loadFiltersFromStorage,
+  buildSearchParamsString,
+  hasUrlParams,
+} from "@/lib/filters/url-params";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Transaction } from "@/types/transaction";
 import { cn } from "@/lib/utils";
@@ -48,15 +58,74 @@ function TransactionsContent() {
 
   const { transactions, loading, updateTransaction } = useTransactions();
   const { sources } = useSources();
+  const { partners, createPartner, assignToTransaction, removeFromTransaction } = usePartners();
+  const { globalPartners } = useGlobalPartners();
 
   const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  // Restore filters from localStorage on initial mount if no URL params
+  const hasRestoredRef = useRef(false);
+  useEffect(() => {
+    if (hasRestoredRef.current) return;
+    hasRestoredRef.current = true;
+
+    // Only restore if URL has no filter/search params (id param is fine)
+    if (!hasUrlParams(searchParams)) {
+      const { filters: savedFilters, search: savedSearch } =
+        loadFiltersFromStorage();
+      const paramsString = buildSearchParamsString(savedFilters, savedSearch);
+      if (paramsString) {
+        router.replace(`/transactions?${paramsString}`, { scroll: false });
+      }
+    }
+  }, [router, searchParams]);
+
+  // Get search value from URL
+  const searchValue = searchParams.get("search") || "";
+
+  // Parse filters from URL
+  const filters = useMemo(() => parseFiltersFromUrl(searchParams), [searchParams]);
+
+  // Save filters to localStorage whenever they change
+  useEffect(() => {
+    saveFiltersToStorage(filters, searchValue);
+  }, [filters, searchValue]);
+
+  // Update search in URL
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (value) {
+        params.set("search", value);
+      } else {
+        params.delete("search");
+      }
+      const newUrl = params.toString()
+        ? `/transactions?${params.toString()}`
+        : "/transactions";
+      router.replace(newUrl, { scroll: false });
+    },
+    [router, searchParams]
+  );
   const panelRef = useRef<HTMLDivElement>(null);
   const currentWidthRef = useRef(panelWidth);
 
   // Get selected transaction ID from URL
   const selectedId = searchParams.get("id");
+
+  // Get filtered transactions
+  const filteredTransactions = useFilteredTransactions(transactions, filters, searchValue);
+
+  // Find current index in filtered list for navigation
+  const currentIndex = useMemo(() => {
+    if (!selectedId) return -1;
+    return filteredTransactions.findIndex((t) => t.id === selectedId);
+  }, [selectedId, filteredTransactions]);
+
+  const hasPrevious = currentIndex > 0;
+  const hasNext = currentIndex >= 0 && currentIndex < filteredTransactions.length - 1;
 
   // Find selected transaction
   const selectedTransaction = useMemo(() => {
@@ -146,6 +215,22 @@ function TransactionsContent() {
     [selectedTransaction, updateTransaction]
   );
 
+  // Navigate to previous transaction
+  const handleNavigatePrevious = useCallback(() => {
+    if (currentIndex > 0) {
+      const prevTransaction = filteredTransactions[currentIndex - 1];
+      handleSelectTransaction(prevTransaction);
+    }
+  }, [currentIndex, filteredTransactions, handleSelectTransaction]);
+
+  // Navigate to next transaction
+  const handleNavigateNext = useCallback(() => {
+    if (currentIndex >= 0 && currentIndex < filteredTransactions.length - 1) {
+      const nextTransaction = filteredTransactions[currentIndex + 1];
+      handleSelectTransaction(nextTransaction);
+    }
+  }, [currentIndex, filteredTransactions, handleSelectTransaction]);
+
   // Scroll to selected transaction when it changes from URL
   useEffect(() => {
     if (selectedId && !loading) {
@@ -174,6 +259,10 @@ function TransactionsContent() {
         <TransactionTable
           onSelectTransaction={handleSelectTransaction}
           selectedTransactionId={selectedId}
+          searchValue={searchValue}
+          onSearchChange={handleSearchChange}
+          userPartners={partners}
+          globalPartners={globalPartners}
         />
       </div>
 
@@ -199,6 +288,15 @@ function TransactionsContent() {
               source={selectedSource}
               onClose={handleCloseDetail}
               onUpdate={handleTransactionUpdate}
+              onNavigatePrevious={handleNavigatePrevious}
+              onNavigateNext={handleNavigateNext}
+              hasPrevious={hasPrevious}
+              hasNext={hasNext}
+              partners={partners}
+              globalPartners={globalPartners}
+              onAssignPartner={assignToTransaction}
+              onRemovePartner={removeFromTransaction}
+              onCreatePartner={createPartner}
             />
           </div>
         </div>

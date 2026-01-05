@@ -58,14 +58,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
     },
   });
 
-  const { messages, status, setMessages, sendMessage: sdkSendMessage, error } = chatHook;
+  const { messages, status, setMessages, sendMessage: sdkSendMessage } = chatHook;
   const isLoading = status === "streaming" || status === "submitted";
-
-  // Debug logging
-  console.log("[Chat] status:", status);
-  console.log("[Chat] error:", error);
-  console.log("[Chat] messages:", messages);
-  console.log("[Chat] raw messages:", JSON.stringify(messages, null, 2));
 
   // UI Control Actions
   const uiActions: UIControlActions = useMemo(
@@ -197,31 +191,54 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const value: ChatContextValue = useMemo(
     () => ({
       messages: messages.map((m) => {
-        // AI SDK v6 uses 'parts' array instead of 'content' string
-        const textContent = m.parts
-          ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
-          .map((p) => p.text)
-          .join("") || (m as unknown as { content?: string }).content || "";
+        // AI SDK v6 uses 'parts' array - preserve order for chronological rendering
+        const orderedParts: Array<{ type: "text"; text: string } | { type: "tool"; toolCall: NonNullable<ChatContextValue["messages"][0]["toolCalls"]>[0] }> = [];
+        let fullTextContent = "";
+
+        if (m.parts) {
+          for (const p of m.parts) {
+            if (p.type === "text" && (p as { text?: string }).text) {
+              const text = (p as { text: string }).text;
+              fullTextContent += text;
+              orderedParts.push({ type: "text", text });
+            } else if (typeof p.type === "string" && p.type.startsWith("tool-")) {
+              const toolPart = p as { type: string; toolCallId: string; input?: Record<string, unknown>; output?: unknown; state: string };
+              const toolName = toolPart.type.replace("tool-", "");
+              orderedParts.push({
+                type: "tool",
+                toolCall: {
+                  id: toolPart.toolCallId,
+                  name: toolName,
+                  args: toolPart.input || {},
+                  result: toolPart.output,
+                  status:
+                    toolPart.state === "output-available"
+                      ? "executed"
+                      : toolPart.state === "input-available" || toolPart.state === "input-streaming"
+                      ? "pending"
+                      : pendingConfirmations.find((pc) => pc.id === toolPart.toolCallId)?.status || "pending",
+                  requiresConfirmation: requiresConfirmation(toolName),
+                },
+              });
+            }
+          }
+        }
+
+        // Fallback for legacy content string
+        if (!fullTextContent && (m as unknown as { content?: string }).content) {
+          fullTextContent = (m as unknown as { content: string }).content;
+          orderedParts.push({ type: "text", text: fullTextContent });
+        }
 
         return {
           id: m.id,
           role: m.role as "user" | "assistant" | "system",
-          content: textContent,
+          content: fullTextContent,
           createdAt: new Date(),
-          toolCalls: m.parts
-            ?.filter((p): p is { type: "tool-invocation"; toolInvocation: { toolCallId: string; toolName: string; args: Record<string, unknown>; state: string } } =>
-              p.type === "tool-invocation"
-            )
-            .map((p) => ({
-              id: p.toolInvocation.toolCallId,
-              name: p.toolInvocation.toolName,
-              args: p.toolInvocation.args,
-              status:
-                p.toolInvocation.state === "result"
-                  ? "executed"
-                  : pendingConfirmations.find((pc) => pc.id === p.toolInvocation.toolCallId)?.status || "pending",
-              requiresConfirmation: requiresConfirmation(p.toolInvocation.toolName),
-            })),
+          parts: orderedParts,
+          toolCalls: orderedParts
+            .filter((p): p is { type: "tool"; toolCall: NonNullable<ChatContextValue["messages"][0]["toolCalls"]>[0] } => p.type === "tool")
+            .map((p) => p.toolCall),
         };
       }) as ChatContextValue["messages"],
       isLoading,

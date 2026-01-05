@@ -57,9 +57,6 @@ export interface Transaction {
 
   // === Classification ===
 
-  /** Reference to category document */
-  categoryId: string | null;
-
   /** Array of receipt document IDs */
   receiptIds: string[];
 
@@ -109,9 +106,6 @@ export interface TransactionFilters {
 
   /** Filter by source/bank account */
   sourceId?: string;
-
-  /** Filter by category */
-  categoryId?: string;
 
   /** Date range start */
   dateFrom?: Date;

@@ -7,16 +7,27 @@ import {
 import { detectDateFormat } from "./date-parsers";
 import { detectAmountFormat } from "./amount-parsers";
 import { getColumnSamples } from "./csv-parser";
+import { matchColumnsWithAI } from "./ai-matcher";
 
 /**
- * Auto-match CSV columns to transaction fields.
+ * Auto-match CSV columns to transaction fields using Claude AI.
+ * This is the primary matching method.
+ */
+export async function autoMatchColumns(
+  headers: string[],
+  sampleRows: Record<string, string>[]
+): Promise<FieldMapping[]> {
+  return matchColumnsWithAI(headers, sampleRows);
+}
+
+/**
+ * Rule-based column matching (fallback/testing).
  * Uses a multi-step approach:
  * 1. Exact alias matching
  * 2. Fuzzy alias matching
  * 3. Pattern detection (dates, amounts)
- * 4. AI inference (if API available)
  */
-export async function autoMatchColumns(
+export async function autoMatchColumnsRuleBased(
   headers: string[],
   sampleRows: Record<string, string>[]
 ): Promise<FieldMapping[]> {

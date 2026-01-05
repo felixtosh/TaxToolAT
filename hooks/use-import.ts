@@ -33,12 +33,14 @@ export interface ImportState {
   file: File | null;
   analysis: CSVAnalysis | null;
   mappings: FieldMapping[];
+  isMatching: boolean; // True while AI is analyzing columns
   progress: number;
   results: {
     total: number;
     imported: number;
     skipped: number;
     errors: number;
+    errorDetails: { row: number; message: string; rowData: Record<string, string> }[];
   } | null;
   error: string | null;
 }
@@ -49,6 +51,7 @@ export function useImport(source: TransactionSource | null) {
     file: null,
     analysis: null,
     mappings: [],
+    isMatching: false,
     progress: 0,
     results: null,
     error: null,
@@ -62,39 +65,52 @@ export function useImport(source: TransactionSource | null) {
         file,
         analysis,
         error: null,
+        isMatching: true,
       }));
 
-      // Check if source has saved mappings
-      if (source?.fieldMappings) {
-        // Use saved mappings
-        const savedMappings = source.fieldMappings.mappings;
-        const mappings: FieldMapping[] = analysis.headers.map((header) => ({
-          csvColumn: header,
-          targetField: savedMappings[header] || null,
-          confidence: savedMappings[header] ? 1 : 0,
-          userConfirmed: !!savedMappings[header],
-          keepAsMetadata: !savedMappings[header],
-          format: source.fieldMappings?.formats?.[header],
-        }));
+      try {
+        // Check if source has saved mappings
+        if (source?.fieldMappings) {
+          // Use saved mappings
+          const savedMappings = source.fieldMappings.mappings;
+          const mappings: FieldMapping[] = analysis.headers.map((header) => ({
+            csvColumn: header,
+            targetField: savedMappings[header] || null,
+            confidence: savedMappings[header] ? 1 : 0,
+            userConfirmed: !!savedMappings[header],
+            keepAsMetadata: !savedMappings[header],
+            format: source.fieldMappings?.formats?.[header],
+          }));
 
+          setState((s) => ({
+            ...s,
+            mappings,
+            isMatching: false,
+          }));
+        } else {
+          // Auto-match columns using AI - returns FieldMapping with format already set
+          const mappings = await autoMatchColumns(
+            analysis.headers,
+            analysis.sampleRows
+          );
+
+          setState((s) => ({
+            ...s,
+            mappings,
+            isMatching: false,
+          }));
+        }
+
+        return true; // Signal success - page can navigate to mapping step
+      } catch (error) {
+        console.error("Column matching failed:", error);
         setState((s) => ({
           ...s,
-          mappings,
+          isMatching: false,
+          error: `Column matching failed: ${error instanceof Error ? error.message : "Unknown error"}`,
         }));
-      } else {
-        // Auto-match columns - returns FieldMapping with format already set
-        const mappings = await autoMatchColumns(
-          analysis.headers,
-          analysis.sampleRows
-        );
-
-        setState((s) => ({
-          ...s,
-          mappings,
-        }));
+        return false;
       }
-
-      return true; // Signal success - page can navigate to mapping step
     },
     [source]
   );
@@ -200,7 +216,7 @@ export function useImport(source: TransactionSource | null) {
     // Prepare transactions
     const transactions: Omit<Transaction, "id">[] = [];
     const hashes: string[] = [];
-    const errors: { row: number; message: string }[] = [];
+    const errors: { row: number; message: string; rowData: Record<string, string> }[] = [];
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -240,10 +256,16 @@ export function useImport(source: TransactionSource | null) {
         }
 
         // Validate required fields
-        if (!dateValue || !amountValue || !nameValue) {
+        const missingFields: string[] = [];
+        if (!dateValue) missingFields.push("date");
+        if (!amountValue) missingFields.push("amount");
+        if (!nameValue) missingFields.push("description");
+
+        if (missingFields.length > 0) {
           errors.push({
             row: i + 1,
-            message: "Missing required fields (date, amount, or description)",
+            message: `Missing: ${missingFields.join(", ")}`,
+            rowData: row,
           });
           continue;
         }
@@ -251,14 +273,14 @@ export function useImport(source: TransactionSource | null) {
         // Parse date
         const parsedDate = parseDate(dateValue, dateFormat);
         if (!parsedDate) {
-          errors.push({ row: i + 1, message: `Invalid date: ${dateValue}` });
+          errors.push({ row: i + 1, message: `Invalid date: ${dateValue}`, rowData: row });
           continue;
         }
 
         // Parse amount
         const parsedAmount = parseAmount(amountValue, amountConfig);
         if (parsedAmount === null) {
-          errors.push({ row: i + 1, message: `Invalid amount: ${amountValue}` });
+          errors.push({ row: i + 1, message: `Invalid amount: ${amountValue}`, rowData: row });
           continue;
         }
 
@@ -290,7 +312,6 @@ export function useImport(source: TransactionSource | null) {
           reference: referenceValue,
           partnerIban: partnerIbanValue,
           dedupeHash: hash,
-          categoryId: null,
           receiptIds: [],
           isComplete: false,
           importJobId,
@@ -302,6 +323,7 @@ export function useImport(source: TransactionSource | null) {
         errors.push({
           row: i + 1,
           message: err instanceof Error ? err.message : "Unknown error",
+          rowData: row,
         });
       }
 
@@ -364,6 +386,7 @@ export function useImport(source: TransactionSource | null) {
         imported: importedCount,
         skipped: skippedCount,
         errors: errors.length,
+        errorDetails: errors,
       },
     }));
   }, [source, state.file, state.analysis, state.mappings]);
@@ -374,6 +397,7 @@ export function useImport(source: TransactionSource | null) {
       file: null,
       analysis: null,
       mappings: [],
+      isMatching: false,
       progress: 0,
       results: null,
       error: null,

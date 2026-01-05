@@ -40,11 +40,16 @@ export const generatePromotionCandidates = onCall(
     console.log("Starting promotion candidates generation...");
 
     try {
+      console.log("Starting generatePromotionCandidates...");
+
       // 1. Get all active user partners
+      console.log("Querying partners collection...");
       const partnersSnapshot = await db
         .collection("partners")
         .where("isActive", "==", true)
         .get();
+
+      console.log(`Query returned ${partnersSnapshot.size} documents`);
 
       if (partnersSnapshot.empty) {
         console.log("No active user partners found");
@@ -54,20 +59,23 @@ export const generatePromotionCandidates = onCall(
       console.log(`Found ${partnersSnapshot.size} active user partners`);
 
       // 2. Map partners to normalized data
-      const partners: UserPartnerData[] = partnersSnapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          userId: data.userId,
-          name: data.name,
-          normalizedName: normalizeCompanyName(data.name),
-          aliases: data.aliases || [],
-          ibans: data.ibans || [],
-          normalizedIbans: (data.ibans || []).map((iban: string) => normalizeIban(iban)),
-          vatId: data.vatId,
-          website: data.website,
-        };
-      });
+      // Exclude partners that were derived from global partners (they have globalPartnerId set)
+      const partners: UserPartnerData[] = partnersSnapshot.docs
+        .filter((doc) => !doc.data().globalPartnerId)
+        .map((doc) => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            userId: data.userId,
+            name: data.name,
+            normalizedName: normalizeCompanyName(data.name),
+            aliases: data.aliases || [],
+            ibans: data.ibans || [],
+            normalizedIbans: (data.ibans || []).map((iban: string) => normalizeIban(iban)),
+            vatId: data.vatId,
+            website: data.website,
+          };
+        });
 
       // 3. Group partners by similarity
       const groups: PartnerGroup[] = [];
@@ -189,8 +197,9 @@ export const generatePromotionCandidates = onCall(
         batch.delete(doc.ref);
       }
 
-      // 5. Create new candidates
+      // 5. Create new candidates from groups
       let candidatesCreated = 0;
+      const addedPartnerIds = new Set<string>();
 
       for (const group of groups) {
         if (group.userIds.size < 2) continue;
@@ -260,12 +269,61 @@ export const generatePromotionCandidates = onCall(
           createdAt: FieldValue.serverTimestamp(),
         });
 
+        // Track added partners
+        group.partners.forEach((p) => addedPartnerIds.add(p.id));
+        candidatesCreated++;
+      }
+
+      // 6. Add remaining single-user partners (not in any group)
+      // These are candidates for manual review/promotion
+      for (const partner of partners) {
+        if (addedPartnerIds.has(partner.id)) continue;
+
+        const partnerDoc = await db.collection("partners").doc(partner.id).get();
+        const partnerData = partnerDoc.data();
+        if (!partnerData) continue;
+
+        // Calculate confidence based on data completeness
+        let dataScore = 0;
+        if (partner.ibans.length > 0) dataScore += 30;
+        if (partner.vatId) dataScore += 25;
+        if (partner.website) dataScore += 15;
+        if (partner.aliases.length > 0) dataScore += 10;
+
+        // Base confidence of 50 for single-user, plus data completeness bonus
+        const confidence = Math.min(80, 50 + Math.round(dataScore / 4));
+
+        const candidateId = `single_${partner.id}`;
+        batch.set(db.collection("promotionCandidates").doc(candidateId), {
+          userPartner: {
+            id: partner.id,
+            userId: partner.userId,
+            name: partnerData.name,
+            aliases: partnerData.aliases || [],
+            address: partnerData.address,
+            vatId: partnerData.vatId,
+            ibans: partnerData.ibans || [],
+            website: partnerData.website,
+            notes: partnerData.notes,
+            isActive: partnerData.isActive,
+            createdAt: partnerData.createdAt,
+            updatedAt: partnerData.updatedAt,
+          },
+          userCount: 1,
+          confidence,
+          status: "pending",
+          matchType: "single",
+          contributingUserIds: [partner.userId],
+          createdAt: FieldValue.serverTimestamp(),
+        });
+
+        addedPartnerIds.add(partner.id);
         candidatesCreated++;
       }
 
       await batch.commit();
 
-      console.log(`Created ${candidatesCreated} promotion candidates`);
+      console.log(`Created ${candidatesCreated} promotion candidates (including single-user)`);
 
       return {
         candidatesCreated,
@@ -275,7 +333,9 @@ export const generatePromotionCandidates = onCall(
       };
     } catch (error) {
       console.error("Error generating promotion candidates:", error);
-      throw new HttpsError("internal", "Failed to generate promotion candidates");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error("Error details:", errorMessage);
+      throw new HttpsError("internal", `Failed to generate promotion candidates: ${errorMessage}`);
     }
   }
 );

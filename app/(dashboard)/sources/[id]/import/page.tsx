@@ -108,9 +108,9 @@ export default function ImportPage({ params }: ImportPageProps) {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6">
+    <div className="h-full overflow-hidden flex flex-col">
       {/* Header */}
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex items-center gap-4 px-4 py-4 border-b flex-shrink-0">
         <Button
           variant="ghost"
           size="icon"
@@ -127,7 +127,7 @@ export default function ImportPage({ params }: ImportPageProps) {
       </div>
 
       {/* Steps indicator */}
-      <div className="flex items-center gap-2 mb-8">
+      <div className="flex items-center gap-2 px-4 py-4 border-b flex-shrink-0">
         <StepIndicator
           step={1}
           label="Upload"
@@ -157,16 +157,18 @@ export default function ImportPage({ params }: ImportPageProps) {
         />
       </div>
 
-      {/* Error display */}
-      {state.error && (
-        <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive">
-          {state.error}
-        </div>
-      )}
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-auto px-4 py-6">
+        {/* Error display */}
+        {state.error && (
+          <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive">
+            {state.error}
+          </div>
+        )}
 
-      {/* Step content */}
-      {effectiveStep === "upload" && (
-        <Card>
+        {/* Step content */}
+        {effectiveStep === "upload" && (
+          <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Upload className="h-5 w-5" />
@@ -174,7 +176,16 @@ export default function ImportPage({ params }: ImportPageProps) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <CSVDropzone onFileAnalyzed={onFileAnalyzed} />
+            {state.isMatching ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+                <p className="text-muted-foreground">
+                  AI is analyzing your columns...
+                </p>
+              </div>
+            ) : (
+              <CSVDropzone onFileAnalyzed={onFileAnalyzed} />
+            )}
           </CardContent>
         </Card>
       )}
@@ -255,6 +266,7 @@ export default function ImportPage({ params }: ImportPageProps) {
           </CardContent>
         </Card>
       )}
+      </div>
     </div>
   );
 }

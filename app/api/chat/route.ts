@@ -1,8 +1,8 @@
 import { anthropic } from "@ai-sdk/anthropic";
-import { streamText, tool, createUIMessageStreamResponse, createUIMessageStream } from "ai";
-import { z } from "zod";
+import { streamText, tool, stepCountIs } from "ai";
+import { z } from "zod/v4";
 import { initializeApp, getApps } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { SYSTEM_PROMPT } from "@/lib/chat/system-prompt";
 import { requiresConfirmation } from "@/lib/chat/confirmation-config";
 import {
@@ -15,7 +15,6 @@ import {
   getTransaction,
   getTransactionHistory,
   updateTransactionWithHistory,
-  bulkUpdateTransactionsWithHistory,
   rollbackTransaction,
   OperationsContext,
 } from "@/lib/operations";
@@ -33,6 +32,18 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const db = getFirestore(app);
 
+// Connect to Firestore emulator in development
+let emulatorConnected = false;
+if (process.env.NODE_ENV === "development" && !emulatorConnected) {
+  try {
+    connectFirestoreEmulator(db, "localhost", 8080);
+    emulatorConnected = true;
+    console.log("[Chat API] Connected to Firestore emulator");
+  } catch (e) {
+    // Already connected
+  }
+}
+
 // Mock user for development
 const MOCK_USER_ID = "dev-user-123";
 
@@ -42,55 +53,185 @@ function createContext(): OperationsContext {
 
 export const maxDuration = 60;
 
+// Convert UI messages to model messages format
+// IMPORTANT: Must preserve tool calls and results for multi-turn conversations
+interface UIMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content?: string;
+  parts?: Array<{
+    type: string;
+    text?: string;
+    toolCallId?: string;
+    toolName?: string;
+    args?: Record<string, unknown>;
+    result?: unknown;
+    [key: string]: unknown;
+  }>;
+}
+
+type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> };
+
+type ToolResultPart = { type: "tool-result"; toolCallId: string; result: unknown };
+
+type ConvertedMessage =
+  | { role: "user" | "system"; content: string }
+  | { role: "assistant"; content: ContentPart[] }
+  | { role: "tool"; content: ToolResultPart[] };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function convertMessages(uiMessages: UIMessage[]): any[] {
+  const result: ConvertedMessage[] = [];
+
+  for (const msg of uiMessages) {
+    // User messages: just extract text content
+    if (msg.role === "user") {
+      const content = msg.content ||
+        msg.parts?.filter((p) => p.type === "text" && p.text).map((p) => p.text).join("") ||
+        "";
+      if (content.trim()) {
+        result.push({ role: "user", content });
+      }
+      continue;
+    }
+
+    // Assistant messages: need to handle both text and tool calls
+    if (msg.role === "assistant" && msg.parts) {
+      const contentParts: ContentPart[] = [];
+      const toolResults: ToolResultPart[] = [];
+
+      for (const part of msg.parts) {
+        if (part.type === "text" && part.text) {
+          contentParts.push({ type: "text", text: part.text });
+        } else if (part.type.startsWith("tool-")) {
+          // Tool part format: type is "tool-{toolName}"
+          const toolName = part.type.replace("tool-", "");
+          const toolCallId = part.toolCallId as string;
+          const args = (part.args || part.input || {}) as Record<string, unknown>;
+          const toolResult = part.result ?? part.output;
+
+          // Add tool call to assistant message
+          contentParts.push({
+            type: "tool-call",
+            toolCallId,
+            toolName,
+            args,
+          });
+
+          // If there's a result, collect it for a tool message
+          if (toolResult !== undefined) {
+            toolResults.push({
+              type: "tool-result",
+              toolCallId,
+              result: toolResult,
+            });
+          }
+        }
+      }
+
+      // Add assistant message if it has any content
+      if (contentParts.length > 0) {
+        result.push({ role: "assistant", content: contentParts });
+      }
+
+      // Add tool results as a separate message
+      if (toolResults.length > 0) {
+        result.push({ role: "tool", content: toolResults });
+      }
+      continue;
+    }
+
+    // Fallback: simple text content
+    if (typeof msg.content === "string" && msg.content.trim()) {
+      result.push({ role: msg.role, content: msg.content });
+    }
+  }
+
+  return result;
+}
+
 export async function POST(req: Request) {
-  const { messages } = await req.json();
+  const { messages: rawMessages } = await req.json();
+  const messages = convertMessages(rawMessages);
   const ctx = createContext();
 
-  // Test without tools first
+  console.log("[Chat API] Starting streamText with", messages.length, "messages");
+
   const result = streamText({
     model: anthropic("claude-sonnet-4-20250514"),
     system: SYSTEM_PROMPT,
     messages,
-    /* TEMPORARILY DISABLED - tools: {
+    stopWhen: stepCountIs(5), // Allow up to 5 steps for multi-tool execution
+    onStepFinish: ({ stepType, text, toolCalls, toolResults }) => {
+      console.log("[Step finished]", {
+        stepType,
+        hasText: !!text,
+        textLength: text?.length,
+        toolCallsCount: toolCalls?.length,
+        toolResultsCount: toolResults?.length,
+      });
+    },
+    onFinish: ({ text, finishReason, usage, steps }) => {
+      console.log("[Stream finished]", {
+        finishReason,
+        totalSteps: steps?.length,
+        totalText: text?.length,
+        usage,
+      });
+    },
+    tools: {
       // ===== READ-ONLY TOOLS (no confirmation) =====
 
       listTransactions: tool({
         description:
           "List transactions with optional filters. Returns date, amount, partner, description, etc.",
-        parameters: z.object({
+        inputSchema: z.object({
           sourceId: z.string().optional().describe("Filter by bank account ID"),
           dateFrom: z.string().optional().describe("Start date (ISO format)"),
           dateTo: z.string().optional().describe("End date (ISO format)"),
           search: z.string().optional().describe("Search in name, description, partner"),
-          limit: z.number().max(50).optional().default(20).describe("Max results"),
+          limit: z.number().max(50).optional().describe("Max results (default 20)"),
         }),
         execute: async (params) => {
+          console.log("[Tool] listTransactions called with:", params);
           const transactions = await listTransactions(ctx, {
             sourceId: params.sourceId,
             dateFrom: params.dateFrom ? new Date(params.dateFrom) : undefined,
             dateTo: params.dateTo ? new Date(params.dateTo) : undefined,
             search: params.search,
-            limit: params.limit,
+            limit: params.limit ?? 20,
           });
+          console.log("[Tool] listTransactions found:", transactions.length, "transactions");
 
-          return transactions.map((t) => ({
-            id: t.id,
-            date: t.date.toDate().toISOString(),
-            amount: t.amount,
-            amountFormatted: `${(t.amount / 100).toFixed(2)} ${t.currency}`,
-            name: t.name,
-            description: t.description,
+          const result = transactions.map((t) => {
+            const dateObj = t.date.toDate();
+            return {
+              id: t.id,
+              date: dateObj.toISOString(),
+              dateFormatted: dateObj.toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric"
+              }),
+              amount: t.amount,
+              amountFormatted: `${(t.amount / 100).toFixed(2).replace(".", ",")} ${t.currency}`,
+              name: t.name,
+              description: t.description,
             partner: t.partner,
-            categoryId: t.categoryId,
             isComplete: t.isComplete,
             hasReceipts: t.receiptIds.length > 0,
-          }));
+            };
+          });
+          console.log("[Tool] listTransactions returning:", JSON.stringify(result, null, 2));
+          return result;
         },
       }),
 
       getTransaction: tool({
         description: "Get full details of a single transaction by ID",
-        parameters: z.object({
+        inputSchema: z.object({
           transactionId: z.string().describe("The transaction ID"),
         }),
         execute: async ({ transactionId }) => {
@@ -107,7 +248,6 @@ export async function POST(req: Request) {
             partner: t.partner,
             reference: t.reference,
             partnerIban: t.partnerIban,
-            categoryId: t.categoryId,
             isComplete: t.isComplete,
             receiptIds: t.receiptIds,
             sourceId: t.sourceId,
@@ -117,8 +257,8 @@ export async function POST(req: Request) {
 
       listSources: tool({
         description: "List all bank accounts/sources",
-        parameters: z.object({
-          _dummy: z.string().optional().describe("Not used"),
+        inputSchema: z.object({
+          includeInactive: z.boolean().optional().describe("Include inactive sources"),
         }),
         execute: async () => {
           const sources = await listSources(ctx);
@@ -134,7 +274,7 @@ export async function POST(req: Request) {
 
       getSource: tool({
         description: "Get details of a single bank account by ID",
-        parameters: z.object({
+        inputSchema: z.object({
           sourceId: z.string().describe("The source/bank account ID"),
         }),
         execute: async ({ sourceId }) => {
@@ -154,7 +294,7 @@ export async function POST(req: Request) {
 
       getTransactionHistory: tool({
         description: "Get the edit history for a transaction (shows previous changes)",
-        parameters: z.object({
+        inputSchema: z.object({
           transactionId: z.string().describe("The transaction ID"),
         }),
         execute: async ({ transactionId }) => {
@@ -174,8 +314,8 @@ export async function POST(req: Request) {
 
       navigateTo: tool({
         description: "Navigate to a page in the application",
-        parameters: z.object({
-          path: z.enum(["/transactions", "/sources"]).describe("The page path to navigate to"),
+        inputSchema: z.object({
+          path: z.enum(["/transactions", "/sources"]).describe("The page path"),
         }),
         execute: async ({ path }) => {
           return { action: "navigate", path };
@@ -184,7 +324,7 @@ export async function POST(req: Request) {
 
       openTransactionSheet: tool({
         description: "Open the detail sheet/sidebar for a specific transaction",
-        parameters: z.object({
+        inputSchema: z.object({
           transactionId: z.string().describe("The transaction ID to show"),
         }),
         execute: async ({ transactionId }) => {
@@ -194,7 +334,7 @@ export async function POST(req: Request) {
 
       scrollToTransaction: tool({
         description: "Scroll to and highlight a transaction in the list",
-        parameters: z.object({
+        inputSchema: z.object({
           transactionId: z.string().describe("The transaction ID to scroll to"),
         }),
         execute: async ({ transactionId }) => {
@@ -206,11 +346,10 @@ export async function POST(req: Request) {
 
       updateTransaction: tool({
         description:
-          "Update a transaction's description, category, or completion status. REQUIRES USER CONFIRMATION.",
-        parameters: z.object({
+          "Update a transaction's description or completion status. REQUIRES USER CONFIRMATION.",
+        inputSchema: z.object({
           transactionId: z.string().describe("The transaction ID to update"),
           description: z.string().optional().describe("New description for tax purposes"),
-          categoryId: z.string().nullable().optional().describe("Category ID or null to remove"),
           isComplete: z.boolean().optional().describe("Mark as complete/incomplete"),
         }),
         execute: async ({ transactionId, ...updates }) => {
@@ -225,37 +364,18 @@ export async function POST(req: Request) {
         },
       }),
 
-      bulkCategorize: tool({
-        description:
-          "Assign a category to multiple transactions at once. REQUIRES USER CONFIRMATION.",
-        parameters: z.object({
-          transactionIds: z.array(z.string()).describe("Array of transaction IDs"),
-          categoryId: z.string().describe("Category ID to assign to all transactions"),
-        }),
-        execute: async ({ transactionIds, categoryId }) => {
-          const result = await bulkUpdateTransactionsWithHistory(
-            ctx,
-            transactionIds,
-            { categoryId },
-            { type: "ai_chat", userId: ctx.userId },
-            "Bulk categorization via AI chat"
-          );
-          return result;
-        },
-      }),
-
       createSource: tool({
         description: "Create a new bank account/source. REQUIRES USER CONFIRMATION.",
-        parameters: z.object({
+        inputSchema: z.object({
           name: z.string().describe("Display name for the account"),
           iban: z.string().describe("IBAN of the bank account"),
-          currency: z.string().default("EUR").describe("Currency code"),
+          currency: z.string().optional().describe("Currency code (default EUR)"),
         }),
         execute: async ({ name, iban, currency }) => {
           const sourceId = await createSource(ctx, {
             name,
             iban,
-            currency,
+            currency: currency ?? "EUR",
             type: "csv",
           });
           return { success: true, sourceId };
@@ -265,7 +385,7 @@ export async function POST(req: Request) {
       rollbackTransaction: tool({
         description:
           "Rollback a transaction to a previous state from its history. REQUIRES USER CONFIRMATION.",
-        parameters: z.object({
+        inputSchema: z.object({
           transactionId: z.string().describe("The transaction ID"),
           historyId: z.string().describe("The history entry ID to rollback to"),
         }),
@@ -278,31 +398,8 @@ export async function POST(req: Request) {
         },
       }),
     },
-
-    // Mark which tools require confirmation for the client
-    // experimental_toolCallStreaming: true,
-  }, */ // END TEMPORARILY DISABLED
   });
 
-  // Use createUIMessageStream for compatibility with useChat from @ai-sdk/react
-  return createUIMessageStreamResponse({
-    stream: createUIMessageStream({
-      async execute({ writer }) {
-        try {
-          // Forward the text stream to the UI message writer
-          console.log("[API] Starting stream...");
-          let fullText = "";
-          for await (const chunk of result.textStream) {
-            console.log("[API] Chunk:", chunk);
-            fullText += chunk;
-            writer.write({ type: "text", text: chunk });
-          }
-          console.log("[API] Full response:", fullText);
-        } catch (err) {
-          console.error("[API] Stream error:", err);
-          throw err;
-        }
-      },
-    }),
-  });
+  // Use toUIMessageStreamResponse for direct compatibility with useChat from @ai-sdk/react
+  return result.toUIMessageStreamResponse();
 }

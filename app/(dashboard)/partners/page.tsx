@@ -49,8 +49,26 @@ function PartnersContent() {
   const [isResizing, setIsResizing] = useState(false);
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
-  // Get selected partner ID from URL
+  // Get selected partner ID and search value from URL
   const selectedId = searchParams.get("id");
+  const searchValue = searchParams.get("search") || "";
+
+  // Update search in URL
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (value) {
+        params.set("search", value);
+      } else {
+        params.delete("search");
+      }
+      const newUrl = params.toString()
+        ? `/partners?${params.toString()}`
+        : "/partners";
+      router.replace(newUrl, { scroll: false });
+    },
+    [router, searchParams]
+  );
 
   // Find selected partner
   const selectedPartner = useMemo(() => {
@@ -149,6 +167,8 @@ function PartnersContent() {
         <PartnerTable
           onSelectPartner={handleSelectPartner}
           selectedPartnerId={selectedId}
+          searchValue={searchValue}
+          onSearchChange={handleSearchChange}
         />
       </div>
 

@@ -40,8 +40,14 @@ export function connectEmulators() {
   }
 }
 
-// Auto-connect in development
-if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
+// Auto-connect to emulators in development (default behavior)
+// To use production services in dev, set NEXT_PUBLIC_USE_EMULATORS=false in .env.local
+// To use emulators, run: firebase emulators:start
+if (
+  typeof window !== "undefined" &&
+  process.env.NODE_ENV === "development" &&
+  process.env.NEXT_PUBLIC_USE_EMULATORS !== "false"
+) {
   connectEmulators();
 }
 

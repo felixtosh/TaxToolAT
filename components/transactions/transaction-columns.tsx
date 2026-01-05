@@ -10,8 +10,9 @@ import {
 } from "lucide-react";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
-import { Badge } from "@/components/ui/badge";
+import { UserPartner, GlobalPartner, PartnerMatchResult } from "@/types/partner";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
   TooltipContent,
@@ -20,9 +21,14 @@ import {
 import { cn } from "@/lib/utils";
 
 export function getTransactionColumns(
-  sources: TransactionSource[]
+  sources: TransactionSource[],
+  userPartners: UserPartner[] = [],
+  globalPartners: GlobalPartner[] = [],
+  patternSuggestions?: Map<string, PartnerMatchResult>
 ): ColumnDef<Transaction>[] {
   const sourceMap = new Map(sources.map((s) => [s.id, s]));
+  const userPartnerMap = new Map(userPartners.map((p) => [p.id, p]));
+  const globalPartnerMap = new Map(globalPartners.map((p) => [p.id, p]));
 
   return [
     {
@@ -40,7 +46,7 @@ export function getTransactionColumns(
       cell: ({ row }) => {
         const date = row.getValue("date") as { toDate: () => Date };
         return (
-          <span className="text-sm font-medium whitespace-nowrap">
+          <span className="text-sm whitespace-nowrap">
             {format(date.toDate(), "MMM d, yyyy")}
           </span>
         );
@@ -50,13 +56,11 @@ export function getTransactionColumns(
       accessorKey: "name",
       header: "Description",
       cell: ({ row }) => (
-        <div className="max-w-[300px]">
-          <p className="font-medium truncate">{row.getValue("name")}</p>
-          {row.original.description && (
-            <p className="text-sm text-muted-foreground truncate">
-              {row.original.description}
-            </p>
-          )}
+        <div className="max-w-[220px]">
+          <p className="text-sm truncate">{row.original.partner || "—"}</p>
+          <p className="text-sm text-muted-foreground truncate">
+            {row.getValue("name")}
+          </p>
         </div>
       ),
     },
@@ -83,7 +87,7 @@ export function getTransactionColumns(
         return (
           <span
             className={cn(
-              "font-medium tabular-nums whitespace-nowrap",
+              "text-sm tabular-nums whitespace-nowrap",
               amount < 0 ? "text-red-600" : "text-green-600"
             )}
           >
@@ -93,24 +97,45 @@ export function getTransactionColumns(
       },
     },
     {
-      accessorKey: "partner",
-      header: "Partner/Vendor",
-      cell: ({ row }) => (
-        <span className="text-sm">{row.getValue("partner") || "-"}</span>
-      ),
-    },
-    {
-      accessorKey: "categoryId",
-      header: "Category",
+      id: "assignedPartner",
+      header: "Partner",
       cell: ({ row }) => {
-        const categoryId = row.getValue("categoryId") as string | null;
-        return categoryId ? (
-          <Badge variant="secondary" className="whitespace-nowrap">
-            {categoryId}
-          </Badge>
-        ) : (
-          <span className="text-muted-foreground">-</span>
-        );
+        const { partnerId, partnerType, id: txId } = row.original;
+
+        // Show assigned partner if exists
+        if (partnerId) {
+          const partner = partnerType === "global"
+            ? globalPartnerMap.get(partnerId)
+            : userPartnerMap.get(partnerId);
+          return (
+            <span className="text-sm truncate block max-w-[180px]">
+              {partner?.name || partnerId.slice(0, 8) + "..."}
+            </span>
+          );
+        }
+
+        // Show pattern suggestion if available
+        const suggestion = patternSuggestions?.get(txId);
+        if (suggestion) {
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className="text-xs cursor-pointer hover:bg-primary/10 border-dashed"
+                >
+                  {suggestion.partnerName}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">Pattern match: {suggestion.confidence}%</p>
+                <p className="text-xs text-muted-foreground">Click row to confirm</p>
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
+
+        return <span className="text-sm text-muted-foreground">—</span>;
       },
     },
     {

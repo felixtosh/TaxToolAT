@@ -38,7 +38,15 @@ export function usePartnerSuggestions(
           partner,
         };
       })
-      .filter((s): s is PartnerSuggestionWithDetails => s !== null);
+      .filter((s): s is PartnerSuggestionWithDetails => s !== null)
+      // Filter out global partners where user already has a local copy
+      .filter((s) => {
+        if (s.partnerType === "global") {
+          const hasLocalCopy = userPartners.some((up) => up.globalPartnerId === s.partnerId);
+          if (hasLocalCopy) return false;
+        }
+        return true;
+      });
   }, [transaction, userPartners, globalPartners]);
 }
 

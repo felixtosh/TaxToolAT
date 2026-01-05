@@ -56,6 +56,7 @@ export const onTransactionCreate = onDocumentCreated(
           ibans: data.ibans || [],
           website: data.website,
           vatId: data.vatId,
+          learnedPatterns: data.learnedPatterns || [],
         };
       });
 

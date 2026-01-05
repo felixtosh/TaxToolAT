@@ -3,7 +3,7 @@ import { Timestamp } from "firebase/firestore";
 /**
  * Matching algorithm source identifier
  */
-export type MatchSource = "iban" | "vatId" | "website" | "name" | "manual";
+export type MatchSource = "iban" | "vatId" | "website" | "name" | "pattern" | "manual";
 
 /**
  * How a partner was matched to a transaction
@@ -79,7 +79,7 @@ export interface GlobalPartner {
   externalIds?: ExternalIds;
 
   /** How this data was sourced */
-  source: "manual" | "user_promoted" | "external_registry";
+  source: "manual" | "user_promoted" | "external_registry" | "preset";
 
   /** Details about data sourcing */
   sourceDetails: SourceDetails;
@@ -89,6 +89,26 @@ export interface GlobalPartner {
 
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/**
+ * AI-learned pattern for matching transactions
+ */
+export interface LearnedPattern {
+  /** Glob-style pattern, e.g., "google*cloud*" */
+  pattern: string;
+
+  /** Which transaction field to match against */
+  field: "partner" | "name";
+
+  /** AI confidence score (0-100) */
+  confidence: number;
+
+  /** When this pattern was learned */
+  createdAt: Timestamp;
+
+  /** Transaction IDs that contributed to learning this pattern */
+  sourceTransactionIds: string[];
 }
 
 /**
@@ -131,6 +151,12 @@ export interface UserPartner {
   /** Default category to assign for transactions with this partner */
   defaultCategoryId?: string;
 
+  /** AI-learned patterns for matching transactions */
+  learnedPatterns?: LearnedPattern[];
+
+  /** When patterns were last updated */
+  patternsUpdatedAt?: Timestamp;
+
   /** Active status (soft delete) */
   isActive: boolean;
 
@@ -172,7 +198,7 @@ export interface PartnerFormData {
  */
 export interface GlobalPartnerFormData extends PartnerFormData {
   externalIds?: ExternalIds;
-  source?: "manual" | "user_promoted" | "external_registry";
+  source?: "manual" | "user_promoted" | "external_registry" | "preset";
 }
 
 /**
@@ -204,6 +230,8 @@ export interface PartnerMatchResult {
  * Candidate partner for promotion to global
  */
 export interface PromotionCandidate {
+  /** Document ID */
+  id: string;
   /** The user partner being considered for promotion */
   userPartner: UserPartner;
   /** Number of users with similar partner data */

@@ -35,15 +35,16 @@ export async function listTransactions(
     constraints.push(where("sourceId", "==", filters.sourceId));
   }
 
-  if (filters?.categoryId) {
-    constraints.push(where("categoryId", "==", filters.categoryId));
-  }
-
   if (filters?.isComplete !== undefined) {
     constraints.push(where("isComplete", "==", filters.isComplete));
   }
 
-  if (filters?.limit) {
+  // Only apply limit in Firestore if NOT doing client-side search
+  // (search needs to scan all results first, then limit)
+  const hasClientSideFilters = filters?.search || filters?.dateFrom || filters?.dateTo ||
+    filters?.hasReceipt !== undefined || (filters?.amountType && filters.amountType !== "all");
+
+  if (filters?.limit && !hasClientSideFilters) {
     constraints.push(firestoreLimit(filters.limit));
   }
 
@@ -88,6 +89,11 @@ export async function listTransactions(
     );
   }
 
+  // Apply limit AFTER client-side filters
+  if (filters?.limit && hasClientSideFilters) {
+    transactions = transactions.slice(0, filters.limit);
+  }
+
   return transactions;
 }
 
@@ -120,7 +126,7 @@ export async function getTransaction(
 export async function updateTransaction(
   ctx: OperationsContext,
   transactionId: string,
-  data: Partial<Pick<Transaction, "description" | "categoryId" | "receiptIds" | "isComplete">>
+  data: Partial<Pick<Transaction, "description" | "receiptIds" | "isComplete">>
 ): Promise<void> {
   // Verify ownership first
   const existing = await getTransaction(ctx, transactionId);
@@ -197,7 +203,7 @@ export async function deleteTransactionsBySource(
 export async function bulkUpdateTransactions(
   ctx: OperationsContext,
   transactionIds: string[],
-  data: Partial<Pick<Transaction, "description" | "categoryId" | "isComplete">>
+  data: Partial<Pick<Transaction, "description" | "isComplete">>
 ): Promise<BulkOperationResult> {
   const result: BulkOperationResult = {
     success: 0,

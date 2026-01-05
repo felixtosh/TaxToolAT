@@ -1,5 +1,105 @@
 import { TransactionFilters } from "@/types/transaction";
 
+const FILTERS_STORAGE_KEY = "transactionFilters";
+const SEARCH_STORAGE_KEY = "transactionSearch";
+
+/**
+ * Serializable version of filters for localStorage
+ */
+interface StoredFilters {
+  importId?: string;
+  hasReceipt?: boolean;
+  dateFrom?: string; // ISO string
+  dateTo?: string; // ISO string
+  amountType?: "income" | "expense" | "all";
+  sourceId?: string;
+}
+
+/**
+ * Save filters and search to localStorage
+ */
+export function saveFiltersToStorage(
+  filters: TransactionFilters,
+  search: string
+): void {
+  const stored: StoredFilters = {};
+  if (filters.importId) stored.importId = filters.importId;
+  if (filters.hasReceipt !== undefined) stored.hasReceipt = filters.hasReceipt;
+  if (filters.dateFrom) stored.dateFrom = filters.dateFrom.toISOString();
+  if (filters.dateTo) stored.dateTo = filters.dateTo.toISOString();
+  if (filters.amountType && filters.amountType !== "all")
+    stored.amountType = filters.amountType;
+  if (filters.sourceId) stored.sourceId = filters.sourceId;
+
+  localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(stored));
+  localStorage.setItem(SEARCH_STORAGE_KEY, search);
+}
+
+/**
+ * Load filters and search from localStorage
+ */
+export function loadFiltersFromStorage(): {
+  filters: TransactionFilters;
+  search: string;
+} {
+  const filters: TransactionFilters = {};
+  const search = localStorage.getItem(SEARCH_STORAGE_KEY) || "";
+
+  try {
+    const stored = localStorage.getItem(FILTERS_STORAGE_KEY);
+    if (stored) {
+      const parsed: StoredFilters = JSON.parse(stored);
+      if (parsed.importId) filters.importId = parsed.importId;
+      if (parsed.hasReceipt !== undefined) filters.hasReceipt = parsed.hasReceipt;
+      if (parsed.dateFrom) filters.dateFrom = new Date(parsed.dateFrom);
+      if (parsed.dateTo) filters.dateTo = new Date(parsed.dateTo);
+      if (parsed.amountType) filters.amountType = parsed.amountType;
+      if (parsed.sourceId) filters.sourceId = parsed.sourceId;
+    }
+  } catch {
+    // Ignore parse errors
+  }
+
+  return { filters, search };
+}
+
+/**
+ * Build URL search params string from filters and search
+ */
+export function buildSearchParamsString(
+  filters: TransactionFilters,
+  search: string
+): string {
+  const params = new URLSearchParams();
+
+  if (search) params.set("search", search);
+  if (filters.importId) params.set("importId", filters.importId);
+  if (filters.hasReceipt !== undefined)
+    params.set("hasReceipt", String(filters.hasReceipt));
+  if (filters.dateFrom) params.set("dateFrom", filters.dateFrom.toISOString());
+  if (filters.dateTo) params.set("dateTo", filters.dateTo.toISOString());
+  if (filters.amountType && filters.amountType !== "all")
+    params.set("amountType", filters.amountType);
+  if (filters.sourceId) params.set("sourceId", filters.sourceId);
+
+  return params.toString();
+}
+
+/**
+ * Check if URL has any filter or search params
+ */
+export function hasUrlParams(searchParams: URLSearchParams): boolean {
+  return (
+    searchParams.has("search") ||
+    searchParams.has("importId") ||
+    searchParams.has("hasReceipt") ||
+    searchParams.has("dateFrom") ||
+    searchParams.has("dateTo") ||
+    searchParams.has("amountType") ||
+    searchParams.has("sourceId")
+  );
+}
+
 /**
  * Parse URL search params into TransactionFilters object
  */
