@@ -12,7 +12,7 @@ import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
 import { UserPartner, GlobalPartner, PartnerMatchResult } from "@/types/partner";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { PartnerPill } from "@/components/partners/partner-pill";
 import {
   Tooltip,
   TooltipContent,
@@ -33,6 +33,7 @@ export function getTransactionColumns(
   return [
     {
       accessorKey: "date",
+      size: 100,
       header: ({ column }) => (
         <Button
           variant="ghost"
@@ -45,10 +46,20 @@ export function getTransactionColumns(
       ),
       cell: ({ row }) => {
         const date = row.getValue("date") as { toDate: () => Date };
+        const dateObj = date.toDate();
+        const timeStr = format(dateObj, "HH:mm");
+        const showTime = timeStr !== "00:00";
         return (
-          <span className="text-sm whitespace-nowrap">
-            {format(date.toDate(), "MMM d, yyyy")}
-          </span>
+          <div className="w-[100px]">
+            <p className="text-sm whitespace-nowrap">
+              {format(dateObj, "MMM d, yyyy")}
+            </p>
+            {showTime && (
+              <p className="text-sm text-muted-foreground">
+                {timeStr}
+              </p>
+            )}
+          </div>
         );
       },
     },
@@ -100,17 +111,18 @@ export function getTransactionColumns(
       id: "assignedPartner",
       header: "Partner",
       cell: ({ row }) => {
-        const { partnerId, partnerType, id: txId } = row.original;
+        const { partnerId, partnerType, partnerMatchConfidence, id: txId } = row.original;
 
-        // Show assigned partner if exists
+        // Show assigned partner if exists (styled like transaction detail)
         if (partnerId) {
           const partner = partnerType === "global"
             ? globalPartnerMap.get(partnerId)
             : userPartnerMap.get(partnerId);
           return (
-            <span className="text-sm truncate block max-w-[180px]">
-              {partner?.name || partnerId.slice(0, 8) + "..."}
-            </span>
+            <PartnerPill
+              name={partner?.name || partnerId.slice(0, 8) + "..."}
+              confidence={partnerMatchConfidence}
+            />
           );
         }
 
@@ -120,16 +132,14 @@ export function getTransactionColumns(
           return (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Badge
-                  variant="outline"
-                  className="text-xs cursor-pointer hover:bg-primary/10 border-dashed"
-                >
-                  {suggestion.partnerName}
-                </Badge>
+                <PartnerPill
+                  name={suggestion.partnerName}
+                  confidence={suggestion.confidence}
+                  variant="suggestion"
+                />
               </TooltipTrigger>
               <TooltipContent>
-                <p className="text-xs">Pattern match: {suggestion.confidence}%</p>
-                <p className="text-xs text-muted-foreground">Click row to confirm</p>
+                <p className="text-xs">Click row to confirm</p>
               </TooltipContent>
             </Tooltip>
           );
@@ -160,6 +170,7 @@ export function getTransactionColumns(
     },
     {
       accessorKey: "sourceId",
+      size: 120,
       header: "Account",
       cell: ({ row }) => {
         const sourceId = row.getValue("sourceId") as string | undefined;
@@ -171,18 +182,20 @@ export function getTransactionColumns(
           return <span className="text-muted-foreground text-xs">{sourceId.slice(0, 8)}...</span>;
         }
         return (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex items-center gap-1.5 max-w-[120px]">
-                <Building2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                <span className="text-sm truncate">{source.name}</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p className="font-medium">{source.name}</p>
-              <p className="text-xs text-muted-foreground font-mono">{source.iban}</p>
-            </TooltipContent>
-          </Tooltip>
+          <div className="max-w-[120px]">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center gap-1.5">
+                  <Building2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                  <span className="text-sm truncate">{source.name}</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="font-medium">{source.name}</p>
+                <p className="text-xs text-muted-foreground font-mono">{source.iban}</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
         );
       },
     },

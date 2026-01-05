@@ -63,6 +63,7 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
                 ibans: data.ibans || [],
                 website: data.website,
                 vatId: data.vatId,
+                patterns: data.patterns || [],
             };
         });
         // Process each unmatched transaction
@@ -78,6 +79,7 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
                 partner: txData.partner || null,
                 partnerIban: txData.partnerIban || null,
                 name: txData.name || "",
+                reference: txData.reference || null,
             };
             const matches = (0, partner_matcher_1.matchTransaction)(transaction, userPartners, globalPartners);
             if (matches.length > 0) {

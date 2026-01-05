@@ -163,6 +163,13 @@ export function globMatch(pattern: string, text: string): boolean {
 
 // ============ Partner Matching ============
 
+/** Base pattern interface (used by both global and user partners) */
+export interface MatchPattern {
+  pattern: string;
+  field: "partner" | "name";
+  confidence: number;
+}
+
 export interface PartnerData {
   id: string;
   name: string;
@@ -170,7 +177,10 @@ export interface PartnerData {
   ibans: string[];
   website?: string;
   vatId?: string;
+  /** AI-learned patterns (user partners) */
   learnedPatterns?: LearnedPattern[];
+  /** Static patterns (global partners from presets) */
+  patterns?: MatchPattern[];
 }
 
 export interface TransactionData {
@@ -178,6 +188,7 @@ export interface TransactionData {
   partner: string | null;
   partnerIban: string | null;
   name: string;
+  reference: string | null;
 }
 
 export interface MatchResult {
@@ -216,8 +227,25 @@ export function matchTransaction(
     }
   }
 
-  // Sort by confidence (user partners first for ties)
+  // Sort with user partners taking absolute precedence over global when both above threshold
+  const AUTO_ASSIGN_THRESHOLD = 89;
   results.sort((a, b) => {
+    const aAboveThreshold = a.confidence >= AUTO_ASSIGN_THRESHOLD;
+    const bAboveThreshold = b.confidence >= AUTO_ASSIGN_THRESHOLD;
+
+    // If both above threshold, user always wins over global
+    if (aAboveThreshold && bAboveThreshold) {
+      if (a.partnerType === "user" && b.partnerType === "global") return -1;
+      if (a.partnerType === "global" && b.partnerType === "user") return 1;
+      // Same type: sort by confidence
+      return b.confidence - a.confidence;
+    }
+
+    // If only one is above threshold, it wins
+    if (aAboveThreshold && !bAboveThreshold) return -1;
+    if (!aAboveThreshold && bAboveThreshold) return 1;
+
+    // Both below threshold: sort by confidence, user wins on ties
     if (b.confidence !== a.confidence) {
       return b.confidence - a.confidence;
     }
@@ -253,18 +281,36 @@ function matchSinglePartner(
     }
   }
 
-  // 2. Learned pattern match (uses AI-generated confidence)
-  if (partner.learnedPatterns && partner.learnedPatterns.length > 0) {
-    for (const lp of partner.learnedPatterns) {
-      const textToMatch = lp.field === "partner" ? transaction.partner : transaction.name;
-      if (textToMatch && globMatch(lp.pattern, textToMatch)) {
+  // 2. Pattern match - works for both learnedPatterns (user) and patterns (global)
+  // Check multiple fields with decreasing confidence
+  const allPatterns: MatchPattern[] = [
+    ...(partner.learnedPatterns || []),
+    ...(partner.patterns || []),
+  ];
+
+  for (const p of allPatterns) {
+    const fieldsToCheck = [
+      // Primary field (specified in pattern)
+      { value: p.field === "partner" ? transaction.partner : transaction.name, penalty: 0 },
+      // Secondary field (the other one)
+      { value: p.field === "partner" ? transaction.name : transaction.partner, penalty: 10 },
+      // Reference field (bank reference)
+      { value: transaction.reference, penalty: 15 },
+    ];
+
+    for (const field of fieldsToCheck) {
+      if (!field.value) continue;
+
+      if (globMatch(p.pattern, field.value)) {
+        const adjustedConfidence = Math.max(50, p.confidence - field.penalty);
         candidates.push({
           partnerId: partner.id,
           partnerType,
           partnerName: partner.name,
-          confidence: lp.confidence,
+          confidence: adjustedConfidence,
           source: "pattern",
         });
+        break; // Found match for this pattern, move to next
       }
     }
   }

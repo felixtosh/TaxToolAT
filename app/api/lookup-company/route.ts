@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 interface CompanyInfo {
   name?: string;
+  aliases?: string[];
   vatId?: string;
   website?: string;
   country?: string;
@@ -14,86 +15,312 @@ interface CompanyInfo {
   };
 }
 
-export async function POST(req: Request) {
+// Try to fetch a page and return its text content
+async function fetchPageContent(url: string): Promise<string | null> {
   try {
-    const { url } = await req.json();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-    if (!url || typeof url !== "string") {
-      return NextResponse.json(
-        { error: "URL is required" },
-        { status: 400 }
-      );
-    }
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; TaxStudio/1.0)",
+        Accept: "text/html,application/xhtml+xml",
+      },
+    });
 
-    // Normalize URL
-    let normalizedUrl = url.trim();
-    if (!normalizedUrl.startsWith("http://") && !normalizedUrl.startsWith("https://")) {
-      normalizedUrl = `https://${normalizedUrl}`;
-    }
+    clearTimeout(timeoutId);
 
-    const anthropic = new Anthropic();
+    if (!response.ok) return null;
 
-    // Use Claude with web search to look up company info
+    const html = await response.text();
+    // Basic HTML to text conversion - strip tags
+    const text = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    return text.slice(0, 15000); // Limit content size
+  } catch {
+    return null;
+  }
+}
+
+// Extract company info from page content using Claude
+async function extractFromContent(
+  anthropic: Anthropic,
+  content: string,
+  domain: string
+): Promise<CompanyInfo | null> {
+  try {
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 1024,
       messages: [
         {
           role: "user",
-          content: `Look up the company website: ${normalizedUrl}
+          content: `Extract company information from this Impressum/Imprint page content:
 
-Extract the following company information and return it as JSON:
-- name: The official company name
-- vatId: VAT/Tax ID if available (format: country code + number, e.g., ATU12345678)
-- website: The main website domain (without https://)
-- country: ISO 2-letter country code (e.g., AT, DE, US)
-- address: Object with street, city, postalCode, country
+${content}
 
-Only include fields you can confidently find. Return valid JSON only, no explanation.
+Look for:
+- Official registered company name (e.g., "Company GmbH", "Company AG")
+- Trade names or aliases (shorter marketing names different from official name)
+- VAT ID / UID number (format: country code + numbers, e.g., ATU12345678, DE123456789)
+- Address (street, city, postal code, country)
+- Country (ISO 2-letter code like AT, DE, CH)
 
-Example response:
+Return ONLY a JSON object with this structure (include only fields you found):
 {
-  "name": "Example Company GmbH",
+  "name": "Official Company Name GmbH",
+  "aliases": ["Trade Name", "Short Name"],
   "vatId": "ATU12345678",
-  "website": "example.com",
   "country": "AT",
   "address": {
-    "street": "Main Street 123",
-    "city": "Vienna",
-    "postalCode": "1010",
+    "street": "Street Name 123",
+    "city": "City",
+    "postalCode": "1234",
     "country": "AT"
   }
-}`,
+}
+
+If no company info found, return {}. Return ONLY the JSON, no explanation.`,
         },
       ],
     });
 
-    // Extract text content from response
-    const textContent = response.content.find((c) => c.type === "text");
-    if (!textContent || textContent.type !== "text") {
-      return NextResponse.json(
-        { error: "No response from AI" },
-        { status: 500 }
-      );
-    }
-
-    // Parse JSON from response
-    const text = textContent.text.trim();
-
-    // Try to extract JSON from the response (in case there's extra text)
+    const text =
+      response.content[0].type === "text" ? response.content[0].text : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return NextResponse.json(
-        { error: "Could not parse company info" },
-        { status: 500 }
-      );
+    if (!jsonMatch) return null;
+
+    const info: CompanyInfo = JSON.parse(jsonMatch[0]);
+    info.website = domain;
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+// Check if company info is complete enough
+function isComplete(info: CompanyInfo | null): boolean {
+  if (!info) return false;
+  // Consider complete if we have at least name and (vatId or address)
+  return !!info.name && (!!info.vatId || !!info.address?.city);
+}
+
+// Search for company info using Claude web search
+async function searchForCompanyInfo(
+  anthropic: Anthropic,
+  normalizedUrl: string,
+  domain: string
+): Promise<CompanyInfo> {
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    tools: [
+      {
+        type: "web_search_20250305" as const,
+        name: "web_search",
+        max_uses: 5,
+      },
+    ],
+    messages: [
+      {
+        role: "user",
+        content: `Find the official company information for: ${normalizedUrl}
+
+Search strategy:
+1. First search for "${domain} impressum" to find the company's legal page
+2. Then search for the company name + "UID" or "ATU" to find the VAT number
+3. If needed, search the company name in official registers (Firmenbuch, Handelsregister)
+
+Extract:
+- Official registered company name (not marketing names)
+- Any trade names or aliases
+- VAT ID / UID number (format: ATU12345678, DE123456789, etc.)
+- Registered address
+- Country (ISO 2-letter code)
+
+Return ONLY a JSON object:
+{
+  "name": "Official Company Name GmbH",
+  "aliases": ["Trade Name"],
+  "vatId": "ATU12345678",
+  "country": "AT",
+  "address": {
+    "street": "Street 123",
+    "city": "Vienna",
+    "postalCode": "1010",
+    "country": "AT"
+  }
+}
+
+Include only fields you found from official sources. If nothing found, return {}.
+Return ONLY the JSON, no explanation.`,
+      },
+    ],
+  });
+
+  let jsonText = "";
+  for (const block of response.content) {
+    if (block.type === "text") {
+      jsonText += block.text;
+    }
+  }
+
+  const jsonMatch = jsonText.trim().match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    return { website: domain };
+  }
+
+  const info: CompanyInfo = JSON.parse(jsonMatch[0]);
+  info.website = domain;
+  return info;
+}
+
+// Search for company by name (no URL provided)
+async function searchByCompanyName(
+  anthropic: Anthropic,
+  companyName: string
+): Promise<CompanyInfo> {
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    tools: [
+      {
+        type: "web_search_20250305" as const,
+        name: "web_search",
+        max_uses: 5,
+      },
+    ],
+    messages: [
+      {
+        role: "user",
+        content: `Find the official company information for: "${companyName}"
+
+Search strategy:
+1. Search for "${companyName} official website" to find the company's website
+2. Search for "${companyName} impressum" or "${companyName} imprint" to find legal info
+3. Search for "${companyName} VAT number" or "${companyName} UID" to find tax ID
+4. If needed, search in official company registers (Firmenbuch, Handelsregister)
+
+Extract:
+- Official registered company name (verify it matches "${companyName}")
+- Company website URL
+- Any trade names or aliases
+- VAT ID / UID number (format: ATU12345678, DE123456789, etc.)
+- Registered address
+- Country (ISO 2-letter code)
+
+Return ONLY a JSON object:
+{
+  "name": "Official Company Name GmbH",
+  "website": "example.com",
+  "aliases": ["Trade Name"],
+  "vatId": "ATU12345678",
+  "country": "AT",
+  "address": {
+    "street": "Street 123",
+    "city": "Vienna",
+    "postalCode": "1010",
+    "country": "AT"
+  }
+}
+
+Include only fields you found from official sources. If nothing found, return {}.
+Return ONLY the JSON, no explanation.`,
+      },
+    ],
+  });
+
+  let jsonText = "";
+  for (const block of response.content) {
+    if (block.type === "text") {
+      jsonText += block.text;
+    }
+  }
+
+  const jsonMatch = jsonText.trim().match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    return {};
+  }
+
+  const info: CompanyInfo = JSON.parse(jsonMatch[0]);
+  return info;
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const { url, name } = body;
+
+    // Name-only search (no URL)
+    if (name && typeof name === "string" && !url) {
+      const anthropic = new Anthropic();
+      const info = await searchByCompanyName(anthropic, name.trim());
+      return NextResponse.json(info);
     }
 
-    const companyInfo: CompanyInfo = JSON.parse(jsonMatch[0]);
+    // URL-based search
+    if (!url || typeof url !== "string") {
+      return NextResponse.json({ error: "URL or name is required" }, { status: 400 });
+    }
 
-    return NextResponse.json(companyInfo);
+    // Normalize URL
+    let normalizedUrl = url.trim();
+    if (
+      !normalizedUrl.startsWith("http://") &&
+      !normalizedUrl.startsWith("https://")
+    ) {
+      normalizedUrl = `https://${normalizedUrl}`;
+    }
+
+    // Extract domain for website field
+    const domain = normalizedUrl.replace(/^https?:\/\//, "").split("/")[0];
+    const baseUrl = `https://${domain}`;
+
+    const anthropic = new Anthropic();
+
+    // Step 1: Try to fetch impressum pages directly
+    const impressumPaths = [
+      "/impressum",
+      "/imprint",
+      "/about/impressum",
+      "/legal/impressum",
+      "/de/impressum",
+      "/kontakt/impressum",
+    ];
+
+    for (const path of impressumPaths) {
+      const content = await fetchPageContent(`${baseUrl}${path}`);
+      if (content && content.length > 200) {
+        const info = await extractFromContent(anthropic, content, domain);
+        if (isComplete(info)) {
+          return NextResponse.json(info);
+        }
+      }
+    }
+
+    // Step 2: Fallback to web search
+    const info = await searchForCompanyInfo(anthropic, normalizedUrl, domain);
+    return NextResponse.json(info);
   } catch (error) {
     console.error("Company lookup error:", error);
+
+    // Try to at least return the domain
+    try {
+      const body = await req.clone().json();
+      const domain = body.url?.trim().replace(/^https?:\/\//, "").split("/")[0];
+      if (domain) {
+        return NextResponse.json({ website: domain });
+      }
+    } catch {
+      // Ignore
+    }
+
     return NextResponse.json(
       { error: "Failed to lookup company" },
       { status: 500 }

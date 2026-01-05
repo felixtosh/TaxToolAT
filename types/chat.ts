@@ -1,4 +1,7 @@
 import { Timestamp } from "firebase/firestore";
+import { AutoActionNotification } from "./notification";
+
+export type ChatTab = "notifications" | "chat";
 
 /**
  * A part of a message - either text or a tool call (in chronological order)
@@ -105,4 +108,13 @@ export interface ChatContextValue {
   // Sidebar state
   isSidebarOpen: boolean;
   toggleSidebar: () => void;
+
+  // Tabs & Notifications
+  activeTab: ChatTab;
+  setActiveTab: (tab: ChatTab) => void;
+  notifications: AutoActionNotification[];
+  unreadNotificationCount: number;
+  markNotificationRead: (id: string) => Promise<void>;
+  markAllNotificationsRead: () => Promise<void>;
+  startConversationFromNotification: (notification: AutoActionNotification) => void;
 }

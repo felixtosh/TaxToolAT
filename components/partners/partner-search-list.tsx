@@ -1,16 +1,22 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Search, Globe, Building2 } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Globe, Building2, Sparkles } from "lucide-react";
+import { SearchInput } from "@/components/ui/search-input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { UserPartner, GlobalPartner } from "@/types/partner";
+import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
 import { cn } from "@/lib/utils";
+
+interface PartnerSuggestionWithDetails extends PartnerSuggestion {
+  partner: UserPartner | GlobalPartner;
+}
 
 interface PartnerSearchListProps {
   userPartners: UserPartner[];
   globalPartners: GlobalPartner[];
   onSelect: (partnerId: string, partnerType: "user" | "global") => void;
+  suggestions?: PartnerSuggestionWithDetails[];
+  onSelectSuggestion?: (suggestion: PartnerSuggestionWithDetails) => void;
 }
 
 type CombinedPartner = (UserPartner | GlobalPartner) & {
@@ -21,6 +27,8 @@ export function PartnerSearchList({
   userPartners,
   globalPartners,
   onSelect,
+  suggestions = [],
+  onSelectSuggestion,
 }: PartnerSearchListProps) {
   const [search, setSearch] = useState("");
 
@@ -45,20 +53,69 @@ export function PartnerSearchList({
     );
   }, [userPartners, globalPartners, search]);
 
+  const hasSuggestions = suggestions.length > 0 && !search.trim();
+
   return (
     <div className="flex flex-col h-full">
-      <div className="relative mb-3">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input
+      <div className="mb-3">
+        <SearchInput
           placeholder="Search partners..."
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-8 h-9"
+          onChange={setSearch}
         />
       </div>
 
       <ScrollArea className="flex-1 -mx-1 px-1">
         <div className="space-y-1">
+          {/* Suggestions section - shown at top when not searching */}
+          {hasSuggestions && (
+            <>
+              <div className="flex items-center gap-1.5 px-2 py-1">
+                <Sparkles className="h-3 w-3 text-info-foreground" />
+                <span className="text-xs font-medium text-muted-foreground">Suggestions</span>
+              </div>
+              {suggestions.map((suggestion) => (
+                <button
+                  key={`suggestion-${suggestion.partnerId}`}
+                  type="button"
+                  onClick={() => onSelectSuggestion?.(suggestion)}
+                  className="w-full text-left p-2 rounded-md transition-colors bg-info hover:bg-info/80 border border-info-border"
+                >
+                  <div className="flex items-start gap-2">
+                    {suggestion.partnerType === "global" ? (
+                      <Globe className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                    ) : (
+                      <Building2 className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium truncate text-info-foreground">{suggestion.partner.name}</p>
+                        <span
+                          className={cn(
+                            "text-xs px-1.5 py-0.5 rounded flex-shrink-0",
+                            suggestion.confidence >= 90
+                              ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                              : suggestion.confidence >= 75
+                              ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                              : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400"
+                          )}
+                        >
+                          {suggestion.confidence}%
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Matched by {suggestion.source}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              ))}
+              <div className="border-t my-2" />
+              <p className="text-xs text-muted-foreground px-2 pb-1">All Partners</p>
+            </>
+          )}
+
+          {/* Regular partners list */}
           {filteredPartners.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">
               No partners found

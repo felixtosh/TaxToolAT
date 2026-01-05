@@ -491,28 +491,28 @@ export async function assignPartnerToTransaction(
     updatedAt: Timestamp.now(),
   });
 
-  // Queue partner for pattern learning (non-blocking, debounced)
-  // This helps the system learn from user assignments
+  // Trigger pattern learning (non-blocking)
+  // Learn immediately so patterns improve with each assignment
   if (matchedBy === "manual" || matchedBy === "suggestion") {
-    queuePartnerForPatternLearning(finalPartnerId).catch((error) => {
-      console.error("Failed to queue pattern learning:", error);
-      // Don't throw - queueing is non-critical
+    triggerPatternLearning(finalPartnerId).catch((error) => {
+      console.error("Failed to trigger pattern learning:", error);
+      // Don't throw - pattern learning is non-critical
     });
   }
 }
 
 /**
- * Queue a partner for pattern learning (debounced)
- * Patterns will be learned in batches every 5 minutes
+ * Trigger pattern learning for a partner
+ * Always learns immediately - simpler and gives instant feedback
  */
-async function queuePartnerForPatternLearning(partnerId: string): Promise<void> {
-  const queueForLearning = httpsCallable<
+async function triggerPatternLearning(partnerId: string): Promise<void> {
+  const learnPatterns = httpsCallable<
     { partnerId: string },
-    { success: boolean }
-  >(functions, "queuePartnerForLearning");
+    { success: boolean; patternsLearned: number }
+  >(functions, "learnPartnerPatterns");
 
-  await queueForLearning({ partnerId });
-  console.log(`Partner ${partnerId} queued for pattern learning`);
+  const result = await learnPatterns({ partnerId });
+  console.log(`[Pattern Learning] ${partnerId}: learned ${result.data.patternsLearned} patterns`);
 }
 
 /**
@@ -714,6 +714,7 @@ export async function enablePresetPartners(
           verifiedAt: now,
           verifiedBy: "system",
         },
+        patterns: partner.patterns || [],
         isActive: true,
         createdAt: now,
         updatedAt: now,

@@ -10,10 +10,12 @@ import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
+import { PartnerPill } from "@/components/partners/partner-pill";
 import { usePartnerSuggestions, useAssignedPartner } from "@/hooks/use-partner-suggestions";
-import { X, Plus, ExternalLink, Loader2 } from "lucide-react";
+import { Plus, ExternalLink, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { functions } from "@/lib/firebase/config";
+import { shouldAutoApply } from "@/lib/matching/partner-matcher";
 
 // Consistent field row component
 function FieldRow({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
@@ -53,6 +55,7 @@ export function TransactionDetails({
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const matchedTransactionIds = useRef<Set<string>>(new Set());
+  const autoAppliedRef = useRef<Set<string>>(new Set());
 
   // Get partner suggestions and assigned partner
   const suggestions = usePartnerSuggestions(transaction, userPartners, globalPartners);
@@ -79,6 +82,30 @@ export function TransactionDetails({
         });
     }
   }, [transaction.id, assignedPartner, suggestions.length]);
+
+  // Auto-apply high-confidence suggestions (matches server-side behavior)
+  useEffect(() => {
+    if (assignedPartner || isAssigningPartner) return;
+    if (autoAppliedRef.current.has(transaction.id)) return;
+
+    // Find ANY suggestion with high confidence (>= 89%)
+    const highConfidenceSuggestion = suggestions.find(
+      (s) => shouldAutoApply(s.confidence)
+    );
+
+    if (highConfidenceSuggestion) {
+      autoAppliedRef.current.add(transaction.id);
+      onAssignPartner(
+        highConfidenceSuggestion.partnerId,
+        highConfidenceSuggestion.partnerType,
+        "suggestion",
+        highConfidenceSuggestion.confidence
+      ).catch((error) => {
+        console.error("Failed to auto-apply partner:", error);
+        autoAppliedRef.current.delete(transaction.id);
+      });
+    }
+  }, [transaction.id, assignedPartner, suggestions, isAssigningPartner, onAssignPartner]);
 
   const handleSelectSuggestion = async (suggestion: PartnerSuggestion) => {
     setIsAssigningPartner(true);
@@ -130,15 +157,33 @@ export function TransactionDetails({
         {format(transaction.date.toDate(), "MMM d, yyyy")}
       </FieldRow>
 
-      <FieldRow label="Description">
-        {transaction.name}
-      </FieldRow>
-
       <FieldRow label="Amount">
         <span className={cn("tabular-nums", transaction.amount < 0 ? "text-red-600" : "text-green-600")}>
           {formattedAmount}
         </span>
       </FieldRow>
+
+      {transaction.partner && (
+        <FieldRow label="Counterparty">
+          {transaction.partner}
+        </FieldRow>
+      )}
+
+      {transaction.partnerIban && (
+        <FieldRow label="IBAN">
+          <span className="font-mono text-xs">{transaction.partnerIban}</span>
+        </FieldRow>
+      )}
+
+      <FieldRow label="Description">
+        {transaction.name}
+      </FieldRow>
+
+      {transaction.reference && (
+        <FieldRow label="Reference">
+          <span className="font-mono text-xs">{transaction.reference}</span>
+        </FieldRow>
+      )}
 
       {source && (
         <FieldRow label="Account">
@@ -158,18 +203,11 @@ export function TransactionDetails({
 
         <FieldRow label="Connect">
           {assignedPartner ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRemovePartner}
-              className="h-7 px-3 gap-2"
-            >
-              {assignedPartner.name}
-              {transaction.partnerMatchConfidence && (
-                <span className="text-muted-foreground text-xs">({transaction.partnerMatchConfidence}%)</span>
-              )}
-              <X className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-            </Button>
+            <PartnerPill
+              name={assignedPartner.name}
+              confidence={transaction.partnerMatchConfidence}
+              onRemove={handleRemovePartner}
+            />
           ) : isLoadingSuggestions ? (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           ) : (
@@ -187,19 +225,20 @@ export function TransactionDetails({
 
         {/* Partner suggestions when no match */}
         {!assignedPartner && !isLoadingSuggestions && suggestions.length > 0 && (
-          <div className="sm:ml-36 space-y-1 mt-1">
-            {suggestions.slice(0, 3).map((suggestion) => (
-              <button
-                key={suggestion.partnerId}
-                onClick={() => handleSelectSuggestion(suggestion)}
-                disabled={isAssigningPartner}
-                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-              >
-                <span>{suggestion.partner.name}</span>
-                <span className="text-xs">({suggestion.confidence}%)</span>
-              </button>
-            ))}
-          </div>
+          <FieldRow label="Suggestions" className="mt-1">
+            <div className="flex flex-wrap gap-1.5">
+              {suggestions.slice(0, 3).map((suggestion) => (
+                <PartnerPill
+                  key={suggestion.partnerId}
+                  name={suggestion.partner.name}
+                  confidence={suggestion.confidence}
+                  variant="suggestion"
+                  onClick={() => handleSelectSuggestion(suggestion)}
+                  disabled={isAssigningPartner}
+                />
+              ))}
+            </div>
+          </FieldRow>
         )}
       </div>
 

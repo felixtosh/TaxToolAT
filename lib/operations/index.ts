@@ -18,3 +18,6 @@ export * from "./transaction-history-ops";
 
 // Chat operations
 export * from "./chat-ops";
+
+// Notification operations
+export * from "./notification-ops";

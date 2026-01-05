@@ -47,6 +47,7 @@ exports.matchPartners = (0, https_1.onCall)({
             ibans: data.ibans || [],
             website: data.website,
             vatId: data.vatId,
+            patterns: data.patterns || [],
         };
     });
     // Get transactions to match
@@ -81,7 +82,7 @@ exports.matchPartners = (0, https_1.onCall)({
     let processed = 0;
     let autoMatched = 0;
     let withSuggestions = 0;
-    const batch = db.batch();
+    let batch = db.batch();
     let batchCount = 0;
     for (const txDoc of transactions) {
         if (!txDoc.exists)
@@ -92,6 +93,7 @@ exports.matchPartners = (0, https_1.onCall)({
             partner: txData.partner || null,
             partnerIban: txData.partnerIban || null,
             name: txData.name || "",
+            reference: txData.reference || null,
         };
         const matches = (0, partner_matcher_1.matchTransaction)(transaction, userPartners, globalPartners);
         processed++;
@@ -120,6 +122,7 @@ exports.matchPartners = (0, https_1.onCall)({
             batchCount++;
             if (batchCount >= 500) {
                 await batch.commit();
+                batch = db.batch(); // Create new batch after commit
                 batchCount = 0;
             }
         }
@@ -128,6 +131,29 @@ exports.matchPartners = (0, https_1.onCall)({
         await batch.commit();
     }
     console.log(`Matching complete: ${processed} processed, ${autoMatched} auto-matched, ${withSuggestions} with suggestions`);
+    // Create notification if there were results
+    if (autoMatched > 0 || withSuggestions > 0) {
+        try {
+            await db.collection(`users/${userId}/notifications`).add({
+                type: "partner_matching",
+                title: autoMatched > 0
+                    ? `Matched ${autoMatched} transaction${autoMatched !== 1 ? "s" : ""} automatically`
+                    : `Found suggestions for ${withSuggestions} transaction${withSuggestions !== 1 ? "s" : ""}`,
+                message: autoMatched > 0
+                    ? `I analyzed your transactions and automatically matched ${autoMatched} to known partners.${withSuggestions > 0 ? ` ${withSuggestions} more need your review.` : ""}`
+                    : `I found partner suggestions for ${withSuggestions} transaction${withSuggestions !== 1 ? "s" : ""}. Please review and confirm.`,
+                createdAt: firestore_1.FieldValue.serverTimestamp(),
+                readAt: null,
+                context: {
+                    autoMatchedCount: autoMatched,
+                    suggestionsCount: withSuggestions,
+                },
+            });
+        }
+        catch (err) {
+            console.error("Failed to create partner matching notification:", err);
+        }
+    }
     return {
         processed,
         autoMatched,

@@ -77,6 +77,7 @@ export const onPartnerCreate = onDocumentCreated(
           ibans: data.ibans || [],
           website: data.website,
           vatId: data.vatId,
+          patterns: data.patterns || [],
         };
       });
 
@@ -94,6 +95,7 @@ export const onPartnerCreate = onDocumentCreated(
           partner: txData.partner || null,
           partnerIban: txData.partnerIban || null,
           name: txData.name || "",
+          reference: txData.reference || null,
         };
 
         const matches = matchTransaction(transaction, userPartners, globalPartners);

@@ -3,12 +3,20 @@
  * Includes FAANG, Austrian companies, and major international corporations
  */
 
+export interface PresetPattern {
+  pattern: string;
+  field: "partner" | "name";
+  confidence: number;
+}
+
 export interface PresetPartner {
   name: string;
   aliases: string[];
   country: string;
   website?: string;
   vatId?: string;
+  /** Static patterns for matching bank transactions */
+  patterns?: PresetPattern[];
 }
 
 /**
@@ -16,16 +24,46 @@ export interface PresetPartner {
  */
 export const PRESET_PARTNERS: PresetPartner[] = [
   // ============ FAANG / Big Tech (15) ============
-  { name: "Apple Inc.", aliases: ["Apple", "Apple Store"], country: "US", website: "apple.com" },
-  { name: "Amazon.com, Inc.", aliases: ["Amazon", "Amazon.de", "Amazon Prime", "AWS"], country: "US", website: "amazon.com" },
-  { name: "Alphabet Inc.", aliases: ["Google", "Google Cloud", "YouTube", "Google Ads"], country: "US", website: "google.com" },
-  { name: "Meta Platforms, Inc.", aliases: ["Facebook", "Instagram", "WhatsApp", "Meta"], country: "US", website: "meta.com" },
-  { name: "Netflix, Inc.", aliases: ["Netflix"], country: "US", website: "netflix.com" },
-  { name: "Microsoft Corporation", aliases: ["Microsoft", "Microsoft 365", "Azure", "LinkedIn", "GitHub"], country: "US", website: "microsoft.com" },
+  { name: "Apple Inc.", aliases: ["Apple", "Apple Store"], country: "US", website: "apple.com", patterns: [
+    { pattern: "*apple*", field: "name", confidence: 92 },
+    { pattern: "*itunes*", field: "name", confidence: 92 },
+    { pattern: "*icloud*", field: "name", confidence: 92 },
+  ]},
+  { name: "Amazon.com, Inc.", aliases: ["Amazon", "Amazon.de", "Amazon Prime", "AWS"], country: "US", website: "amazon.com", patterns: [
+    { pattern: "*amazon*", field: "name", confidence: 92 },
+    { pattern: "*amzn*", field: "name", confidence: 92 },
+    { pattern: "*prime video*", field: "name", confidence: 90 },
+  ]},
+  { name: "Alphabet Inc.", aliases: ["Google", "Google Cloud", "YouTube", "Google Ads"], country: "US", website: "google.com", patterns: [
+    { pattern: "*google*", field: "name", confidence: 92 },
+    { pattern: "*youtube*", field: "name", confidence: 92 },
+  ]},
+  { name: "Meta Platforms, Inc.", aliases: ["Facebook", "Instagram", "WhatsApp", "Meta"], country: "US", website: "meta.com", patterns: [
+    { pattern: "*facebook*", field: "name", confidence: 92 },
+    { pattern: "*instagram*", field: "name", confidence: 92 },
+    { pattern: "*whatsapp*", field: "name", confidence: 92 },
+    { pattern: "*meta platforms*", field: "name", confidence: 92 },
+  ]},
+  { name: "Netflix, Inc.", aliases: ["Netflix"], country: "US", website: "netflix.com", patterns: [
+    { pattern: "*netflix*", field: "name", confidence: 95 },
+  ]},
+  { name: "Microsoft Corporation", aliases: ["Microsoft", "Microsoft 365", "Azure", "LinkedIn", "GitHub"], country: "US", website: "microsoft.com", patterns: [
+    { pattern: "*microsoft*", field: "name", confidence: 92 },
+    { pattern: "*msft*", field: "name", confidence: 90 },
+    { pattern: "*azure*", field: "name", confidence: 90 },
+    { pattern: "*github*", field: "name", confidence: 92 },
+    { pattern: "*linkedin*", field: "name", confidence: 92 },
+  ]},
   { name: "NVIDIA Corporation", aliases: ["NVIDIA", "Nvidia"], country: "US", website: "nvidia.com" },
-  { name: "Tesla, Inc.", aliases: ["Tesla", "Tesla Motors"], country: "US", website: "tesla.com" },
-  { name: "Adobe Inc.", aliases: ["Adobe", "Adobe Creative Cloud"], country: "US", website: "adobe.com" },
-  { name: "Salesforce, Inc.", aliases: ["Salesforce"], country: "US", website: "salesforce.com" },
+  { name: "Tesla, Inc.", aliases: ["Tesla", "Tesla Motors"], country: "US", website: "tesla.com", patterns: [
+    { pattern: "*tesla*", field: "name", confidence: 92 },
+  ]},
+  { name: "Adobe Inc.", aliases: ["Adobe", "Adobe Creative Cloud"], country: "US", website: "adobe.com", patterns: [
+    { pattern: "*adobe*", field: "name", confidence: 92 },
+  ]},
+  { name: "Salesforce, Inc.", aliases: ["Salesforce"], country: "US", website: "salesforce.com", patterns: [
+    { pattern: "*salesforce*", field: "name", confidence: 92 },
+  ]},
   { name: "Oracle Corporation", aliases: ["Oracle"], country: "US", website: "oracle.com" },
   { name: "Intel Corporation", aliases: ["Intel"], country: "US", website: "intel.com" },
   { name: "Cisco Systems, Inc.", aliases: ["Cisco"], country: "US", website: "cisco.com" },
@@ -201,8 +239,12 @@ export const PRESET_PARTNERS: PresetPartner[] = [
   { name: "British American Tobacco p.l.c.", aliases: ["BAT"], country: "GB", website: "bat.com" },
 
   // Nordic
-  { name: "Spotify Technology S.A.", aliases: ["Spotify"], country: "SE", website: "spotify.com" },
-  { name: "IKEA of Sweden AB", aliases: ["IKEA"], country: "SE", website: "ikea.com" },
+  { name: "Spotify Technology S.A.", aliases: ["Spotify"], country: "SE", website: "spotify.com", patterns: [
+    { pattern: "*spotify*", field: "name", confidence: 95 },
+  ]},
+  { name: "IKEA of Sweden AB", aliases: ["IKEA"], country: "SE", website: "ikea.com", patterns: [
+    { pattern: "*ikea*", field: "name", confidence: 92 },
+  ]},
   { name: "Volvo Group", aliases: ["Volvo"], country: "SE", website: "volvo.com" },
   { name: "Ericsson", aliases: ["Ericsson", "LM Ericsson"], country: "SE", website: "ericsson.com" },
   { name: "H&M Hennes & Mauritz AB", aliases: ["H&M", "Hennes & Mauritz"], country: "SE", website: "hm.com" },
@@ -230,23 +272,57 @@ export const PRESET_PARTNERS: PresetPartner[] = [
   { name: "Morgan Stanley", aliases: ["Morgan Stanley"], country: "US", website: "morganstanley.com" },
   { name: "Visa Inc.", aliases: ["Visa"], country: "US", website: "visa.com" },
   { name: "Mastercard Incorporated", aliases: ["Mastercard"], country: "US", website: "mastercard.com" },
-  { name: "American Express Company", aliases: ["Amex", "American Express"], country: "US", website: "americanexpress.com" },
-  { name: "PayPal Holdings, Inc.", aliases: ["PayPal", "Venmo"], country: "US", website: "paypal.com" },
-  { name: "Block, Inc.", aliases: ["Block", "Square", "Cash App"], country: "US", website: "block.xyz" },
-  { name: "Stripe, Inc.", aliases: ["Stripe"], country: "US", website: "stripe.com" },
+  { name: "American Express Company", aliases: ["Amex", "American Express"], country: "US", website: "americanexpress.com", patterns: [
+    { pattern: "*amex*", field: "name", confidence: 90 },
+    { pattern: "*american express*", field: "name", confidence: 92 },
+  ]},
+  { name: "PayPal Holdings, Inc.", aliases: ["PayPal", "Venmo"], country: "US", website: "paypal.com", patterns: [
+    { pattern: "*paypal*", field: "name", confidence: 95 },
+    { pattern: "*venmo*", field: "name", confidence: 92 },
+  ]},
+  { name: "Block, Inc.", aliases: ["Block", "Square", "Cash App"], country: "US", website: "block.xyz", patterns: [
+    { pattern: "*square*", field: "name", confidence: 90 },
+    { pattern: "*cash app*", field: "name", confidence: 92 },
+  ]},
+  { name: "Stripe, Inc.", aliases: ["Stripe"], country: "US", website: "stripe.com", patterns: [
+    { pattern: "*stripe*", field: "name", confidence: 92 },
+  ]},
 
   // Tech Services
-  { name: "Uber Technologies, Inc.", aliases: ["Uber", "Uber Eats"], country: "US", website: "uber.com" },
-  { name: "Lyft, Inc.", aliases: ["Lyft"], country: "US", website: "lyft.com" },
-  { name: "Airbnb, Inc.", aliases: ["Airbnb"], country: "US", website: "airbnb.com" },
-  { name: "DoorDash, Inc.", aliases: ["DoorDash"], country: "US", website: "doordash.com" },
-  { name: "Dropbox, Inc.", aliases: ["Dropbox"], country: "US", website: "dropbox.com" },
-  { name: "Zoom Video Communications, Inc.", aliases: ["Zoom"], country: "US", website: "zoom.us" },
-  { name: "Slack Technologies, LLC", aliases: ["Slack"], country: "US", website: "slack.com" },
-  { name: "Atlassian Corporation", aliases: ["Atlassian", "Jira", "Confluence", "Trello"], country: "US", website: "atlassian.com" },
+  { name: "Uber Technologies, Inc.", aliases: ["Uber", "Uber Eats"], country: "US", website: "uber.com", patterns: [
+    { pattern: "*uber*", field: "name", confidence: 92 },
+  ]},
+  { name: "Lyft, Inc.", aliases: ["Lyft"], country: "US", website: "lyft.com", patterns: [
+    { pattern: "*lyft*", field: "name", confidence: 92 },
+  ]},
+  { name: "Airbnb, Inc.", aliases: ["Airbnb"], country: "US", website: "airbnb.com", patterns: [
+    { pattern: "*airbnb*", field: "name", confidence: 95 },
+  ]},
+  { name: "DoorDash, Inc.", aliases: ["DoorDash"], country: "US", website: "doordash.com", patterns: [
+    { pattern: "*doordash*", field: "name", confidence: 92 },
+  ]},
+  { name: "Dropbox, Inc.", aliases: ["Dropbox"], country: "US", website: "dropbox.com", patterns: [
+    { pattern: "*dropbox*", field: "name", confidence: 95 },
+  ]},
+  { name: "Zoom Video Communications, Inc.", aliases: ["Zoom"], country: "US", website: "zoom.us", patterns: [
+    { pattern: "*zoom*", field: "name", confidence: 90 },
+  ]},
+  { name: "Slack Technologies, LLC", aliases: ["Slack"], country: "US", website: "slack.com", patterns: [
+    { pattern: "*slack*", field: "name", confidence: 90 },
+  ]},
+  { name: "Atlassian Corporation", aliases: ["Atlassian", "Jira", "Confluence", "Trello"], country: "US", website: "atlassian.com", patterns: [
+    { pattern: "*atlassian*", field: "name", confidence: 92 },
+    { pattern: "*jira*", field: "name", confidence: 90 },
+    { pattern: "*confluence*", field: "name", confidence: 90 },
+    { pattern: "*trello*", field: "name", confidence: 92 },
+  ]},
   { name: "Intuit Inc.", aliases: ["Intuit", "QuickBooks", "TurboTax"], country: "US", website: "intuit.com" },
-  { name: "Autodesk, Inc.", aliases: ["Autodesk"], country: "US", website: "autodesk.com" },
-  { name: "Shopify Inc.", aliases: ["Shopify"], country: "CA", website: "shopify.com" },
+  { name: "Autodesk, Inc.", aliases: ["Autodesk"], country: "US", website: "autodesk.com", patterns: [
+    { pattern: "*autodesk*", field: "name", confidence: 92 },
+  ]},
+  { name: "Shopify Inc.", aliases: ["Shopify"], country: "CA", website: "shopify.com", patterns: [
+    { pattern: "*shopify*", field: "name", confidence: 92 },
+  ]},
 
   // Food & Beverage
   { name: "McDonald's Corporation", aliases: ["McDonald's", "McDonalds"], country: "US", website: "mcdonalds.com" },
@@ -263,14 +339,32 @@ export const PRESET_PARTNERS: PresetPartner[] = [
   { name: "Warner Bros. Discovery, Inc.", aliases: ["Warner Bros.", "HBO", "CNN"], country: "US", website: "wbd.com" },
 
   // ============ Fintech & Payments (20) ============
-  { name: "Klarna Bank AB", aliases: ["Klarna"], country: "SE", website: "klarna.com" },
-  { name: "Adyen N.V.", aliases: ["Adyen"], country: "NL", website: "adyen.com" },
-  { name: "Revolut Ltd", aliases: ["Revolut"], country: "GB", website: "revolut.com" },
-  { name: "N26 Bank GmbH", aliases: ["N26"], country: "DE", website: "n26.com" },
-  { name: "Wise Payments Limited", aliases: ["Wise", "TransferWise"], country: "GB", website: "wise.com" },
-  { name: "Sumup Limited", aliases: ["SumUp"], country: "GB", website: "sumup.com" },
-  { name: "iZettle AB", aliases: ["iZettle", "Zettle"], country: "SE", website: "zettle.com" },
-  { name: "Mollie B.V.", aliases: ["Mollie"], country: "NL", website: "mollie.com" },
+  { name: "Klarna Bank AB", aliases: ["Klarna"], country: "SE", website: "klarna.com", patterns: [
+    { pattern: "*klarna*", field: "name", confidence: 95 },
+  ]},
+  { name: "Adyen N.V.", aliases: ["Adyen"], country: "NL", website: "adyen.com", patterns: [
+    { pattern: "*adyen*", field: "name", confidence: 92 },
+  ]},
+  { name: "Revolut Ltd", aliases: ["Revolut"], country: "GB", website: "revolut.com", patterns: [
+    { pattern: "*revolut*", field: "name", confidence: 95 },
+  ]},
+  { name: "N26 Bank GmbH", aliases: ["N26"], country: "DE", website: "n26.com", patterns: [
+    { pattern: "*n26*", field: "name", confidence: 92 },
+  ]},
+  { name: "Wise Payments Limited", aliases: ["Wise", "TransferWise"], country: "GB", website: "wise.com", patterns: [
+    { pattern: "*wise*", field: "name", confidence: 85 },
+    { pattern: "*transferwise*", field: "name", confidence: 95 },
+  ]},
+  { name: "Sumup Limited", aliases: ["SumUp"], country: "GB", website: "sumup.com", patterns: [
+    { pattern: "*sumup*", field: "name", confidence: 92 },
+  ]},
+  { name: "iZettle AB", aliases: ["iZettle", "Zettle"], country: "SE", website: "zettle.com", patterns: [
+    { pattern: "*zettle*", field: "name", confidence: 92 },
+    { pattern: "*izettle*", field: "name", confidence: 92 },
+  ]},
+  { name: "Mollie B.V.", aliases: ["Mollie"], country: "NL", website: "mollie.com", patterns: [
+    { pattern: "*mollie*", field: "name", confidence: 90 },
+  ]},
   { name: "Worldline S.A.", aliases: ["Worldline"], country: "FR", website: "worldline.com" },
   { name: "Nexi S.p.A.", aliases: ["Nexi"], country: "IT", website: "nexi.it" },
 

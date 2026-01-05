@@ -84,6 +84,9 @@ export interface GlobalPartner {
   /** Details about data sourcing */
   sourceDetails: SourceDetails;
 
+  /** Static patterns for matching transactions (from presets or admin-defined) */
+  patterns?: MatchPattern[];
+
   /** Active status (soft delete) */
   isActive: boolean;
 
@@ -92,18 +95,24 @@ export interface GlobalPartner {
 }
 
 /**
- * AI-learned pattern for matching transactions
+ * Base pattern for matching transactions
+ * Used by both global (static) and user (learned) partners
  */
-export interface LearnedPattern {
-  /** Glob-style pattern, e.g., "google*cloud*" */
+export interface MatchPattern {
+  /** Glob-style pattern, e.g., "google*cloud*" or "*netflix*" */
   pattern: string;
 
   /** Which transaction field to match against */
   field: "partner" | "name";
 
-  /** AI confidence score (0-100) */
+  /** Confidence score (0-100) */
   confidence: number;
+}
 
+/**
+ * AI-learned pattern for matching transactions (extends base pattern)
+ */
+export interface LearnedPattern extends MatchPattern {
   /** When this pattern was learned */
   createdAt: Timestamp;
 

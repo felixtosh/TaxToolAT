@@ -73,12 +73,28 @@ export function matchTransaction(
     }
   }
 
-  // Sort by confidence (highest first), with user partners first for ties
+  // Sort with user partners taking absolute precedence over global when both above threshold
+  const AUTO_ASSIGN_THRESHOLD = 89;
   results.sort((a, b) => {
+    const aAboveThreshold = a.confidence >= AUTO_ASSIGN_THRESHOLD;
+    const bAboveThreshold = b.confidence >= AUTO_ASSIGN_THRESHOLD;
+
+    // If both above threshold, user always wins over global
+    if (aAboveThreshold && bAboveThreshold) {
+      if (a.partnerType === "user" && b.partnerType === "global") return -1;
+      if (a.partnerType === "global" && b.partnerType === "user") return 1;
+      // Same type: sort by confidence
+      return b.confidence - a.confidence;
+    }
+
+    // If only one is above threshold, it wins
+    if (aAboveThreshold && !bAboveThreshold) return -1;
+    if (!aAboveThreshold && bAboveThreshold) return 1;
+
+    // Both below threshold: sort by confidence, user wins on ties
     if (b.confidence !== a.confidence) {
       return b.confidence - a.confidence;
     }
-    // User partners take priority over global partners at same confidence
     if (a.partnerType === "user" && b.partnerType === "global") return -1;
     if (a.partnerType === "global" && b.partnerType === "user") return 1;
     return 0;
@@ -114,24 +130,24 @@ function matchSinglePartner(
     }
   }
 
-  // 2. Learned pattern match (uses AI-determined confidence)
-  // Only for user partners (they have learned patterns)
-  if (partner._type === "user" && "learnedPatterns" in partner) {
-    const userPartner = partner as UserPartner & { _type: "user" };
-    if (userPartner.learnedPatterns && userPartner.learnedPatterns.length > 0) {
-      for (const lp of userPartner.learnedPatterns) {
-        const textToMatch = lp.field === "partner" ? transaction.partner : transaction.name;
-        if (textToMatch && globMatch(lp.pattern, textToMatch)) {
-          const match: PartnerMatchResult = {
-            partnerId: partner.id,
-            partnerType: partner._type,
-            partnerName: partner.name,
-            confidence: lp.confidence,
-            source: "pattern",
-          };
-          if (!bestMatch || match.confidence > bestMatch.confidence) {
-            bestMatch = match;
-          }
+  // 2. Pattern match - works for both user (learnedPatterns) and global (patterns) partners
+  const patterns = partner._type === "user"
+    ? (partner as UserPartner & { _type: "user" }).learnedPatterns
+    : (partner as GlobalPartner & { _type: "global" }).patterns;
+
+  if (patterns && patterns.length > 0) {
+    for (const p of patterns) {
+      const textToMatch = p.field === "partner" ? transaction.partner : transaction.name;
+      if (textToMatch && globMatch(p.pattern, textToMatch)) {
+        const match: PartnerMatchResult = {
+          partnerId: partner.id,
+          partnerType: partner._type,
+          partnerName: partner.name,
+          confidence: p.confidence,
+          source: "pattern",
+        };
+        if (!bestMatch || match.confidence > bestMatch.confidence) {
+          bestMatch = match;
         }
       }
     }
@@ -162,10 +178,39 @@ function matchSinglePartner(
     }
   }
 
-  // 4. Name matching (60-90% confidence)
-  if (transaction.partner) {
-    const namesToCheck = [partner.name, ...(partner.aliases || [])];
+  // 4. Manual pattern matching (aliases with glob syntax)
+  // Check if any alias contains * (glob pattern) - treat as manual pattern
+  const aliases = partner.aliases || [];
+  const globAliases = aliases.filter((a) => a.includes("*"));
 
+  if (globAliases.length > 0) {
+    const textsToCheck = [transaction.partner, transaction.name].filter(Boolean) as string[];
+
+    for (const alias of globAliases) {
+      for (const text of textsToCheck) {
+        if (globMatch(alias, text)) {
+          const match: PartnerMatchResult = {
+            partnerId: partner.id,
+            partnerType: partner._type,
+            partnerName: partner.name,
+            confidence: 90, // Manual patterns get 90% confidence
+            source: "pattern",
+          };
+          if (!bestMatch || match.confidence > bestMatch.confidence) {
+            bestMatch = match;
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  // 5. Name matching (60-90% confidence)
+  // Only use non-glob aliases for fuzzy name matching
+  const nameAliases = aliases.filter((a) => !a.includes("*"));
+  const namesToCheck = [partner.name, ...nameAliases];
+
+  if (transaction.partner) {
     for (const name of namesToCheck) {
       const similarity = calculateCompanyNameSimilarity(transaction.partner, name);
 
@@ -190,8 +235,6 @@ function matchSinglePartner(
 
   // Also check transaction.name if partner field is empty
   if (!transaction.partner && transaction.name) {
-    const namesToCheck = [partner.name, ...(partner.aliases || [])];
-
     for (const name of namesToCheck) {
       const similarity = calculateCompanyNameSimilarity(transaction.name, name);
 
@@ -217,10 +260,11 @@ function matchSinglePartner(
 }
 
 /**
- * Determine if a match should be auto-applied (≥95% confidence)
+ * Determine if a match should be auto-applied (≥89% confidence)
+ * Matches server-side threshold in functions/src/utils/partner-matcher.ts
  */
 export function shouldAutoApply(confidence: number): boolean {
-  return confidence >= 95;
+  return confidence >= 89;
 }
 
 /**
@@ -288,10 +332,16 @@ export function matchTransactionsBatch(
  * Fast client-side pattern matching (instant suggestions)
  * Only checks learned patterns - no IBAN, name, or website matching
  * Use this for instant UI suggestions without server calls
+ *
+ * Patterns check multiple fields with decreasing confidence:
+ * - Primary field (specified): full confidence
+ * - Secondary field (other of partner/name): -10% confidence
+ * - Reference field: -15% confidence
  */
 export function matchTransactionByPattern(
   transaction: Transaction,
-  partners: UserPartner[]
+  partners: UserPartner[],
+  debug = false
 ): PartnerMatchResult | null {
   if (transaction.partnerId) return null; // Already assigned
 
@@ -301,16 +351,50 @@ export function matchTransactionByPattern(
     if (!partner.learnedPatterns || partner.learnedPatterns.length === 0) continue;
 
     for (const lp of partner.learnedPatterns) {
-      const textToMatch = lp.field === "partner" ? transaction.partner : transaction.name;
-      if (textToMatch && globMatch(lp.pattern, textToMatch)) {
-        if (!bestMatch || lp.confidence > bestMatch.confidence) {
-          bestMatch = {
-            partnerId: partner.id,
-            partnerType: "user",
-            partnerName: partner.name,
-            confidence: lp.confidence,
-            source: "pattern",
-          };
+      // Build list of fields to check with confidence penalties
+      const fieldsToCheck: Array<{ value: string | null; penalty: number; name: string }> = [
+        // Primary field (specified in pattern)
+        {
+          value: lp.field === "partner" ? transaction.partner : transaction.name,
+          penalty: 0,
+          name: lp.field
+        },
+        // Secondary field (the other one)
+        {
+          value: lp.field === "partner" ? transaction.name : transaction.partner,
+          penalty: 10,
+          name: lp.field === "partner" ? "name" : "partner"
+        },
+        // Reference field (bank reference)
+        {
+          value: transaction.reference,
+          penalty: 15,
+          name: "reference"
+        },
+      ];
+
+      if (debug) {
+        console.log(`  Pattern "${lp.pattern}" (${lp.field} field, ${lp.confidence}%):`);
+      }
+
+      for (const field of fieldsToCheck) {
+        if (!field.value) continue;
+
+        if (globMatch(lp.pattern, field.value)) {
+          const adjustedConfidence = Math.max(50, lp.confidence - field.penalty);
+          if (debug) {
+            console.log(`    → MATCH on ${field.name}="${field.value}" (${adjustedConfidence}%${field.penalty > 0 ? ` = ${lp.confidence}%-${field.penalty}%` : ""})`);
+          }
+          if (!bestMatch || adjustedConfidence > bestMatch.confidence) {
+            bestMatch = {
+              partnerId: partner.id,
+              partnerType: "user",
+              partnerName: partner.name,
+              confidence: adjustedConfidence,
+              source: "pattern",
+            };
+          }
+          break; // Found match for this pattern, move to next pattern
         }
       }
     }
@@ -328,6 +412,8 @@ export function matchAllTransactionsByPattern(
   partners: UserPartner[]
 ): Map<string, PartnerMatchResult> {
   const results = new Map<string, PartnerMatchResult>();
+  const partnersWithPatterns = partners.filter(p => p.learnedPatterns?.length);
+  const unassignedTxs = transactions.filter(t => !t.partnerId);
 
   for (const transaction of transactions) {
     const match = matchTransactionByPattern(transaction, partners);
@@ -336,5 +422,61 @@ export function matchAllTransactionsByPattern(
     }
   }
 
+  // Clean summary log
+  if (partnersWithPatterns.length > 0) {
+    console.log(`[Pattern Matching] ${results.size} suggestions from ${partnersWithPatterns.length} partners (${unassignedTxs.length} unassigned)`);
+
+    // Group matches by partner for summary
+    const matchesByPartner = new Map<string, number>();
+    results.forEach(match => {
+      matchesByPartner.set(match.partnerName, (matchesByPartner.get(match.partnerName) || 0) + 1);
+    });
+    matchesByPartner.forEach((count, name) => {
+      console.log(`  ${name}: ${count} matches`);
+    });
+  }
+
   return results;
+}
+
+/**
+ * Debug helper: Test a specific pattern against a specific text
+ * Call from browser console: testPattern("*media*markt*", "Mediamarkt A-1070")
+ */
+if (typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).testPattern = (pattern: string, text: string) => {
+    const result = globMatch(pattern, text);
+    console.log(`Pattern "${pattern}" vs "${text}" => ${result ? "MATCH" : "NO MATCH"}`);
+    return result;
+  };
+
+  (window as unknown as Record<string, unknown>).debugTransaction = (
+    txPartner: string | null,
+    txName: string,
+    partners: UserPartner[]
+  ) => {
+    console.log(`\n=== Debug Transaction ===`);
+    console.log(`partner: "${txPartner}"`);
+    console.log(`name: "${txName}"`);
+    console.log(`\nChecking patterns:`);
+
+    for (const partner of partners) {
+      if (!partner.learnedPatterns?.length) continue;
+
+      for (const lp of partner.learnedPatterns) {
+        const fields = [
+          { name: "partner", value: txPartner },
+          { name: "name", value: txName },
+        ];
+
+        for (const field of fields) {
+          if (!field.value) continue;
+          const matches = globMatch(lp.pattern, field.value);
+          if (matches) {
+            console.log(`  ✓ "${lp.pattern}" matches ${field.name}="${field.value}" → ${partner.name}`);
+          }
+        }
+      }
+    }
+  };
 }

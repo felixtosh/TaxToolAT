@@ -4,7 +4,6 @@ import { initializeApp } from "firebase-admin/app";
 initializeApp();
 
 // Export partner matching functions
-export { onTransactionCreate } from "./matching/onTransactionCreate";
 export { onPartnerCreate } from "./matching/onPartnerCreate";
 export { matchPartners } from "./matching/matchPartners";
 export { learnPartnerPatterns } from "./matching/learnPartnerPatterns";

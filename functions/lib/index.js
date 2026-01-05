@@ -1,12 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.matchColumns = exports.generatePromotionCandidates = exports.applyPatternsToTransactions = exports.triggerLearningNow = exports.processLearningQueue = exports.queuePartnerForLearning = exports.searchExternalPartners = exports.learnPartnerPatterns = exports.matchPartners = exports.onPartnerCreate = exports.onTransactionCreate = void 0;
+exports.matchColumns = exports.generatePromotionCandidates = exports.applyPatternsToTransactions = exports.triggerLearningNow = exports.processLearningQueue = exports.queuePartnerForLearning = exports.searchExternalPartners = exports.learnPartnerPatterns = exports.matchPartners = exports.onPartnerCreate = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize Firebase Admin
 (0, app_1.initializeApp)();
 // Export partner matching functions
-var onTransactionCreate_1 = require("./matching/onTransactionCreate");
-Object.defineProperty(exports, "onTransactionCreate", { enumerable: true, get: function () { return onTransactionCreate_1.onTransactionCreate; } });
 var onPartnerCreate_1 = require("./matching/onPartnerCreate");
 Object.defineProperty(exports, "onPartnerCreate", { enumerable: true, get: function () { return onPartnerCreate_1.onPartnerCreate; } });
 var matchPartners_1 = require("./matching/matchPartners");

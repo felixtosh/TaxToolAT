@@ -202,6 +202,75 @@ export async function updateChatMessage(
 }
 
 /**
+ * Upsert a message - create or update during streaming
+ * Used for incremental message saving as assistant streams content
+ */
+export async function upsertChatMessage(
+  ctx: OperationsContext,
+  sessionId: string,
+  messageId: string,
+  message: Omit<ChatMessage, "id" | "createdAt">
+): Promise<void> {
+  const messagesPath = getMessagesCollection(ctx.userId, sessionId);
+  const docRef = doc(ctx.db, messagesPath, messageId);
+  const docSnap = await getDoc(docRef);
+
+  if (docSnap.exists()) {
+    // Update existing
+    await updateDoc(docRef, {
+      ...message,
+      updatedAt: Timestamp.now(),
+    });
+  } else {
+    // Create new
+    await addDoc(collection(ctx.db, messagesPath), {
+      ...message,
+      createdAt: Timestamp.now(),
+    });
+
+    // Update session
+    const sessionRef = doc(ctx.db, `users/${ctx.userId}/chatSessions`, sessionId);
+    const sessionSnap = await getDoc(sessionRef);
+    if (sessionSnap.exists()) {
+      const sessionData = sessionSnap.data();
+      const updates: Record<string, unknown> = {
+        messageCount: (sessionData.messageCount || 0) + 1,
+        updatedAt: Timestamp.now(),
+      };
+
+      if (message.content) {
+        updates.lastMessagePreview = message.content.slice(0, 100);
+      }
+
+      await updateDoc(sessionRef, updates);
+    }
+  }
+}
+
+/**
+ * Get or create an active session for the user
+ */
+export async function getOrCreateActiveSession(
+  ctx: OperationsContext
+): Promise<string> {
+  // Try to find the most recent session
+  const q = query(
+    collection(ctx.db, `users/${ctx.userId}/chatSessions`),
+    orderBy("updatedAt", "desc"),
+    limit(1)
+  );
+
+  const snapshot = await getDocs(q);
+
+  if (!snapshot.empty) {
+    return snapshot.docs[0].id;
+  }
+
+  // No session exists, create a new one
+  return createChatSession(ctx, "New Chat");
+}
+
+/**
  * Helper to serialize messages for the AI SDK format
  */
 export function serializeMessagesForSDK(

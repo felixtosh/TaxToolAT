@@ -29,6 +29,7 @@ exports.onTransactionCreate = (0, firestore_1.onDocumentCreated)({
         partner: transactionData.partner || null,
         partnerIban: transactionData.partnerIban || null,
         name: transactionData.name || "",
+        reference: transactionData.reference || null,
     };
     try {
         // Get user's partners
@@ -63,6 +64,7 @@ exports.onTransactionCreate = (0, firestore_1.onDocumentCreated)({
                 ibans: data.ibans || [],
                 website: data.website,
                 vatId: data.vatId,
+                patterns: data.patterns || [],
             };
         });
         // Run matching

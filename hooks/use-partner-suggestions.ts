@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { Transaction } from "@/types/transaction";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
+import { matchTransactionByPattern } from "@/lib/matching/partner-matcher";
 
 export interface PartnerSuggestionWithDetails extends PartnerSuggestion {
   partner: UserPartner | GlobalPartner;
@@ -10,6 +11,9 @@ export interface PartnerSuggestionWithDetails extends PartnerSuggestion {
 
 /**
  * Hook to get partner suggestions for a transaction with full partner details
+ * Combines:
+ * 1. Server-side stored suggestions (transaction.partnerSuggestions)
+ * 2. Client-side pattern matches (instant, from learned patterns)
  */
 export function usePartnerSuggestions(
   transaction: Transaction | null,
@@ -17,36 +21,59 @@ export function usePartnerSuggestions(
   globalPartners: GlobalPartner[]
 ): PartnerSuggestionWithDetails[] {
   return useMemo(() => {
-    if (!transaction?.partnerSuggestions || transaction.partnerSuggestions.length === 0) {
-      return [];
+    if (!transaction) return [];
+
+    const results: PartnerSuggestionWithDetails[] = [];
+    const seenPartnerIds = new Set<string>();
+
+    // 1. Add client-side pattern matches first (instant, most relevant)
+    if (!transaction.partnerId) {
+      const patternMatch = matchTransactionByPattern(transaction, userPartners);
+      if (patternMatch) {
+        const partner = userPartners.find((p) => p.id === patternMatch.partnerId);
+        if (partner && !seenPartnerIds.has(patternMatch.partnerId)) {
+          seenPartnerIds.add(patternMatch.partnerId);
+          results.push({
+            partnerId: patternMatch.partnerId,
+            partnerType: "user",
+            confidence: patternMatch.confidence,
+            source: "pattern",
+            partner,
+          });
+        }
+      }
     }
 
-    return transaction.partnerSuggestions
-      .map((suggestion) => {
-        let partner: UserPartner | GlobalPartner | undefined;
+    // 2. Add server-side stored suggestions
+    if (transaction.partnerSuggestions && transaction.partnerSuggestions.length > 0) {
+      for (const suggestion of transaction.partnerSuggestions) {
+        if (seenPartnerIds.has(suggestion.partnerId)) continue;
 
+        let partner: UserPartner | GlobalPartner | undefined;
         if (suggestion.partnerType === "user") {
           partner = userPartners.find((p) => p.id === suggestion.partnerId);
         } else {
           partner = globalPartners.find((p) => p.id === suggestion.partnerId);
         }
 
-        if (!partner) return null;
+        if (!partner) continue;
 
-        return {
+        // Filter out global partners where user already has a local copy
+        if (suggestion.partnerType === "global") {
+          const hasLocalCopy = userPartners.some((up) => up.globalPartnerId === suggestion.partnerId);
+          if (hasLocalCopy) continue;
+        }
+
+        seenPartnerIds.add(suggestion.partnerId);
+        results.push({
           ...suggestion,
           partner,
-        };
-      })
-      .filter((s): s is PartnerSuggestionWithDetails => s !== null)
-      // Filter out global partners where user already has a local copy
-      .filter((s) => {
-        if (s.partnerType === "global") {
-          const hasLocalCopy = userPartners.some((up) => up.globalPartnerId === s.partnerId);
-          if (hasLocalCopy) return false;
-        }
-        return true;
-      });
+        });
+      }
+    }
+
+    // Sort by confidence (highest first)
+    return results.sort((a, b) => b.confidence - a.confidence);
   }, [transaction, userPartners, globalPartners]);
 }
 

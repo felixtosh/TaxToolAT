@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   collection,
   writeBatch,
@@ -8,7 +8,8 @@ import {
   setDoc,
   Timestamp,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase/config";
+import { db, functions } from "@/lib/firebase/config";
+import { httpsCallable } from "firebase/functions";
 import { Transaction } from "@/types/transaction";
 import { FieldMapping, CSVAnalysis, AmountFormatConfig } from "@/types/import";
 import { TransactionSource } from "@/types/source";
@@ -20,6 +21,7 @@ import {
 } from "@/lib/import/deduplication";
 import { autoMatchColumns, validateMappings } from "@/lib/import/field-matcher";
 import { parseCSV } from "@/lib/import/csv-parser";
+import { createNotification, OperationsContext } from "@/lib/operations";
 
 const MOCK_USER_ID = "dev-user-123";
 const BATCH_SIZE = 500; // Firestore batch limit
@@ -56,6 +58,15 @@ export function useImport(source: TransactionSource | null) {
     results: null,
     error: null,
   });
+
+  // Operations context for notifications
+  const ctx: OperationsContext = useMemo(
+    () => ({
+      db,
+      userId: MOCK_USER_ID,
+    }),
+    []
+  );
 
   // Returns true when file is ready to proceed to mapping step
   const handleFileAnalyzed = useCallback(
@@ -256,10 +267,11 @@ export function useImport(source: TransactionSource | null) {
         }
 
         // Validate required fields
+        // Description (name) OR partner is required - having one of them is sufficient
         const missingFields: string[] = [];
         if (!dateValue) missingFields.push("date");
         if (!amountValue) missingFields.push("amount");
-        if (!nameValue) missingFields.push("description");
+        if (!nameValue && !partnerValue) missingFields.push("description or partner");
 
         if (missingFields.length > 0) {
           errors.push({
@@ -343,14 +355,17 @@ export function useImport(source: TransactionSource | null) {
     );
     const skippedCount = transactions.length - newTransactions.length;
 
-    // Batch write transactions
+    // Batch write transactions, capturing IDs for partner matching
     let importedCount = 0;
+    const transactionIds: string[] = [];
+
     for (let i = 0; i < newTransactions.length; i += BATCH_SIZE) {
       const batch = writeBatch(db);
       const chunk = newTransactions.slice(i, i + BATCH_SIZE);
 
       for (const transaction of chunk) {
         const docRef = doc(collection(db, "transactions"));
+        transactionIds.push(docRef.id);
         batch.set(docRef, transaction);
       }
 
@@ -361,6 +376,14 @@ export function useImport(source: TransactionSource | null) {
         ...s,
         progress: 50 + Math.round(((i + chunk.length) / newTransactions.length) * 50),
       }));
+    }
+
+    // Run partner matching in batch (non-blocking)
+    if (transactionIds.length > 0) {
+      const matchPartners = httpsCallable(functions, "matchPartners");
+      matchPartners({ transactionIds }).catch((error) => {
+        console.error("Failed to match partners after import:", error);
+      });
     }
 
     // Save import record to Firestore
@@ -376,6 +399,22 @@ export function useImport(source: TransactionSource | null) {
       createdAt: Timestamp.now(),
     });
 
+    // Create notification for the import
+    if (importedCount > 0) {
+      createNotification(ctx, {
+        type: "import_complete",
+        title: `Imported ${importedCount} transactions`,
+        message: `I see you added ${importedCount} new transactions from ${source.name}. Let me match them with your partners.`,
+        context: {
+          sourceId: source.id,
+          sourceName: source.name,
+          transactionCount: importedCount,
+        },
+      }).catch((err) => {
+        console.error("Failed to create import notification:", err);
+      });
+    }
+
     // Update results
     setState((s) => ({
       ...s,
@@ -389,7 +428,7 @@ export function useImport(source: TransactionSource | null) {
         errorDetails: errors,
       },
     }));
-  }, [source, state.file, state.analysis, state.mappings]);
+  }, [source, state.file, state.analysis, state.mappings, ctx]);
 
   const reset = useCallback(() => {
     setState({

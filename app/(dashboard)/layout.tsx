@@ -25,8 +25,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       )}
     >
       {/* Header */}
-      <header className="border-b bg-card sticky top-0 z-50">
-        <div className="container mx-auto px-4 h-14 flex items-center justify-between">
+      <header className="border-b bg-card sticky top-0 z-50 px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-8">
             <Link href="/transactions" className="flex items-center gap-2 hover:opacity-80">
               <FileSpreadsheet className="h-5 w-5 text-primary" />
@@ -63,7 +62,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               </Link>
             </Button>
           </div>
-        </div>
       </header>
 
       {/* Main content */}

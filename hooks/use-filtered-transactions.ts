@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useDeferredValue } from "react";
 import { Transaction, TransactionFilters } from "@/types/transaction";
 
 /**
@@ -12,7 +12,7 @@ export function useFilteredTransactions(
   filters: TransactionFilters,
   searchValue: string
 ): Transaction[] {
-  return useMemo(() => {
+  const filtered = useMemo(() => {
     let result = transactions;
 
     // Text search
@@ -20,7 +20,7 @@ export function useFilteredTransactions(
       const search = searchValue.toLowerCase();
       result = result.filter(
         (t) =>
-          t.name.toLowerCase().includes(search) ||
+          t.name?.toLowerCase().includes(search) ||
           t.description?.toLowerCase().includes(search) ||
           t.partner?.toLowerCase().includes(search)
       );
@@ -70,4 +70,7 @@ export function useFilteredTransactions(
 
     return result;
   }, [transactions, filters, searchValue]);
+
+  // Defer the filtered result to prevent blocking the UI during heavy filtering
+  return useDeferredValue(filtered);
 }

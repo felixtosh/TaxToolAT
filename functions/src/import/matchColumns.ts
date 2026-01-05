@@ -174,14 +174,22 @@ function buildPrompt(
       `- **${f.key}** (${f.required ? "required" : "optional"}, type: ${f.type}): ${f.description}\n  Aliases: ${f.aliases.slice(0, 5).join(", ")}\n  Examples: ${f.examples.join(", ")}`
   ).join("\n\n");
 
+  // Build column info with variance analysis
   const columnInfo = headers
     .map((header) => {
       const samples = sampleRows
-        .slice(0, 5)
+        .slice(0, 10)
         .map((row) => row[header])
-        .filter((v) => v && v.trim())
-        .slice(0, 3);
-      return `Column: "${header}"\nSample values: ${samples.length > 0 ? samples.join(" | ") : "(empty)"}`;
+        .filter((v) => v && v.trim());
+      const displaySamples = samples.slice(0, 3);
+      const uniqueValues = new Set(samples);
+      const isConstant = samples.length > 1 && uniqueValues.size === 1;
+
+      let info = `Column: "${header}"\nSample values: ${displaySamples.length > 0 ? displaySamples.join(" | ") : "(empty)"}`;
+      if (isConstant) {
+        info += `\n⚠️ ALL VALUES IDENTICAL (likely account owner, not counterparty)`;
+      }
+      return info;
     })
     .join("\n\n");
 
@@ -203,6 +211,22 @@ CRITICAL RULES:
 1. Each target field can ONLY be assigned to ONE column (no duplicates!)
 2. If multiple columns could match a field, pick the BEST one and leave others as null
 3. Required fields (date, amount, name) must be prioritized
+
+FIELD-SPECIFIC RULES:
+
+**Amount field:**
+- If there are columns like "Total Amount" AND "Amount", prefer "Total Amount" or "Gesamtbetrag"
+- Columns named "Subtotal", "Net", or partial amounts should NOT be mapped to amount
+
+**Partner/Counterparty field:**
+- Look for the column with CLEAN company/person names (e.g., "Amazon EU S.a.r.l.", "Max Mustermann")
+- Prefer columns with structured names over verbose description/memo text
+- If a column has THE SAME VALUE in every row, it's likely the ACCOUNT OWNER, not the counterparty - do NOT map it to partner!
+- Common counterparty column names: "Empfänger", "Auftraggeber", "Zahlungspflichtiger", "Begünstigter", "Payee", "Merchant"
+
+**Name/Description field:**
+- This is for transaction details/memo text, NOT company names
+- Look for verbose text like "SEPA Überweisung an..." or payment references
 
 Consider:
 - The column header name (may be in German, English, or other languages)

@@ -9,22 +9,31 @@ const db = (0, firestore_1.getFirestore)();
 // ============================================================================
 // Pattern Matching
 // ============================================================================
-function findBestMatch(txPartner, txName, partners) {
+function findBestMatch(txPartner, txName, txReference, partners) {
     let bestMatch = null;
     for (const partner of partners) {
         if (!partner.learnedPatterns || partner.learnedPatterns.length === 0)
             continue;
         for (const pattern of partner.learnedPatterns) {
-            const textToMatch = pattern.field === "partner" ? txPartner : txName;
-            if (!textToMatch)
-                continue;
-            if ((0, partner_matcher_1.globMatch)(pattern.pattern, textToMatch)) {
-                if (!bestMatch || pattern.confidence > bestMatch.confidence) {
-                    bestMatch = {
-                        partnerId: partner.id,
-                        partnerName: partner.name,
-                        confidence: pattern.confidence,
-                    };
+            // Check multiple fields with decreasing confidence
+            const fieldsToCheck = [
+                { value: pattern.field === "partner" ? txPartner : txName, penalty: 0 },
+                { value: pattern.field === "partner" ? txName : txPartner, penalty: 10 },
+                { value: txReference, penalty: 15 },
+            ];
+            for (const field of fieldsToCheck) {
+                if (!field.value)
+                    continue;
+                if ((0, partner_matcher_1.globMatch)(pattern.pattern, field.value)) {
+                    const adjustedConfidence = Math.max(50, pattern.confidence - field.penalty);
+                    if (!bestMatch || adjustedConfidence > bestMatch.confidence) {
+                        bestMatch = {
+                            partnerId: partner.id,
+                            partnerName: partner.name,
+                            confidence: adjustedConfidence,
+                        };
+                    }
+                    break; // Found match for this pattern
                 }
             }
         }
@@ -85,7 +94,7 @@ async function applyAllPatternsToTransactions(userId) {
             let batchMatchCount = 0;
             for (const doc of unassigned) {
                 const data = doc.data();
-                const match = findBestMatch(data.partner || null, data.name || "", partners);
+                const match = findBestMatch(data.partner || null, data.name || "", data.reference || null, partners);
                 if (match && match.confidence >= 89) {
                     updates.update(doc.ref, {
                         partnerId: match.partnerId,

@@ -27,6 +27,7 @@ interface MatchResult {
 function findBestMatch(
   txPartner: string | null,
   txName: string,
+  txReference: string | null,
   partners: PartnerWithPatterns[]
 ): MatchResult | null {
   let bestMatch: MatchResult | null = null;
@@ -35,16 +36,26 @@ function findBestMatch(
     if (!partner.learnedPatterns || partner.learnedPatterns.length === 0) continue;
 
     for (const pattern of partner.learnedPatterns) {
-      const textToMatch = pattern.field === "partner" ? txPartner : txName;
-      if (!textToMatch) continue;
+      // Check multiple fields with decreasing confidence
+      const fieldsToCheck = [
+        { value: pattern.field === "partner" ? txPartner : txName, penalty: 0 },
+        { value: pattern.field === "partner" ? txName : txPartner, penalty: 10 },
+        { value: txReference, penalty: 15 },
+      ];
 
-      if (globMatch(pattern.pattern, textToMatch)) {
-        if (!bestMatch || pattern.confidence > bestMatch.confidence) {
-          bestMatch = {
-            partnerId: partner.id,
-            partnerName: partner.name,
-            confidence: pattern.confidence,
-          };
+      for (const field of fieldsToCheck) {
+        if (!field.value) continue;
+
+        if (globMatch(pattern.pattern, field.value)) {
+          const adjustedConfidence = Math.max(50, pattern.confidence - field.penalty);
+          if (!bestMatch || adjustedConfidence > bestMatch.confidence) {
+            bestMatch = {
+              partnerId: partner.id,
+              partnerName: partner.name,
+              confidence: adjustedConfidence,
+            };
+          }
+          break; // Found match for this pattern
         }
       }
     }
@@ -118,7 +129,7 @@ export async function applyAllPatternsToTransactions(userId: string): Promise<{ 
 
       for (const doc of unassigned) {
         const data = doc.data();
-        const match = findBestMatch(data.partner || null, data.name || "", partners);
+        const match = findBestMatch(data.partner || null, data.name || "", data.reference || null, partners);
 
         if (match && match.confidence >= 89) {
           updates.update(doc.ref, {

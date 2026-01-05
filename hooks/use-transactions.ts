@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, startTransition } from "react";
 import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { Transaction } from "@/types/transaction";
@@ -44,7 +44,10 @@ export function useTransactions() {
           ...doc.data(),
         })) as Transaction[];
 
-        setTransactions(data);
+        // Use startTransition to mark this as non-urgent, preventing DOM blocking
+        startTransition(() => {
+          setTransactions(data);
+        });
         setLoading(false);
       },
       (err) => {

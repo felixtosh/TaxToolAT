@@ -92,14 +92,18 @@ IMPORTANT: Prefer GENERAL patterns over specific ones!
 - Simpler patterns = better (easier to match future variations)
 
 Pattern Rules:
-1. Use * as a wildcard (matches any characters)
+1. Use * as a wildcard (matches any characters, including spaces)
 2. Patterns must match ALL "must match" transactions
 3. Patterns must NOT match ANY "must not match" transactions
 4. Prefer shorter, more general patterns when safe
-5. Common pattern examples:
+5. CRITICAL: Handle spelling variations by using * between word parts!
+   - "Media Markt" and "Mediamarkt" → use "*media*markt*" (not "*media markt*")
+   - Spaces and no-spaces are different! Use * to match both
+6. Common pattern examples:
    - "google*" matches all Google services (Cloud, Ads, YouTube, etc.)
    - "amazon*" matches "AMAZON.DE", "AMAZON EU SARL"
    - "*netflix*" matches "NETFLIX.COM", "PP*NETFLIX"
+   - "*media*markt*" matches "Media Markt", "Mediamarkt", "MEDIAMARKT 1070"
 
 Confidence Guidelines:
 - 95-100: General pattern that matches all transactions without any collisions
@@ -151,6 +155,18 @@ function globMatch(pattern: string, text: string): boolean {
   }
 }
 
+interface MatchedTransaction {
+  id: string;
+  name: string;
+  amount: number;
+  partner?: string;
+}
+
+interface RematchResult {
+  matchedCount: number;
+  matchedTransactions: MatchedTransaction[];
+}
+
 /**
  * Re-match unassigned transactions against newly learned patterns
  * Auto-assigns if pattern confidence >= 89%
@@ -160,7 +176,7 @@ async function rematchUnassignedTransactions(
   partnerId: string,
   partnerName: string,
   learnedPatterns: LearnedPattern[]
-): Promise<number> {
+): Promise<RematchResult> {
   // Get ALL user transactions and filter client-side
   // (Firestore "== null" doesn't match missing/undefined fields)
   const allTxSnapshot = await db
@@ -169,7 +185,7 @@ async function rematchUnassignedTransactions(
     .limit(1000)
     .get();
 
-  if (allTxSnapshot.empty) return 0;
+  if (allTxSnapshot.empty) return { matchedCount: 0, matchedTransactions: [] };
 
   // Filter to unassigned transactions (partnerId is null, undefined, or missing)
   const unassignedDocs = allTxSnapshot.docs.filter((doc) => {
@@ -179,45 +195,67 @@ async function rematchUnassignedTransactions(
 
   console.log(`Found ${unassignedDocs.length} unassigned transactions to check`);
 
-  if (unassignedDocs.length === 0) return 0;
+  if (unassignedDocs.length === 0) return { matchedCount: 0, matchedTransactions: [] };
 
   const batch = db.batch();
   let matchedCount = 0;
+  const matchedTransactions: MatchedTransaction[] = [];
 
   for (const txDoc of unassignedDocs) {
     const txData = txDoc.data();
+    let bestMatch: { confidence: number; pattern: string } | null = null;
 
-    // Check each pattern
+    // Check each pattern against multiple fields with decreasing confidence
     for (const pattern of learnedPatterns) {
-      const textToMatch = pattern.field === "partner"
-        ? txData.partner
-        : txData.name;
+      const fieldsToCheck = [
+        { value: pattern.field === "partner" ? txData.partner : txData.name, penalty: 0, name: pattern.field },
+        { value: pattern.field === "partner" ? txData.name : txData.partner, penalty: 10, name: "secondary" },
+        { value: txData.reference, penalty: 15, name: "reference" },
+      ];
 
-      console.log(`Checking pattern "${pattern.pattern}" (${pattern.confidence}%) against "${textToMatch}"`);
+      for (const field of fieldsToCheck) {
+        if (!field.value) continue;
 
-      if (textToMatch && globMatch(pattern.pattern, textToMatch)) {
-        console.log(`  -> MATCH! Confidence: ${pattern.confidence}%`);
-        // Only auto-assign if confidence >= 89%
-        if (pattern.confidence >= 89) {
-          batch.update(txDoc.ref, {
-            partnerId: partnerId,
-            partnerType: "user",
-            partnerMatchConfidence: pattern.confidence,
-            partnerMatchedBy: "auto",
-            partnerSuggestions: [{
-              partnerId: partnerId,
-              partnerType: "user",
-              confidence: pattern.confidence,
-              source: "pattern",
-            }],
-            updatedAt: FieldValue.serverTimestamp(),
-          });
-          matchedCount++;
-          break; // Only match once per transaction
-        } else {
-          console.log(`  -> Confidence too low (${pattern.confidence}% < 89%), skipping auto-assign`);
+        if (globMatch(pattern.pattern, field.value)) {
+          const adjustedConfidence = Math.max(50, pattern.confidence - field.penalty);
+          console.log(`  -> MATCH: "${pattern.pattern}" on ${field.name}="${field.value}" (${adjustedConfidence}%)`);
+          if (!bestMatch || adjustedConfidence > bestMatch.confidence) {
+            bestMatch = { confidence: adjustedConfidence, pattern: pattern.pattern };
+          }
+          break; // Found match for this pattern
         }
       }
+    }
+
+    // Auto-assign if best match confidence >= 89%
+    if (bestMatch && bestMatch.confidence >= 89) {
+      console.log(`  -> AUTO-ASSIGNING with confidence ${bestMatch.confidence}%`);
+      batch.update(txDoc.ref, {
+        partnerId: partnerId,
+        partnerType: "user",
+        partnerMatchConfidence: bestMatch.confidence,
+        partnerMatchedBy: "auto",
+        partnerSuggestions: [{
+          partnerId: partnerId,
+          partnerType: "user",
+          confidence: bestMatch.confidence,
+          source: "pattern",
+        }],
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      matchedCount++;
+
+      // Collect transaction data for preview (limit to 10)
+      if (matchedTransactions.length < 10) {
+        matchedTransactions.push({
+          id: txDoc.id,
+          name: txData.name || txData.partner || "Unknown",
+          amount: txData.amount || 0,
+          partner: txData.partner,
+        });
+      }
+    } else if (bestMatch) {
+      console.log(`  -> Confidence too low (${bestMatch.confidence}% < 89%), skipping auto-assign`);
     }
 
     // Batch limit
@@ -228,7 +266,7 @@ async function rematchUnassignedTransactions(
     await batch.commit();
   }
 
-  return matchedCount;
+  return { matchedCount, matchedTransactions };
 }
 
 // ============================================================================
@@ -425,13 +463,39 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
           learnedPatterns.map((p) => p.pattern));
 
         // 6. Re-match unassigned transactions with the new patterns
-        const autoMatched = await rematchUnassignedTransactions(
+        const { matchedCount: autoMatched, matchedTransactions } = await rematchUnassignedTransactions(
           userId,
           partnerId,
           partnerName,
           learnedPatterns
         );
         console.log(`Auto-matched ${autoMatched} additional transactions with new patterns`);
+
+        // 7. Create notification for pattern learning
+        if (autoMatched > 0) {
+          try {
+            console.log(`Creating notification for user ${userId} - ${autoMatched} transactions matched`);
+            const notifRef = await db.collection(`users/${userId}/notifications`).add({
+              type: "pattern_learned",
+              title: `Learned patterns for ${partnerName}`,
+              message: `I learned ${learnedPatterns.length} pattern${learnedPatterns.length !== 1 ? "s" : ""} from your assignment and automatically matched ${autoMatched} similar transaction${autoMatched !== 1 ? "s" : ""} to ${partnerName}.`,
+              createdAt: FieldValue.serverTimestamp(),
+              readAt: null,
+              context: {
+                partnerId,
+                partnerName,
+                patternsLearned: learnedPatterns.length,
+                transactionsMatched: autoMatched,
+              },
+              preview: {
+                transactions: matchedTransactions,
+              },
+            });
+            console.log(`Notification created: ${notifRef.id}`);
+          } catch (err) {
+            console.error("Failed to create pattern learning notification:", err);
+          }
+        }
       }
 
       return {
