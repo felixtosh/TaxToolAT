@@ -4,7 +4,7 @@ import { TransactionSource, GoCardlessConnectorConfig } from "@/types/source";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Upload, ChevronRight, Link2, RefreshCw, AlertTriangle } from "lucide-react";
+import { Building2, Upload, ChevronRight, Link2, RefreshCw, AlertTriangle, CreditCard } from "lucide-react";
 import { formatIban } from "@/lib/import/deduplication";
 
 interface SourceCardProps {
@@ -51,20 +51,23 @@ export function SourceCard({ source, onClick, onImportClick, onConnectClick }: S
         <div className="flex items-start justify-between mb-3">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-primary/10">
-              <Building2 className="h-5 w-5 text-primary" />
+              {source.accountKind === "credit_card" ? (
+                <CreditCard className="h-5 w-5 text-primary" />
+              ) : (
+                <Building2 className="h-5 w-5 text-primary" />
+              )}
             </div>
             <div>
               <h3 className="font-semibold">{source.name}</h3>
-              {source.bankName && (
-                <p className="text-sm text-muted-foreground">{source.bankName}</p>
-              )}
             </div>
           </div>
           {getStatusBadge()}
         </div>
 
         <p className="text-sm font-mono text-muted-foreground mb-4">
-          {formatIban(source.iban)}
+          {source.accountKind === "credit_card"
+            ? `${source.cardBrand?.toUpperCase() || "Card"} ••••${source.cardLast4 || ""}`
+            : formatIban(source.iban)}
         </p>
 
         <div className="flex items-center justify-between">

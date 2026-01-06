@@ -30,16 +30,17 @@ const getSourceSchema = z.object({
 
 const createSourceSchema = z.object({
   name: z.string().describe("Display name for the account"),
-  iban: z.string().describe("IBAN of the bank account"),
-  bic: z.string().optional().describe("BIC/SWIFT code"),
-  bankName: z.string().optional().describe("Bank institution name"),
-  currency: z.string().default("EUR").describe("Currency code"),
+  accountKind: z.enum(["bank_account", "credit_card"]).default("bank_account").describe("Type of account"),
+  iban: z.string().optional().describe("IBAN of the bank account (required for bank accounts)"),
+  linkedSourceId: z.string().optional().describe("For credit cards: ID of the linked bank account"),
+  cardBrand: z.enum(["visa", "mastercard", "amex", "discover", "other"]).optional().describe("For credit cards: card type"),
+  cardLast4: z.string().optional().describe("For credit cards: last 4 digits of card number"),
+  currency: z.string().default("EUR").describe("Primary currency code"),
 });
 
 const updateSourceSchema = z.object({
   sourceId: z.string().describe("The source ID to update"),
   name: z.string().optional().describe("New display name"),
-  bankName: z.string().optional().describe("New bank name"),
 });
 
 const deleteSourceSchema = z.object({
@@ -74,12 +75,14 @@ export const sourceToolDefinitions: Tool[] = [
       type: "object",
       properties: {
         name: { type: "string", description: "Display name for the account" },
-        iban: { type: "string", description: "IBAN of the bank account" },
-        bic: { type: "string", description: "BIC/SWIFT code (optional)" },
-        bankName: { type: "string", description: "Bank institution name (optional)" },
-        currency: { type: "string", description: "Currency code (default: EUR)" },
+        accountKind: { type: "string", enum: ["bank_account", "credit_card"], description: "Type of account (default: bank_account)" },
+        iban: { type: "string", description: "IBAN of the bank account (required for bank accounts)" },
+        linkedSourceId: { type: "string", description: "For credit cards: ID of the linked bank account (optional)" },
+        cardBrand: { type: "string", enum: ["visa", "mastercard", "amex", "discover", "other"], description: "For credit cards: card type" },
+        cardLast4: { type: "string", description: "For credit cards: last 4 digits of card number" },
+        currency: { type: "string", description: "Primary currency code (default: EUR)" },
       },
-      required: ["name", "iban"],
+      required: ["name"],
     },
   },
   {
@@ -90,7 +93,6 @@ export const sourceToolDefinitions: Tool[] = [
       properties: {
         sourceId: { type: "string", description: "The source ID to update" },
         name: { type: "string", description: "New display name" },
-        bankName: { type: "string", description: "New bank name" },
       },
       required: ["sourceId"],
     },
@@ -166,14 +168,16 @@ export async function registerSourceTools(
     }
 
     case "create_source": {
-      const { name, iban, bic, bankName, currency } = createSourceSchema.parse(args);
+      const { name, accountKind, iban, linkedSourceId, cardBrand, cardLast4, currency } = createSourceSchema.parse(args);
 
       const now = Timestamp.now();
       const newSource = {
         name,
-        iban: normalizeIban(iban),
-        bic: bic || null,
-        bankName: bankName || null,
+        accountKind: accountKind || "bank_account",
+        iban: iban ? normalizeIban(iban) : null,
+        linkedSourceId: linkedSourceId || null,
+        cardBrand: cardBrand || null,
+        cardLast4: cardLast4 || null,
         currency: currency || "EUR",
         type: "csv",
         isActive: true,
@@ -236,6 +240,21 @@ export async function registerSourceTools(
       const BATCH_SIZE = 500;
       let deletedImports = 0;
       let deletedTransactions = 0;
+
+      // 0. Clear linkedSourceId on any credit cards that link to this bank account
+      const linkedCardsQuery = query(
+        collection(ctx.db, SOURCES_COLLECTION),
+        where("userId", "==", ctx.userId),
+        where("linkedSourceId", "==", sourceId)
+      );
+      const linkedCardsSnapshot = await getDocs(linkedCardsQuery);
+
+      for (const cardDoc of linkedCardsSnapshot.docs) {
+        await updateDoc(cardDoc.ref, {
+          linkedSourceId: null,
+          updatedAt: Timestamp.now(),
+        });
+      }
 
       // 1. Find and delete all imports for this source (cascade to their transactions)
       const importsQuery = query(

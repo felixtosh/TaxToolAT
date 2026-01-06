@@ -36,14 +36,14 @@ export function PartnerDataTable({
   onDelete,
 }: PartnerDataTableProps) {
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <Table>
+    <div className="flex flex-col h-full overflow-hidden overflow-x-auto">
+      <Table style={{ tableLayout: "fixed", minWidth: "700px" }}>
         <TableHeader className="sticky top-0 z-10 bg-card">
           <TableRow className="hover:bg-transparent border-b">
-            <TableHead className="h-10 bg-muted/50 pl-4">Name</TableHead>
-            <TableHead className="h-10 bg-muted/50">VAT ID</TableHead>
-            <TableHead className="h-10 bg-muted/50">IBANs</TableHead>
-            <TableHead className="h-10 bg-muted/50">Website</TableHead>
+            <TableHead className="h-10 bg-muted/50 pl-4 w-[200px]">Name</TableHead>
+            <TableHead className="h-10 bg-muted/50 w-[120px]">VAT ID</TableHead>
+            <TableHead className="h-10 bg-muted/50 w-[180px]">IBANs</TableHead>
+            <TableHead className="h-10 bg-muted/50 w-[150px]">Website</TableHead>
             <TableHead className="h-10 bg-muted/50 pr-4 w-[50px]"></TableHead>
           </TableRow>
         </TableHeader>
@@ -63,7 +63,7 @@ export function PartnerDataTable({
                 onClick={() => onRowClick?.(partner)}
                 className={cn(
                   "cursor-pointer transition-colors",
-                  selectedRowId === partner.id && "bg-primary/10"
+                  selectedRowId === partner.id && "bg-primary/10 hover:bg-primary/15"
                 )}
               >
                 <TableCell className="py-2.5 pl-4">

@@ -18,9 +18,8 @@ export function generateTestSource(): Omit<TransactionSource, "createdAt" | "upd
   return {
     id: TEST_SOURCE_ID,
     name: "Test Bank Account",
+    accountKind: "bank_account",
     iban: TEST_SOURCE_IBAN,
-    bic: "COBADEFFXXX",
-    bankName: "Test Bank",
     type: "csv",
     currency: "EUR",
     isActive: true,

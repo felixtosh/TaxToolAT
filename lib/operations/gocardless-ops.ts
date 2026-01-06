@@ -351,9 +351,8 @@ export async function createSourceFromGoCardless(
   const now = Timestamp.now();
   const sourceData = {
     name,
+    accountKind: "bank_account" as const,
     iban: normalizeIban(iban),
-    bic: null,
-    bankName: requisition.institutionName,
     currency: details.account.currency || "EUR",
     type: "api" as const,
     apiConfig,
@@ -411,7 +410,6 @@ export async function linkGoCardlessToExistingSource(
   await updateSource(ctx, sourceId, {
     type: "api",
     apiConfig,
-    bankName: requisition.institutionName,
     // Optionally update IBAN if it's different (shouldn't be for same account)
     ...(details.account.iban ? { iban: normalizeIban(details.account.iban) } : {}),
   });
@@ -472,12 +470,12 @@ export async function syncTransactions(
     return { imported: 0, skipped: 0 };
   }
 
-  // Transform to our format
+  // Transform to our format (use sourceId as identifier fallback for sources without IBAN)
   const syncJobId = `sync_${sourceId}_${Date.now()}`;
   const transactions = await transformTransactions(
     bookedTransactions,
     sourceId,
-    source.iban,
+    source.iban ?? sourceId,
     ctx.userId,
     syncJobId
   );

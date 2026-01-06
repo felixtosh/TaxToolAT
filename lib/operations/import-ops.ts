@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 import { ImportRecord } from "@/types/import";
 import { OperationsContext } from "./types";
+import { deleteFileConnectionsForTransaction } from "./file-ops";
 
 const IMPORTS_COLLECTION = "imports";
 const TRANSACTIONS_COLLECTION = "transactions";
@@ -56,9 +57,15 @@ export async function deleteImport(
   let deletedTransactions = 0;
 
   for (let i = 0; i < docs.length; i += BATCH_SIZE) {
-    const batch = writeBatch(ctx.db);
     const chunk = docs.slice(i, i + BATCH_SIZE);
 
+    // Clean up file connections BEFORE deleting transactions
+    for (const txDoc of chunk) {
+      await deleteFileConnectionsForTransaction(ctx, txDoc.id);
+    }
+
+    // Then batch delete transactions
+    const batch = writeBatch(ctx.db);
     for (const txDoc of chunk) {
       batch.delete(txDoc.ref);
       deletedTransactions++;

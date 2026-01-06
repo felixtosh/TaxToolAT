@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
-import { Search, Receipt, Check, Link2 } from "lucide-react";
+import { Search, Receipt, Check, Link2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,9 +13,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Transaction } from "@/types/transaction";
+import { TransactionSuggestion, TaxFile } from "@/types/file";
 import { useTransactions } from "@/hooks/use-transactions";
 import { cn } from "@/lib/utils";
+import {
+  getTransactionMatchSourceLabel,
+  scoreTransactionMatch,
+  toTransactionSuggestion,
+  TRANSACTION_MATCH_CONFIG,
+} from "@/lib/matching/transaction-matcher";
+import { Timestamp } from "firebase/firestore";
 
 interface ConnectTransactionDialogProps {
   open: boolean;
@@ -23,14 +37,19 @@ interface ConnectTransactionDialogProps {
   onSelect: (transactionIds: string[]) => Promise<void>;
   /** Transaction IDs that are already connected (to show as disabled) */
   connectedTransactionIds?: string[];
-  /** File info for display */
+  /** File info for display and real-time matching */
   fileInfo?: {
     fileName: string;
     extractedDate?: Date | null;
     extractedAmount?: number | null;
     extractedCurrency?: string | null;
     extractedPartner?: string | null;
+    extractedIban?: string | null;
+    extractedText?: string | null;
+    partnerId?: string | null;
   };
+  /** Pre-computed transaction suggestions from file matching (optional, will compute if not provided) */
+  suggestions?: TransactionSuggestion[];
 }
 
 export function ConnectTransactionDialog({
@@ -39,6 +58,7 @@ export function ConnectTransactionDialog({
   onSelect,
   connectedTransactionIds = [],
   fileInfo,
+  suggestions = [],
 }: ConnectTransactionDialogProps) {
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -47,17 +67,99 @@ export function ConnectTransactionDialog({
 
   const { transactions, loading } = useTransactions();
 
-  // Filter transactions by search
+  // Compute real-time suggestions if not provided or empty
+  // This ensures users always see recommended transactions even for older files
+  const computedSuggestions = useMemo(() => {
+    // If we have pre-computed suggestions, use them
+    if (suggestions && suggestions.length > 0) {
+      return suggestions;
+    }
+
+    // Otherwise, compute in real-time if we have file info
+    if (!fileInfo || !transactions.length) {
+      return [];
+    }
+
+    // Build a minimal TaxFile object for scoring
+    const fileForScoring: TaxFile = {
+      id: "",
+      userId: "",
+      fileName: fileInfo.fileName,
+      fileType: "",
+      fileSize: 0,
+      storagePath: "",
+      downloadUrl: "",
+      transactionIds: connectedTransactionIds || [],
+      extractionComplete: true,
+      uploadedAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      extractedDate: fileInfo.extractedDate ? Timestamp.fromDate(fileInfo.extractedDate) : null,
+      extractedAmount: fileInfo.extractedAmount ?? null,
+      extractedCurrency: fileInfo.extractedCurrency ?? null,
+      extractedPartner: fileInfo.extractedPartner ?? null,
+      extractedIban: fileInfo.extractedIban ?? null,
+      extractedText: fileInfo.extractedText ?? null,
+      partnerId: fileInfo.partnerId ?? null,
+    };
+
+    // Filter out already connected transactions
+    const connectedSet = new Set(connectedTransactionIds || []);
+    const candidates = transactions.filter((tx) => !connectedSet.has(tx.id));
+
+    // Score and filter
+    const scored = candidates
+      .map((tx) => scoreTransactionMatch(fileForScoring, tx))
+      .filter((m) => m.confidence >= TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD)
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 10)
+      .map(toTransactionSuggestion);
+
+    return scored;
+  }, [suggestions, fileInfo, transactions, connectedTransactionIds]);
+
+  // Create a map of suggestion info by transaction ID
+  const suggestionMap = useMemo(() => {
+    const map = new Map<string, TransactionSuggestion>();
+    for (const s of computedSuggestions) {
+      map.set(s.transactionId, s);
+    }
+    return map;
+  }, [computedSuggestions]);
+
+  // Filter and sort transactions - suggestions first, then by search
   const filteredTransactions = useMemo(() => {
-    if (!search) return transactions;
-    const searchLower = search.toLowerCase();
-    return transactions.filter(
-      (t) =>
-        t.name.toLowerCase().includes(searchLower) ||
-        (t.partner?.toLowerCase() || "").includes(searchLower) ||
-        (t.reference?.toLowerCase() || "").includes(searchLower)
-    );
-  }, [transactions, search]);
+    let filtered = transactions;
+
+    // Apply search filter
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filtered = filtered.filter(
+        (t) =>
+          t.name.toLowerCase().includes(searchLower) ||
+          (t.partner?.toLowerCase() || "").includes(searchLower) ||
+          (t.reference?.toLowerCase() || "").includes(searchLower)
+      );
+    }
+
+    // Sort: suggested transactions first (by confidence), then by date
+    return filtered.sort((a, b) => {
+      const aSuggestion = suggestionMap.get(a.id);
+      const bSuggestion = suggestionMap.get(b.id);
+
+      // Both are suggestions - sort by confidence
+      if (aSuggestion && bSuggestion) {
+        return bSuggestion.confidence - aSuggestion.confidence;
+      }
+
+      // Only one is a suggestion - it goes first
+      if (aSuggestion) return -1;
+      if (bSuggestion) return 1;
+
+      // Neither is a suggestion - sort by date (newest first)
+      return b.date.toMillis() - a.date.toMillis();
+    });
+  }, [transactions, search, suggestionMap]);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -165,77 +267,102 @@ export function ConnectTransactionDialog({
                   {search ? "No transactions match your search" : "No transactions found"}
                 </div>
               ) : (
-                <div className="p-2 space-y-1">
-                  {filteredTransactions.map((transaction) => {
-                    const isConnected = isTransactionConnected(transaction.id);
-                    const isSelected = selectedIds.has(transaction.id);
-                    const isPreviewing = previewTransaction?.id === transaction.id;
+                <TooltipProvider>
+                  <div className="p-2 space-y-1">
+                    {filteredTransactions.map((transaction) => {
+                      const isConnected = isTransactionConnected(transaction.id);
+                      const isSelected = selectedIds.has(transaction.id);
+                      const isPreviewing = previewTransaction?.id === transaction.id;
+                      const suggestion = suggestionMap.get(transaction.id);
 
-                    return (
-                      <button
-                        key={transaction.id}
-                        type="button"
-                        disabled={isConnected}
-                        onClick={() => toggleSelection(transaction)}
-                        className={cn(
-                          "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors",
-                          isSelected && "bg-primary/10",
-                          isPreviewing && "ring-1 ring-primary",
-                          !isSelected && !isConnected && "hover:bg-muted",
-                          isConnected && "opacity-50 cursor-not-allowed"
-                        )}
-                      >
-                        {/* Checkbox */}
-                        <div className={cn(
-                          "flex-shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5",
-                          isSelected
-                            ? "bg-primary border-primary"
-                            : "border-muted-foreground/30",
-                          isConnected && "bg-muted border-muted"
-                        )}>
-                          {(isSelected || isConnected) && (
-                            <Check className={cn(
-                              "h-3 w-3",
-                              isSelected ? "text-primary-foreground" : "text-muted-foreground"
-                            )} />
+                      return (
+                        <button
+                          key={transaction.id}
+                          type="button"
+                          disabled={isConnected}
+                          onClick={() => toggleSelection(transaction)}
+                          className={cn(
+                            "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors",
+                            isSelected && "bg-primary/10",
+                            isPreviewing && "ring-1 ring-primary",
+                            !isSelected && !isConnected && "hover:bg-muted",
+                            isConnected && "opacity-50 cursor-not-allowed",
+                            suggestion && !isSelected && !isConnected && "bg-amber-50 dark:bg-amber-950/20"
                           )}
-                        </div>
-
-                        {/* Transaction info */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium truncate">
-                              {transaction.partner || transaction.name}
-                            </p>
-                            {isConnected && (
-                              <Badge variant="secondary" className="text-xs">
-                                <Link2 className="h-3 w-3 mr-1" />
-                                Connected
-                              </Badge>
+                        >
+                          {/* Checkbox */}
+                          <div className={cn(
+                            "flex-shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5",
+                            isSelected
+                              ? "bg-primary border-primary"
+                              : "border-muted-foreground/30",
+                            isConnected && "bg-muted border-muted"
+                          )}>
+                            {(isSelected || isConnected) && (
+                              <Check className={cn(
+                                "h-3 w-3",
+                                isSelected ? "text-primary-foreground" : "text-muted-foreground"
+                              )} />
                             )}
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span>{format(transaction.date.toDate(), "MMM d, yyyy")}</span>
-                            <span>&middot;</span>
-                            <span
-                              className={cn(
-                                "font-medium",
-                                transaction.amount < 0 ? "text-red-600" : "text-green-600"
+
+                          {/* Transaction info */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium truncate">
+                                {transaction.partner || transaction.name}
+                              </p>
+                              {isConnected && (
+                                <Badge variant="secondary" className="text-xs">
+                                  <Link2 className="h-3 w-3 mr-1" />
+                                  Connected
+                                </Badge>
                               )}
-                            >
-                              {formatAmount(transaction.amount, transaction.currency)}
-                            </span>
+                              {suggestion && !isConnected && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge
+                                      variant="outline"
+                                      className="text-xs bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700"
+                                    >
+                                      <Sparkles className="h-3 w-3 mr-1" />
+                                      {suggestion.confidence}%
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right" className="text-xs">
+                                    <p className="font-medium mb-1">Suggested match</p>
+                                    <p className="text-muted-foreground">
+                                      {suggestion.matchSources
+                                        .map((s) => getTransactionMatchSourceLabel(s))
+                                        .join(", ")}
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <span>{format(transaction.date.toDate(), "MMM d, yyyy")}</span>
+                              <span>&middot;</span>
+                              <span
+                                className={cn(
+                                  "font-medium",
+                                  transaction.amount < 0 ? "text-red-600" : "text-green-600"
+                                )}
+                              >
+                                {formatAmount(transaction.amount, transaction.currency)}
+                              </span>
+                            </div>
+                            {transaction.name && transaction.partner && (
+                              <p className="text-xs text-muted-foreground truncate mt-0.5">
+                                {transaction.name}
+                              </p>
+                            )}
                           </div>
-                          {transaction.name && transaction.partner && (
-                            <p className="text-xs text-muted-foreground truncate mt-0.5">
-                              {transaction.name}
-                            </p>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </TooltipProvider>
               )}
             </ScrollArea>
           </div>

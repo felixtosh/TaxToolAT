@@ -22,7 +22,9 @@ import {
 import { useImports } from "@/hooks/use-imports";
 import { ImportHistoryCard } from "@/components/sources/import-history-card";
 import { SyncStatusCard } from "@/components/sources/sync-status-card";
+import { EditSourceDialog } from "@/components/sources/edit-source-dialog";
 import { format } from "date-fns";
+import { Pencil } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,9 +46,10 @@ interface SourceDetailPageProps {
 export default function SourceDetailPage({ params }: SourceDetailPageProps) {
   const { id } = use(params);
   const router = useRouter();
-  const { sources, loading, deleteSource } = useSources();
+  const { sources, loading, deleteSource, updateSource } = useSources();
   const { imports, loading: importsLoading, deleteImport } = useImports(id);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isEditOpen, setIsEditOpen] = useState(false);
 
   const source = sources.find((s) => s.id === id);
 
@@ -88,6 +91,10 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
     router.push(`/sources/connect?sourceId=${source.id}`);
   };
 
+  const handleSaveEdit = async (data: Partial<typeof source>) => {
+    await updateSource(source.id, data);
+  };
+
   const isApiConnected = source.type === "api" && source.apiConfig?.provider === "gocardless";
   const apiConfig = source.apiConfig as GoCardlessConnectorConfig | undefined;
 
@@ -115,7 +122,11 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
           </Button>
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-lg bg-primary/10">
-              <Building2 className="h-6 w-6 text-primary" />
+              {source.accountKind === "credit_card" ? (
+                <CreditCard className="h-6 w-6 text-primary" />
+              ) : (
+                <Building2 className="h-6 w-6 text-primary" />
+              )}
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -143,6 +154,14 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsEditOpen(true)}
+            className="text-muted-foreground"
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive">
@@ -213,25 +232,40 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
               <CardTitle className="text-base">Account Details</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-muted rounded-lg">
-                    <Building2 className="h-4 w-4 text-muted-foreground" />
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {/* Show IBAN for bank accounts, Card info for credit cards */}
+                {source.accountKind === "credit_card" ? (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-muted rounded-lg">
+                        <CreditCard className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Card Type</p>
+                        <p className="font-medium capitalize">{source.cardBrand || "—"}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-muted rounded-lg">
+                        <CreditCard className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Last 4</p>
+                        <p className="font-medium font-mono">••••{source.cardLast4 || "—"}</p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-muted rounded-lg">
+                      <Building2 className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">IBAN</p>
+                      <p className="font-medium font-mono text-sm">{formatIban(source.iban)}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Bank</p>
-                    <p className="font-medium">{source.bankName || "—"}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-muted rounded-lg">
-                    <CreditCard className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">BIC/SWIFT</p>
-                    <p className="font-medium font-mono">{source.bic || "—"}</p>
-                  </div>
-                </div>
+                )}
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-muted rounded-lg">
                     <Globe className="h-4 w-4 text-muted-foreground" />
@@ -253,6 +287,61 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
                   </div>
                 </div>
               </div>
+
+              {/* Linked Account Section */}
+              {source.accountKind === "credit_card" && source.linkedSourceId && (
+                <div className="mt-4 pt-4 border-t">
+                  <p className="text-sm text-muted-foreground mb-2">Bills to</p>
+                  {(() => {
+                    const linkedAccount = sources.find(s => s.id === source.linkedSourceId);
+                    if (!linkedAccount) return <p className="text-sm text-muted-foreground italic">Linked account not found</p>;
+                    return (
+                      <button
+                        onClick={() => router.push(`/sources/${linkedAccount.id}`)}
+                        className="flex items-center gap-2 p-2 -m-2 rounded-lg hover:bg-muted transition-colors text-left"
+                      >
+                        <div className="p-1.5 bg-primary/10 rounded">
+                          <Building2 className="h-4 w-4 text-primary" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-sm">{linkedAccount.name}</p>
+                          <p className="text-xs text-muted-foreground font-mono">{formatIban(linkedAccount.iban)}</p>
+                        </div>
+                      </button>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* Show linked credit cards for bank accounts */}
+              {source.accountKind === "bank_account" && (() => {
+                const linkedCards = sources.filter(s => s.linkedSourceId === source.id);
+                if (linkedCards.length === 0) return null;
+                return (
+                  <div className="mt-4 pt-4 border-t">
+                    <p className="text-sm text-muted-foreground mb-2">Linked Cards</p>
+                    <div className="space-y-2">
+                      {linkedCards.map(card => (
+                        <button
+                          key={card.id}
+                          onClick={() => router.push(`/sources/${card.id}`)}
+                          className="flex items-center gap-2 p-2 -m-2 rounded-lg hover:bg-muted transition-colors text-left w-full"
+                        >
+                          <div className="p-1.5 bg-primary/10 rounded">
+                            <CreditCard className="h-4 w-4 text-primary" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-sm">{card.name}</p>
+                            <p className="text-xs text-muted-foreground font-mono">
+                              {card.cardBrand?.toUpperCase()} ••••{card.cardLast4}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </CardContent>
           </Card>
 
@@ -333,6 +422,15 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
           </div>
         )}
       </div>
+
+      {/* Edit Dialog */}
+      <EditSourceDialog
+        open={isEditOpen}
+        onClose={() => setIsEditOpen(false)}
+        onSave={handleSaveEdit}
+        source={source}
+        sources={sources}
+      />
     </div>
   );
 }

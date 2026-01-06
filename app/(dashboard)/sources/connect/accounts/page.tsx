@@ -1,133 +1,245 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { collection, query, where, getDocs } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ArrowLeft, Building2, CheckCircle, Loader2 } from "lucide-react";
-import { formatIban } from "@/lib/import/deduplication";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ArrowLeft, Building2, CheckCircle, Loader2, Link2, Plus } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { formatIban, normalizeIban } from "@/lib/import/deduplication";
 import { BankAccount } from "@/hooks/use-bank-connection";
+import { TransactionSource } from "@/types/source";
+
+const MOCK_USER_ID = "dev-user-123";
+
+interface AccountSelection {
+  accountId: string;
+  iban: string;
+  ownerName: string;
+  selected: boolean;
+  mode: "create" | "link";
+  selectedSourceId: string | null;
+  newAccountName: string;
+  matchedSourceId: string | null;
+}
 
 export default function SelectAccountsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const connectionId = searchParams.get("connectionId");
-  const sourceId = searchParams.get("sourceId"); // Existing source to link
 
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [existingSources, setExistingSources] = useState<TransactionSource[]>([]);
+  const [selections, setSelections] = useState<Map<string, AccountSelection>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedAccount, setSelectedAccount] = useState<BankAccount | null>(null);
-  const [accountName, setAccountName] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
-  // Track if we should create new (ignore invalid sourceId)
-  const [createNew, setCreateNew] = useState(false);
+  const [connectedCount, setConnectedCount] = useState(0);
 
-  // Whether we're linking to an existing source (no name input needed)
-  const isLinking = !!sourceId && !createNew;
-
-  // Fetch accounts on mount
+  // Fetch accounts and existing sources on mount
   useEffect(() => {
     if (!connectionId) {
       router.push("/sources/connect");
       return;
     }
 
-    async function fetchAccounts() {
+    async function fetchData() {
       try {
-        const response = await fetch(`/api/truelayer/accounts?connectionId=${connectionId}`);
-        const data = await response.json();
+        // Fetch bank accounts from TrueLayer
+        const accountsRes = await fetch(`/api/truelayer/accounts?connectionId=${connectionId}`);
+        const accountsData = await accountsRes.json();
 
-        if (!response.ok) {
-          throw new Error(data.error || "Failed to fetch accounts");
+        if (!accountsRes.ok) {
+          throw new Error(accountsData.error || "Failed to fetch accounts");
         }
 
-        setAccounts(data.accounts || []);
+        const bankAccounts: BankAccount[] = accountsData.accounts || [];
 
-        // Auto-select if only one account
-        if (data.accounts?.length === 1) {
-          const account = data.accounts[0];
-          setSelectedAccount(account);
-          setAccountName(account.ownerName || "Main Account");
-        }
+        // Fetch existing unconnected sources
+        const sourcesQuery = query(
+          collection(db, "sources"),
+          where("userId", "==", MOCK_USER_ID),
+          where("isActive", "==", true)
+        );
+        const sourcesSnap = await getDocs(sourcesQuery);
+        const allSources = sourcesSnap.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as TransactionSource[];
+
+        // Filter to only unconnected sources (no apiConfig or type !== "api")
+        const unconnectedSources = allSources.filter(
+          (s) => s.type !== "api" && !s.apiConfig
+        );
+
+        setAccounts(bankAccounts);
+        setExistingSources(unconnectedSources);
+
+        // Initialize selections with IBAN matching
+        const initialSelections = new Map<string, AccountSelection>();
+        bankAccounts.forEach((account) => {
+          const normalizedBankIban = normalizeIban(account.iban || "");
+          const matchedSource = unconnectedSources.find(
+            (s) => s.iban && normalizeIban(s.iban) === normalizedBankIban
+          );
+
+          initialSelections.set(account.accountId, {
+            accountId: account.accountId,
+            iban: account.iban,
+            ownerName: account.ownerName || "Account",
+            selected: true, // Select all by default
+            mode: matchedSource ? "link" : "create",
+            selectedSourceId: matchedSource?.id || null,
+            newAccountName: account.ownerName || "New Account",
+            matchedSourceId: matchedSource?.id || null,
+          });
+        });
+
+        setSelections(initialSelections);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to fetch accounts");
+        setError(err instanceof Error ? err.message : "Failed to load data");
       } finally {
         setLoading(false);
       }
     }
 
-    fetchAccounts();
+    fetchData();
   }, [connectionId, router]);
 
-  const handleSelectAccount = (account: BankAccount) => {
-    setSelectedAccount(account);
-    setAccountName(account.ownerName || "Main Account");
+  // Get selected accounts count
+  const selectedCount = useMemo(() => {
+    return Array.from(selections.values()).filter((s) => s.selected).length;
+  }, [selections]);
+
+  // Check for duplicate source selections
+  const duplicateSourceError = useMemo(() => {
+    const selectedSourceIds = Array.from(selections.values())
+      .filter((s) => s.selected && s.mode === "link" && s.selectedSourceId)
+      .map((s) => s.selectedSourceId);
+
+    const duplicates = selectedSourceIds.filter(
+      (id, index) => selectedSourceIds.indexOf(id) !== index
+    );
+
+    if (duplicates.length > 0) {
+      const source = existingSources.find((s) => s.id === duplicates[0]);
+      return `"${source?.name}" is selected for multiple accounts`;
+    }
+    return null;
+  }, [selections, existingSources]);
+
+  // Update selection for an account
+  const updateSelection = (accountId: string, updates: Partial<AccountSelection>) => {
+    setSelections((prev) => {
+      const newMap = new Map(prev);
+      const current = newMap.get(accountId);
+      if (current) {
+        newMap.set(accountId, { ...current, ...updates });
+      }
+      return newMap;
+    });
   };
 
-  const handleCreateSource = async () => {
-    if (!selectedAccount || !connectionId) return;
-    // Name is only required when creating new source
-    if (!isLinking && !accountName.trim()) return;
+  // Handle form submission
+  const handleSubmit = async () => {
+    const selectedAccounts = Array.from(selections.values()).filter((s) => s.selected);
 
-    setIsCreating(true);
+    if (selectedAccounts.length === 0) {
+      setError("Please select at least one account");
+      return;
+    }
+
+    // Validate create mode accounts have names
+    const missingNames = selectedAccounts.filter(
+      (s) => s.mode === "create" && !s.newAccountName.trim()
+    );
+    if (missingNames.length > 0) {
+      setError("Please enter names for all new accounts");
+      return;
+    }
+
+    if (duplicateSourceError) {
+      setError(duplicateSourceError);
+      return;
+    }
+
+    setIsSubmitting(true);
     setError(null);
 
-    try {
-      const response = await fetch("/api/truelayer/accounts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          connectionId,
-          accountId: selectedAccount.accountId,
-          // If linking to existing source, pass sourceId; otherwise pass name
-          ...(isLinking ? { sourceId } : { name: accountName.trim() }),
-        }),
-      });
+    let successCount = 0;
+    const errors: string[] = [];
 
-      const data = await response.json();
+    // Process each selected account
+    for (const selection of selectedAccounts) {
+      try {
+        const response = await fetch("/api/truelayer/accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            connectionId,
+            accountId: selection.accountId,
+            ...(selection.mode === "link"
+              ? { sourceId: selection.selectedSourceId }
+              : { name: selection.newAccountName.trim() }),
+          }),
+        });
 
-      if (!response.ok) {
-        // If source not found when linking, switch to create mode
-        if (data.error === "Source not found" && isLinking) {
-          setCreateNew(true);
-          setError("The source you were linking to no longer exists. Please enter a name for a new account.");
-          return;
+        const data = await response.json();
+
+        if (!response.ok) {
+          errors.push(`${selection.ownerName}: ${data.error}`);
+        } else {
+          successCount++;
         }
-        throw new Error(data.error || "Failed to connect bank");
+      } catch (err) {
+        errors.push(
+          `${selection.ownerName}: ${err instanceof Error ? err.message : "Failed"}`
+        );
       }
+    }
 
+    setIsSubmitting(false);
+
+    if (successCount > 0) {
+      setConnectedCount(successCount);
       setSuccess(true);
       setTimeout(() => {
         router.push("/sources");
       }, 2000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to connect bank");
-    } finally {
-      setIsCreating(false);
+    } else {
+      setError(errors.join("; "));
     }
   };
 
   // Success state
   if (success) {
     return (
-      <div className="container max-w-lg mx-auto py-8">
+      <div className="container max-w-2xl mx-auto py-8">
         <Card>
           <CardContent className="py-8 text-center space-y-4">
             <CheckCircle className="h-12 w-12 text-green-500 mx-auto" />
             <div>
-              <h3 className="text-lg font-semibold">Bank Connected!</h3>
+              <h3 className="text-lg font-semibold">
+                {connectedCount} Account{connectedCount !== 1 ? "s" : ""} Connected!
+              </h3>
               <p className="text-muted-foreground">
-                Your bank account has been successfully connected.
+                Your bank accounts have been successfully connected.
               </p>
             </div>
-            <p className="text-sm text-muted-foreground">
-              Redirecting to your sources...
-            </p>
+            <p className="text-sm text-muted-foreground">Redirecting to your sources...</p>
           </CardContent>
         </Card>
       </div>
@@ -137,7 +249,7 @@ export default function SelectAccountsPage() {
   // Loading state
   if (loading) {
     return (
-      <div className="container max-w-lg mx-auto py-8">
+      <div className="container max-w-2xl mx-auto py-8">
         <Card>
           <CardContent className="py-8 text-center">
             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-muted-foreground" />
@@ -149,113 +261,186 @@ export default function SelectAccountsPage() {
   }
 
   return (
-    <div className="container max-w-lg mx-auto py-8">
-      <div className="mb-6">
+    <div className="h-full flex flex-col">
+      <div className="container max-w-2xl mx-auto py-4 px-4">
         <Button variant="ghost" size="sm" onClick={() => router.push("/sources")}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           Cancel
         </Button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Select Account</CardTitle>
-          <CardDescription>
-            Choose which account to connect to TaxStudio.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {error && (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {accounts.length === 0 ? (
-            <div className="text-center py-4 text-muted-foreground">
-              No accounts found. Please try connecting again.
-            </div>
-          ) : (
-            <>
-              {/* Account list */}
-              <div className="space-y-2">
-                {accounts.map((account) => (
-                  <button
-                    key={account.accountId}
-                    type="button"
-                    onClick={() => handleSelectAccount(account)}
-                    className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors text-left ${
-                      selectedAccount?.accountId === account.accountId
-                        ? "border-primary bg-primary/5"
-                        : "hover:bg-muted/50"
-                    }`}
-                  >
-                    <div className="p-2 rounded-lg bg-primary/10">
-                      <Building2 className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium">{account.ownerName || "Account"}</p>
-                      <p className="text-sm font-mono text-muted-foreground">
-                        {formatIban(account.iban)}
-                      </p>
-                    </div>
-                    {selectedAccount?.accountId === account.accountId && (
-                      <CheckCircle className="h-5 w-5 text-primary" />
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              {/* Account name input - only shown when creating new source */}
-              {selectedAccount && !isLinking && (
-                <div className="space-y-2">
-                  <Label htmlFor="accountName">Account Name</Label>
-                  <Input
-                    id="accountName"
-                    value={accountName}
-                    onChange={(e) => {
-                      setAccountName(e.target.value);
-                      if (error) setError(null);
-                    }}
-                    placeholder="e.g., Business Account"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    A friendly name to identify this account in TaxStudio
-                  </p>
-                </div>
-              )}
-
-              {/* Info when linking to existing source */}
-              {selectedAccount && isLinking && (
-                <Alert>
-                  <AlertDescription>
-                    This bank account will be linked to your existing account.
-                    Transactions will be synced automatically.
-                  </AlertDescription>
+      <div className="flex-1 overflow-auto">
+        <div className="container max-w-2xl mx-auto px-4 pb-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Connect Bank Accounts</CardTitle>
+              <CardDescription>
+                Choose which accounts to connect. You can link them to existing sources or create new
+                ones.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {error && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
 
-              {/* Submit button */}
-              <Button
-                className="w-full"
-                onClick={handleCreateSource}
-                disabled={!selectedAccount || (!isLinking && !accountName.trim()) || isCreating}
-              >
-                {isCreating ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    {isLinking ? "Linking..." : "Connecting..."}
-                  </>
-                ) : isLinking ? (
-                  "Link Bank Account"
-                ) : (
-                  "Connect Account"
-                )}
-              </Button>
-            </>
+              {duplicateSourceError && (
+                <Alert variant="destructive">
+                  <AlertDescription>{duplicateSourceError}</AlertDescription>
+                </Alert>
+              )}
+
+              {accounts.length === 0 ? (
+                <div className="text-center py-4 text-muted-foreground">
+                  No accounts found. Please try connecting again.
+                </div>
+              ) : (
+                <>
+                  {/* Account list */}
+                  <div className="space-y-4">
+                    {accounts.map((account) => {
+                      const selection = selections.get(account.accountId);
+                      if (!selection) return null;
+
+                      return (
+                        <AccountCard
+                          key={account.accountId}
+                          account={account}
+                          selection={selection}
+                          existingSources={existingSources}
+                          onUpdate={(updates) => updateSelection(account.accountId, updates)}
+                        />
+                      );
+                    })}
+                  </div>
+
+                  {/* Submit button */}
+                  <Button
+                    className="w-full"
+                    onClick={handleSubmit}
+                    disabled={selectedCount === 0 || isSubmitting || !!duplicateSourceError}
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Connecting...
+                      </>
+                    ) : (
+                      `Connect ${selectedCount} Account${selectedCount !== 1 ? "s" : ""}`
+                    )}
+                  </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface AccountCardProps {
+  account: BankAccount;
+  selection: AccountSelection;
+  existingSources: TransactionSource[];
+  onUpdate: (updates: Partial<AccountSelection>) => void;
+}
+
+function AccountCard({ account, selection, existingSources, onUpdate }: AccountCardProps) {
+  const isMatched = selection.matchedSourceId !== null;
+  const matchedSource = existingSources.find((s) => s.id === selection.matchedSourceId);
+
+  return (
+    <div
+      className={`rounded-lg border p-4 space-y-3 transition-colors ${
+        selection.selected ? "border-primary bg-primary/5" : "opacity-60"
+      }`}
+    >
+      {/* Header with checkbox */}
+      <div className="flex items-start gap-3">
+        <Checkbox
+          checked={selection.selected}
+          onCheckedChange={(checked: boolean | "indeterminate") => onUpdate({ selected: checked === true })}
+          className="mt-1"
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+            <p className="font-medium">{account.ownerName || "Account"}</p>
+            {isMatched && (
+              <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                IBAN Match
+              </span>
+            )}
+          </div>
+          <p className="text-sm font-mono text-muted-foreground">{formatIban(account.iban)}</p>
+        </div>
+      </div>
+
+      {/* Mode selection */}
+      {selection.selected && (
+        <div className="pl-7 space-y-3">
+          <Select
+            value={selection.mode === "link" ? `link:${selection.selectedSourceId}` : "create"}
+            onValueChange={(value) => {
+              if (value === "create") {
+                onUpdate({ mode: "create", selectedSourceId: null });
+              } else {
+                const sourceId = value.replace("link:", "");
+                onUpdate({ mode: "link", selectedSourceId: sourceId });
+              }
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="create">
+                <div className="flex items-center gap-2">
+                  <Plus className="h-4 w-4" />
+                  Create new account
+                </div>
+              </SelectItem>
+              {existingSources.length > 0 && (
+                <>
+                  <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                    Link to existing
+                  </div>
+                  {existingSources.map((source) => (
+                    <SelectItem key={source.id} value={`link:${source.id}`}>
+                      <div className="flex items-center gap-2">
+                        <Link2 className="h-4 w-4" />
+                        <span>{source.name}</span>
+                        {source.id === selection.matchedSourceId && (
+                          <span className="text-xs text-green-600">(IBAN match)</span>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </>
+              )}
+            </SelectContent>
+          </Select>
+
+          {/* Name input for create mode */}
+          {selection.mode === "create" && (
+            <Input
+              value={selection.newAccountName}
+              onChange={(e) => onUpdate({ newAccountName: e.target.value })}
+              placeholder="Account name"
+            />
           )}
-        </CardContent>
-      </Card>
+
+          {/* Info for link mode */}
+          {selection.mode === "link" && selection.selectedSourceId && (
+            <p className="text-xs text-muted-foreground">
+              Transactions will sync to this existing account
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

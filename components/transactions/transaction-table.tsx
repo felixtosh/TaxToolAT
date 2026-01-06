@@ -4,14 +4,18 @@ import { useMemo, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransactions } from "@/hooks/use-transactions";
 import { useSources } from "@/hooks/use-sources";
+import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
+import { useFiles } from "@/hooks/use-files";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { parseFiltersFromUrl, buildFilterUrl } from "@/lib/filters/url-params";
 import { matchAllTransactionsByPattern } from "@/lib/matching";
+import { matchTransactionToCategories } from "@/lib/matching/category-matcher";
 import { DataTable, DataTableHandle } from "./data-table";
 import { getTransactionColumns } from "./transaction-columns";
 import { TransactionToolbar } from "./transaction-toolbar";
 import { Transaction, TransactionFilters } from "@/types/transaction";
 import { UserPartner, GlobalPartner } from "@/types/partner";
+import { CategorySuggestion } from "@/types/no-receipt-category";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 interface TransactionTableProps {
@@ -38,6 +42,8 @@ export function TransactionTable({
 
   const { transactions, loading, error } = useTransactions();
   const { sources } = useSources();
+  const { categories } = useNoReceiptCategories();
+  const { files } = useFiles();
 
   // Internal ref for DataTable, use external if provided
   const internalTableRef = useRef<DataTableHandle>(null);
@@ -152,10 +158,50 @@ export function TransactionTable({
     [transactions, userPartners]
   );
 
+  // Compute category suggestions for transactions without files or categories
+  const categorySuggestions = useMemo(() => {
+    const map = new Map<string, CategorySuggestion>();
+    if (categories.length === 0) return map;
+
+    for (const tx of transactions) {
+      // Skip if already has category or files
+      if (tx.noReceiptCategoryId || (tx.fileIds && tx.fileIds.length > 0)) {
+        continue;
+      }
+      const suggestions = matchTransactionToCategories(tx, categories);
+      if (suggestions.length > 0) {
+        map.set(tx.id, suggestions[0]); // Take top suggestion
+      }
+    }
+    return map;
+  }, [transactions, categories]);
+
+  // Create a map of transactionId -> total file amount for the file pill
+  const fileAmountsMap = useMemo(() => {
+    const map = new Map<string, { amount: number; currency: string }>();
+    for (const file of files) {
+      if (file.extractedAmount != null && file.transactionIds.length > 0) {
+        for (const txId of file.transactionIds) {
+          const existing = map.get(txId);
+          if (existing) {
+            // Sum amounts for transactions with multiple files
+            existing.amount += file.extractedAmount;
+          } else {
+            map.set(txId, {
+              amount: file.extractedAmount,
+              currency: file.extractedCurrency || "EUR",
+            });
+          }
+        }
+      }
+    }
+    return map;
+  }, [files]);
+
   // Create columns with sources and partners lookup - must be before conditional returns
   const columns = useMemo(
-    () => getTransactionColumns(sources, userPartners, globalPartners, patternSuggestions),
-    [sources, userPartners, globalPartners, patternSuggestions]
+    () => getTransactionColumns(sources, userPartners, globalPartners, patternSuggestions, categories, categorySuggestions, fileAmountsMap),
+    [sources, userPartners, globalPartners, patternSuggestions, categories, categorySuggestions, fileAmountsMap]
   );
 
   const handleRowClick = (transaction: Transaction) => {

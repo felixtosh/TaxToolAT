@@ -69,6 +69,7 @@ export default function SourcesPage() {
         open={isAddDialogOpen}
         onClose={() => setIsAddDialogOpen(false)}
         onAdd={addSource}
+        sources={sources}
       />
     </div>
   );

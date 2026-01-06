@@ -61,15 +61,16 @@ const VirtualRow = memo(
         className={cn(
           "cursor-pointer transition-colors border-b hover:bg-muted/50",
           isComplete &&
+            !isSelected &&
             "bg-green-50/70 hover:bg-green-100/70 dark:bg-green-950/20 dark:hover:bg-green-950/30",
-          isSelected && "bg-primary/10"
+          isSelected && "bg-primary/10 hover:bg-primary/15"
         )}
         style={{
           position: "absolute",
           top: 0,
           left: 0,
           width: "100%",
-          minWidth: "800px",
+          minWidth: "860px",
           height: virtualSize,
           transform: `translateY(${virtualStart}px)`,
           display: "table",
@@ -84,7 +85,7 @@ const VirtualRow = memo(
               index === 0 && "pl-4",
               index === row.getVisibleCells().length - 1 && "pr-4"
             )}
-            style={{ width: columnWidths[index] }}
+            style={{ width: columnWidths[index], minWidth: columnWidths[index] }}
           >
             {flexRender(cell.column.columnDef.cell, cell.getContext())}
           </td>
@@ -102,8 +103,10 @@ const VirtualRow = memo(
       prevProps.isComplete === nextProps.isComplete &&
       prevProps.virtualStart === nextProps.virtualStart &&
       prevProps.virtualSize === nextProps.virtualSize &&
-      // Check if row data changed (partnerId, updatedAt, etc.)
+      // Check if row data changed (partnerId, isComplete, noReceiptCategoryId, updatedAt, etc.)
       prevOriginal.partnerId === nextOriginal.partnerId &&
+      prevOriginal.isComplete === nextOriginal.isComplete &&
+      prevOriginal.noReceiptCategoryId === nextOriginal.noReceiptCategoryId &&
       prevOriginal.updatedAt === nextOriginal.updatedAt
     );
   }
@@ -160,7 +163,7 @@ function DataTableInner<TData extends { id: string }, TValue>(
   };
 
   // Column widths - Date, Amount, Description, Partner, File, Account
-  const columnWidths = React.useMemo(() => ["100px", "90px", "210px", "180px", "50px", "130px"], []);
+  const columnWidths = React.useMemo(() => ["100px", "90px", "180px", "180px", "180px", "130px"], []);
 
   // Stable click handler
   const handleRowClick = React.useCallback((row: TData) => {
@@ -169,7 +172,7 @@ function DataTableInner<TData extends { id: string }, TValue>(
 
   return (
     <div ref={parentRef} className="flex-1 overflow-auto">
-      <table className="w-full border-collapse min-w-[800px]" style={{ tableLayout: "fixed" }}>
+      <table className="w-full border-collapse min-w-[860px]" style={{ tableLayout: "fixed" }}>
         <colgroup>
           {columnWidths.map((width, i) => (
             <col key={i} style={{ width }} />
@@ -203,10 +206,11 @@ function DataTableInner<TData extends { id: string }, TValue>(
             virtualizer.getVirtualItems().map((virtualRow) => {
               const row = rows[virtualRow.index];
               const original = row.original;
+              // Use the isComplete field from the transaction, which accounts for:
+              // - Files attached (fileIds.length > 0)
+              // - OR no-receipt category assigned (noReceiptCategoryId is set)
               const isComplete =
-                isTransactionRow(original) &&
-                (original.fileIds?.length || 0) > 0 &&
-                !!original.description;
+                isTransactionRow(original) && !!original.isComplete;
 
               return (
                 <VirtualRow

@@ -3,7 +3,14 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
-import { TaxFile, FileFilters, FileCreateData, FileExtractionData } from "@/types/file";
+import {
+  TaxFile,
+  FileFilters,
+  FileCreateData,
+  FileExtractionData,
+  TransactionSuggestion,
+  TransactionMatchSource,
+} from "@/types/file";
 import {
   OperationsContext,
   listFiles,
@@ -16,6 +23,8 @@ import {
   disconnectFileFromTransaction,
   getFilesForTransaction,
   getTransactionsForFile,
+  acceptTransactionSuggestion,
+  dismissTransactionSuggestion,
 } from "@/lib/operations";
 
 const FILES_COLLECTION = "files";
@@ -148,6 +157,25 @@ export function useFiles(filters?: FileFilters) {
     [ctx]
   );
 
+  const acceptSuggestion = useCallback(
+    async (
+      fileId: string,
+      transactionId: string,
+      confidence: number,
+      matchSources: TransactionMatchSource[]
+    ): Promise<string> => {
+      return acceptTransactionSuggestion(ctx, fileId, transactionId, confidence, matchSources);
+    },
+    [ctx]
+  );
+
+  const dismissSuggestion = useCallback(
+    async (fileId: string, transactionId: string): Promise<void> => {
+      await dismissTransactionSuggestion(ctx, fileId, transactionId);
+    },
+    [ctx]
+  );
+
   return {
     files,
     loading,
@@ -160,6 +188,8 @@ export function useFiles(filters?: FileFilters) {
     connectToTransaction,
     disconnectFromTransaction,
     fetchFilesForTransaction,
+    acceptSuggestion,
+    dismissSuggestion,
   };
 }
 

@@ -9,12 +9,11 @@ import { MappingEditor } from "@/components/import/mapping-editor";
 import { ImportPreview } from "@/components/import/import-preview";
 import { ImportProgress } from "@/components/import/import-progress";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { CSVAnalysis } from "@/types/import";
 import {
   ArrowLeft,
   ArrowRight,
-  Upload,
   CheckCircle2,
   Loader2,
 } from "lucide-react";
@@ -168,26 +167,18 @@ export default function ImportPage({ params }: ImportPageProps) {
 
         {/* Step content */}
         {effectiveStep === "upload" && (
-          <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5" />
-              Upload CSV File
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+          <div className="flex flex-col h-full -my-6 -mx-4">
             {state.isMatching ? (
-              <div className="flex flex-col items-center justify-center py-12">
+              <div className="flex flex-col items-center justify-center flex-1">
                 <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
                 <p className="text-muted-foreground">
                   AI is analyzing your columns...
                 </p>
               </div>
             ) : (
-              <CSVDropzone onFileAnalyzed={onFileAnalyzed} />
+              <CSVDropzone onFileAnalyzed={onFileAnalyzed} className="flex-1" />
             )}
-          </CardContent>
-        </Card>
+          </div>
       )}
 
       {effectiveStep === "mapping" && state.analysis && (
@@ -223,14 +214,14 @@ export default function ImportPage({ params }: ImportPageProps) {
       )}
 
       {effectiveStep === "preview" && state.analysis && (
-        <div className="space-y-6">
+        <div className="flex flex-col h-full -my-6 -mx-4">
           <ImportPreview
             rows={state.analysis.sampleRows}
             mappings={state.mappings}
             totalRows={state.analysis.totalRows}
           />
 
-          <div className="flex justify-between">
+          <div className="flex justify-between sticky bottom-0 bg-background border-t px-4 py-4">
             <Button variant="outline" onClick={onGoBackToMapping}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back to Mapping

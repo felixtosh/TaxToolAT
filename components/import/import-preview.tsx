@@ -8,14 +8,6 @@ import {
   getAmountParserConfig,
   formatAmountForDisplay,
 } from "@/lib/import/amount-parsers";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -71,8 +63,8 @@ export function ImportPreview({
   });
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col flex-1 min-h-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0">
         <p className="text-sm text-muted-foreground">
           Showing {Math.min(50, rows.length)} of {totalRows} rows
         </p>
@@ -81,67 +73,73 @@ export function ImportPreview({
         </Badge>
       </div>
 
-      <div className="rounded-lg border overflow-hidden">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/50">
-                <TableHead className="w-12">#</TableHead>
-                {mappedFields.map((field) => (
-                  <TableHead key={field.targetField} className="min-w-[150px]">
-                    <div>
-                      <span className="font-semibold">{field.label}</span>
-                      <span className="block text-xs font-normal text-muted-foreground">
-                        {field.csvColumn}
-                      </span>
-                    </div>
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {previewRows.map((row) => (
-                <TableRow key={row.index}>
-                  <TableCell className="text-muted-foreground">
-                    {row.index}
-                  </TableCell>
-                  {mappedFields.map((field) => {
-                    const cell = row.data[field.targetField];
-                    const isInvalid =
-                      cell?.parsed === "Invalid" ||
-                      (field.targetField === "amount" &&
-                        typeof cell?.parsed === "string" &&
-                        cell.parsed.includes("Invalid"));
-
-                    return (
-                      <TableCell
-                        key={field.targetField}
-                        className={cn(
-                          isInvalid && "text-destructive bg-destructive/10"
-                        )}
-                      >
-                        <div>
-                          <span className="font-medium">
-                            {cell?.parsed ?? "-"}
-                          </span>
-                          {cell?.raw !== cell?.parsed && (
-                            <span className="block text-xs text-muted-foreground">
-                              {cell?.raw}
-                            </span>
-                          )}
-                        </div>
-                      </TableCell>
-                    );
-                  })}
-                </TableRow>
+      <div className="flex-1 overflow-auto">
+        <table className="w-full border-collapse min-w-[800px]">
+          <thead className="sticky top-0 z-10 bg-muted">
+            <tr className="border-b">
+              <th className="w-12 h-10 px-2 text-left text-sm font-medium text-muted-foreground pl-4">#</th>
+              {mappedFields.map((field, index) => (
+                <th
+                  key={field.targetField}
+                  className={cn(
+                    "min-w-[150px] h-10 px-2 text-left text-sm font-medium",
+                    index === mappedFields.length - 1 && "pr-4"
+                  )}
+                >
+                  <div>
+                    <span className="font-semibold">{field.label}</span>
+                    <span className="block text-xs font-normal text-muted-foreground">
+                      {field.csvColumn}
+                    </span>
+                  </div>
+                </th>
               ))}
-            </TableBody>
-          </Table>
-        </div>
+            </tr>
+          </thead>
+          <tbody>
+            {previewRows.map((row) => (
+              <tr key={row.index} className="border-b">
+                <td className="text-muted-foreground px-2 py-2.5 pl-4">
+                  {row.index}
+                </td>
+                {mappedFields.map((field, index) => {
+                  const cell = row.data[field.targetField];
+                  const isInvalid =
+                    cell?.parsed === "Invalid" ||
+                    (field.targetField === "amount" &&
+                      typeof cell?.parsed === "string" &&
+                      cell.parsed.includes("Invalid"));
+
+                  return (
+                    <td
+                      key={field.targetField}
+                      className={cn(
+                        "px-2 py-2.5",
+                        index === mappedFields.length - 1 && "pr-4",
+                        isInvalid && "text-destructive bg-destructive/10"
+                      )}
+                    >
+                      <div>
+                        <span className="font-medium">
+                          {cell?.parsed ?? "-"}
+                        </span>
+                        {cell?.raw !== cell?.parsed && (
+                          <span className="block text-xs text-muted-foreground">
+                            {cell?.raw}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {rows.length > 50 && (
-        <p className="text-sm text-muted-foreground text-center">
+        <p className="text-sm text-muted-foreground text-center py-3 border-t flex-shrink-0">
           ...and {totalRows - 50} more rows will be imported
         </p>
       )}

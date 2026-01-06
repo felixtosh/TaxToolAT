@@ -2,6 +2,16 @@ import { Timestamp } from "firebase/firestore";
 import { AmountFormatConfig } from "./import";
 
 /**
+ * Type of financial account
+ */
+export type AccountKind = "bank_account" | "credit_card";
+
+/**
+ * Credit card brand/network
+ */
+export type CardBrand = "visa" | "mastercard" | "amex" | "discover" | "other";
+
+/**
  * A transaction source represents a bank account or financial data source.
  * All transactions must be associated with a source for proper organization
  * and deduplication.
@@ -12,14 +22,20 @@ export interface TransactionSource {
   /** Display name for the account, e.g., "Erste Bank Business" */
   name: string;
 
-  /** International Bank Account Number for deduplication */
-  iban: string;
+  /** Type of account: bank account or credit card */
+  accountKind: AccountKind;
 
-  /** Bank Identifier Code (SWIFT) - optional */
-  bic?: string;
+  /** International Bank Account Number for deduplication (optional for credit cards) */
+  iban?: string;
 
-  /** Name of the bank institution */
-  bankName?: string;
+  /** For credit cards: optional reference to the linked bank account */
+  linkedSourceId?: string;
+
+  /** For credit cards: last 4 digits of card number */
+  cardLast4?: string;
+
+  /** For credit cards: card brand/network */
+  cardBrand?: CardBrand;
 
   /** How transactions are imported */
   type: "csv" | "api";
@@ -123,9 +139,16 @@ export interface SavedFieldMapping {
  */
 export interface SourceFormData {
   name: string;
-  iban: string;
-  bic?: string;
-  bankName?: string;
+  accountKind: AccountKind;
+  /** For bank accounts: IBAN */
+  iban?: string;
+  /** For credit cards: linked bank account ID */
+  linkedSourceId?: string;
+  /** For credit cards: last 4 digits */
+  cardLast4?: string;
+  /** For credit cards: card brand */
+  cardBrand?: CardBrand;
+  /** Primary currency for the account */
   currency: string;
   type: "csv" | "api";
 }

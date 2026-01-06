@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files } from "lucide-react";
+import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { ChatProvider, ChatSidebar, useChat } from "@/components/chat";
@@ -18,18 +18,17 @@ const navItems = [
   { href: "/files", label: "Files", icon: Files },
   { href: "/sources", label: "Accounts", icon: Building2 },
   { href: "/partners", label: "Partners", icon: Users },
+  { href: "/categories", label: "Categories", icon: Tag },
 ];
 
 function DashboardContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { isSidebarOpen } = useChat();
+  const { isSidebarOpen, sidebarWidth } = useChat();
 
   return (
     <div
-      className={cn(
-        "h-screen bg-background transition-all duration-300 ease-in-out overflow-hidden",
-        isSidebarOpen ? "md:ml-80" : "ml-0"
-      )}
+      className="h-screen bg-background transition-all duration-300 ease-in-out overflow-hidden"
+      style={{ marginLeft: isSidebarOpen ? sidebarWidth : 0 }}
     >
       {/* Header */}
       <header className="border-b bg-card sticky top-0 z-50 px-4 h-14 flex items-center justify-between">
@@ -80,6 +79,12 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                   <Link href="/admin/usage" className="flex items-center gap-2">
                     <Activity className="h-4 w-4" />
                     AI Usage
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/admin/categories" className="flex items-center gap-2">
+                    <Tag className="h-4 w-4" />
+                    No-Receipt Categories
                   </Link>
                 </DropdownMenuItem>
               </DropdownMenuContent>

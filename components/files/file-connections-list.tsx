@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
-import { Plus, X, Loader2 } from "lucide-react";
+import { Plus, X, Loader2, ChevronRight } from "lucide-react";
 import { TaxFile } from "@/types/file";
 import { Transaction } from "@/types/transaction";
 import { Button } from "@/components/ui/button";
@@ -26,16 +26,16 @@ interface TransactionRowProps {
 
 function TransactionRow({ transaction, onRemove, disabled }: TransactionRowProps) {
   return (
-    <div className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group">
-      <Link
-        href={`/transactions?id=${transaction.id}`}
-        className="min-w-0 flex-1 hover:underline"
-      >
+    <Link
+      href={`/transactions?id=${transaction.id}`}
+      className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group overflow-hidden"
+    >
+      <div className="min-w-0 flex-1 overflow-hidden w-0">
         <p className="text-sm truncate">{transaction.name}</p>
         <p className="text-xs text-muted-foreground">
           {transaction.date?.toDate ? format(transaction.date.toDate(), "MMM d, yyyy") : ""}
         </p>
-      </Link>
+      </div>
       <div className="flex items-center gap-2 shrink-0">
         <span className={cn(
           "text-sm font-medium tabular-nums",
@@ -43,7 +43,7 @@ function TransactionRow({ transaction, onRemove, disabled }: TransactionRowProps
         )}>
           {formatAmount(transaction.amount, transaction.currency)}
         </span>
-        {onRemove && (
+        {onRemove ? (
           <button
             type="button"
             onClick={(e) => {
@@ -56,9 +56,11 @@ function TransactionRow({ transaction, onRemove, disabled }: TransactionRowProps
           >
             <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
           </button>
+        ) : (
+          <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
         )}
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -135,7 +137,17 @@ export function FileConnectionsList({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium">Transactions</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium">Transactions</h3>
+          {!loading && file.extractedAmount != null && transactions.length > 0 && (
+            <span className={cn(
+              "text-sm",
+              openAmount === 0 ? "text-green-600" : "text-muted-foreground"
+            )}>
+              – Open: {formatAmount(openAmount, currency)}
+            </span>
+          )}
+        </div>
         {!loading && transactions.length > 0 && (
           <Button
             variant="outline"
@@ -155,37 +167,16 @@ export function FileConnectionsList({
           <span className="text-sm text-muted-foreground">Loading...</span>
         </div>
       ) : transactions.length > 0 ? (
-        <>
-          <div className="space-y-0.5">
-            {transactions.map((tx) => (
-              <TransactionRow
-                key={tx.id}
-                transaction={tx}
-                onRemove={onDisconnect ? () => handleDisconnect(tx.id) : undefined}
-                disabled={disconnecting === tx.id}
-              />
-            ))}
-          </div>
-          {/* Footer with Open and Total */}
-          <div className="flex items-center justify-between pt-2 border-t text-sm">
-            {file.extractedAmount != null ? (
-              <span className={cn(
-                "text-muted-foreground",
-                openAmount === 0 && "text-green-600"
-              )}>
-                Open: <span className="tabular-nums">{formatAmount(openAmount, currency)}</span>
-              </span>
-            ) : (
-              <span />
-            )}
-            <span className={cn(
-              "tabular-nums",
-              totalAmount < 0 ? "text-red-600" : "text-green-600"
-            )}>
-              Total: {formatAmount(totalAmount, currency)}
-            </span>
-          </div>
-        </>
+        <div className="space-y-0.5">
+          {transactions.map((tx) => (
+            <TransactionRow
+              key={tx.id}
+              transaction={tx}
+              onRemove={onDisconnect ? () => handleDisconnect(tx.id) : undefined}
+              disabled={disconnecting === tx.id}
+            />
+          ))}
+        </div>
       ) : (
         <Button
           variant="outline"

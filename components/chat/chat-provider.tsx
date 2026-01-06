@@ -12,6 +12,12 @@ import { useChatPersistence } from "@/hooks/use-chat-persistence";
 
 const ChatContext = createContext<ChatContextValue | null>(null);
 
+// Sidebar width constants
+const SIDEBAR_WIDTH_KEY = "chatSidebarWidth";
+const DEFAULT_SIDEBAR_WIDTH = 320; // w-80 = 20rem = 320px
+const MIN_SIDEBAR_WIDTH = 280;
+const MAX_SIDEBAR_WIDTH = 600;
+
 export function useChat() {
   const context = useContext(ChatContext);
   if (!context) {
@@ -27,6 +33,7 @@ interface ChatProviderProps {
 export function ChatProvider({ children }: ChatProviderProps) {
   const router = useRouter();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [pendingConfirmations, setPendingConfirmations] = useState<ToolCall[]>([]);
   const [activeTab, setActiveTab] = useState<ChatTab>("notifications");
 
@@ -281,12 +288,27 @@ export function ChatProvider({ children }: ChatProviderProps) {
     if (saved !== null) {
       setIsSidebarOpen(JSON.parse(saved));
     }
+    // Load sidebar width
+    const savedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    if (savedWidth) {
+      const parsed = parseInt(savedWidth, 10);
+      if (!isNaN(parsed) && parsed >= MIN_SIDEBAR_WIDTH && parsed <= MAX_SIDEBAR_WIDTH) {
+        setSidebarWidth(parsed);
+      }
+    }
   }, []);
 
   // Save sidebar state to localStorage
   useEffect(() => {
     localStorage.setItem("chatSidebarOpen", JSON.stringify(isSidebarOpen));
   }, [isSidebarOpen]);
+
+  // Handler for setting sidebar width (with persistence)
+  const handleSetSidebarWidth = useCallback((width: number) => {
+    const clampedWidth = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width));
+    setSidebarWidth(clampedWidth);
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, clampedWidth.toString());
+  }, []);
 
   const value: ChatContextValue = useMemo(
     () => ({
@@ -354,6 +376,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
       uiActions,
       isSidebarOpen,
       toggleSidebar,
+      sidebarWidth,
+      setSidebarWidth: handleSetSidebarWidth,
       // Tabs & Notifications
       activeTab,
       setActiveTab,
@@ -375,6 +399,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
       uiActions,
       isSidebarOpen,
       toggleSidebar,
+      sidebarWidth,
+      handleSetSidebarWidth,
       activeTab,
       notifications,
       unreadNotificationCount,

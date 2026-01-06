@@ -14,6 +14,7 @@ import {
 } from "firebase/firestore";
 import { Transaction, TransactionFilters } from "@/types/transaction";
 import { OperationsContext, BulkOperationResult } from "./types";
+import { deleteFileConnectionsForTransaction } from "./file-ops";
 
 const TRANSACTIONS_COLLECTION = "transactions";
 
@@ -183,9 +184,15 @@ export async function deleteTransactionsBySource(
   let deleted = 0;
 
   for (let i = 0; i < snapshot.docs.length; i += BATCH_SIZE) {
-    const batch = writeBatch(ctx.db);
     const chunk = snapshot.docs.slice(i, i + BATCH_SIZE);
 
+    // Clean up file connections BEFORE deleting transactions
+    for (const docSnap of chunk) {
+      await deleteFileConnectionsForTransaction(ctx, docSnap.id);
+    }
+
+    // Then batch delete transactions
+    const batch = writeBatch(ctx.db);
     for (const docSnap of chunk) {
       batch.delete(docSnap.ref);
       deleted++;

@@ -1,6 +1,36 @@
 import { Timestamp } from "firebase/firestore";
 
 /**
+ * Match sources for transaction matching - indicates which criteria contributed to a match
+ */
+export type TransactionMatchSource =
+  | "amount_exact"
+  | "amount_close"
+  | "date_exact"
+  | "date_close"
+  | "partner"
+  | "iban"
+  | "reference";
+
+/**
+ * A suggested transaction match for a file
+ */
+export interface TransactionSuggestion {
+  transactionId: string;
+  confidence: number; // 0-100
+  matchSources: TransactionMatchSource[];
+
+  /** Cached transaction info for display (avoids extra lookup) */
+  preview: {
+    date: Timestamp;
+    amount: number;
+    currency: string;
+    name: string;
+    partner: string | null;
+  };
+}
+
+/**
  * A file (PDF/image) uploaded to TaxStudio.
  * Files are standalone entities that can be connected to multiple transactions.
  * Collection: /files/{id}
@@ -80,6 +110,17 @@ export interface TaxFile {
   /** Transaction IDs this file is connected to (denormalized for queries) */
   transactionIds: string[];
 
+  // === Transaction Matching ===
+
+  /** Auto-matched transaction suggestions (stored after extraction) */
+  transactionSuggestions?: TransactionSuggestion[];
+
+  /** Whether transaction matching has been completed */
+  transactionMatchComplete?: boolean;
+
+  /** When transaction matching was last run */
+  transactionMatchedAt?: Timestamp | null;
+
   // === Partner Assignment ===
 
   /** Assigned partner ID (user or global) */
@@ -118,7 +159,10 @@ export interface FileConnection {
   userId: string;
 
   /** How this connection was made */
-  connectionType: "manual" | "auto_matched";
+  connectionType: "manual" | "auto_matched" | "suggestion_accepted";
+
+  /** Which matching criteria led to the match (for auto/suggestion) */
+  matchSources?: TransactionMatchSource[];
 
   /** AI confidence if auto-matched (0-100) */
   matchConfidence?: number | null;

@@ -279,8 +279,10 @@ export async function POST(req: Request) {
           return sources.map((s) => ({
             id: s.id,
             name: s.name,
+            accountKind: s.accountKind,
             iban: s.iban,
-            bankName: s.bankName,
+            cardBrand: s.cardBrand,
+            cardLast4: s.cardLast4,
             currency: s.currency,
           }));
         },
@@ -298,9 +300,10 @@ export async function POST(req: Request) {
           return {
             id: s.id,
             name: s.name,
+            accountKind: s.accountKind,
             iban: s.iban,
-            bic: s.bic,
-            bankName: s.bankName,
+            cardBrand: s.cardBrand,
+            cardLast4: s.cardLast4,
             currency: s.currency,
           };
         },
@@ -382,12 +385,14 @@ export async function POST(req: Request) {
         description: "Create a new bank account/source. REQUIRES USER CONFIRMATION.",
         inputSchema: z.object({
           name: z.string().describe("Display name for the account"),
-          iban: z.string().describe("IBAN of the bank account"),
+          accountKind: z.enum(["bank_account", "credit_card"]).optional().describe("Type of account (default: bank_account)"),
+          iban: z.string().optional().describe("IBAN of the bank account (required for bank accounts, optional for credit cards)"),
           currency: z.string().optional().describe("Currency code (default EUR)"),
         }),
-        execute: async ({ name, iban, currency }) => {
+        execute: async ({ name, accountKind, iban, currency }) => {
           const sourceId = await createSource(ctx, {
             name,
+            accountKind: accountKind ?? "bank_account",
             iban,
             currency: currency ?? "EUR",
             type: "csv",

@@ -61,8 +61,9 @@ const VirtualRow = memo(
         className={cn(
           "cursor-pointer transition-colors border-b hover:bg-muted/50",
           hasConnections &&
+            !isSelected &&
             "bg-green-50/70 hover:bg-green-100/70 dark:bg-green-950/20 dark:hover:bg-green-950/30",
-          isSelected && "bg-primary/10"
+          isSelected && "bg-primary/10 hover:bg-primary/15"
         )}
         style={{
           position: "absolute",
@@ -84,7 +85,7 @@ const VirtualRow = memo(
               index === 0 && "pl-4",
               index === row.getVisibleCells().length - 1 && "pr-4"
             )}
-            style={{ width: columnWidths[index] }}
+            style={{ width: columnWidths[index], minWidth: columnWidths[index] }}
           >
             {flexRender(cell.column.columnDef.cell, cell.getContext())}
           </td>
@@ -150,7 +151,7 @@ function FilesDataTableInner(
   }), [virtualizer]);
 
   // Column widths - Inv. Date, Amount, VAT%, Filename, Upload Date, Partner, Transactions
-  const columnWidths = React.useMemo(() => ["110px", "90px", "55px", "210px", "100px", "140px", "95px"], []);
+  const columnWidths = React.useMemo(() => ["110px", "90px", "55px", "190px", "115px", "140px", "100px"], []);
 
   const handleRowClick = React.useCallback((row: TaxFile) => {
     onRowClick?.(row);

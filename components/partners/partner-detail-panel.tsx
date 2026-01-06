@@ -384,17 +384,16 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
       </div>
 
       {/* Footer Actions */}
-      <div className="flex items-center justify-between gap-2 px-4 py-3 border-t bg-muted/30">
+      <div className="p-4 border-t flex gap-2">
         <Button
           variant="outline"
-          size="sm"
+          className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10"
           onClick={handleDelete}
-          className="text-destructive hover:text-destructive"
         >
           <Trash2 className="h-4 w-4 mr-2" />
           Delete
         </Button>
-        <Button size="sm" onClick={() => setIsEditDialogOpen(true)}>
+        <Button variant="outline" className="flex-1" onClick={() => setIsEditDialogOpen(true)}>
           <Pencil className="h-4 w-4 mr-2" />
           Edit
         </Button>

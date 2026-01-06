@@ -70,9 +70,11 @@ export async function createSource(
   const now = Timestamp.now();
   const newSource = {
     name: data.name,
-    iban: normalizeIban(data.iban),
-    bic: data.bic || null,
-    bankName: data.bankName || null,
+    accountKind: data.accountKind,
+    iban: data.iban ? normalizeIban(data.iban) : null,
+    linkedSourceId: data.linkedSourceId || null,
+    cardLast4: data.cardLast4 || null,
+    cardBrand: data.cardBrand || null,
     currency: data.currency,
     type: data.type,
     isActive: true,
@@ -110,9 +112,10 @@ export async function updateSource(
  * Delete a source and all associated imports/transactions
  *
  * This performs a cascade delete:
- * 1. Deletes all imports for this source (and their transactions)
- * 2. Deletes any remaining transactions without an import
- * 3. Deletes the source document itself
+ * 1. Clears linkedSourceId on any credit cards linked to this bank account
+ * 2. Deletes all imports for this source (and their transactions)
+ * 3. Deletes any remaining transactions without an import
+ * 4. Deletes the source document itself
  */
 export async function deleteSource(
   ctx: OperationsContext,
@@ -124,13 +127,28 @@ export async function deleteSource(
     throw new Error(`Source ${sourceId} not found or access denied`);
   }
 
-  // 1. Delete all imports (which cascade-deletes their transactions)
+  // 1. Clear linkedSourceId on any credit cards that link to this bank account
+  const linkedCardsQuery = query(
+    collection(ctx.db, SOURCES_COLLECTION),
+    where("userId", "==", ctx.userId),
+    where("linkedSourceId", "==", sourceId)
+  );
+  const linkedCardsSnapshot = await getDocs(linkedCardsQuery);
+
+  for (const cardDoc of linkedCardsSnapshot.docs) {
+    await updateDoc(cardDoc.ref, {
+      linkedSourceId: null,
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  // 2. Delete all imports (which cascade-deletes their transactions)
   const importResult = await deleteImportsBySource(ctx, sourceId);
 
-  // 2. Delete any orphaned transactions (e.g., those without importJobId)
+  // 3. Delete any orphaned transactions (e.g., those without importJobId)
   const txResult = await deleteTransactionsBySource(ctx, sourceId);
 
-  // 3. Delete the source document itself
+  // 4. Delete the source document itself
   const docRef = doc(ctx.db, SOURCES_COLLECTION, sourceId);
   await deleteDoc(docRef);
 

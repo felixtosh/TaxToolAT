@@ -9,11 +9,10 @@ import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import { usePartnerSuggestions, useAssignedPartner } from "@/hooks/use-partner-suggestions";
-import { Plus, ExternalLink, Loader2 } from "lucide-react";
+import { Plus, ExternalLink, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { functions } from "@/lib/firebase/config";
 import { shouldAutoApply } from "@/lib/matching/partner-matcher";
@@ -56,6 +55,7 @@ export function TransactionDetails({
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const [showMetadata, setShowMetadata] = useState(false);
   const matchedTransactionIds = useRef<Set<string>>(new Set());
   const autoAppliedRef = useRef<Set<string>>(new Set());
 
@@ -218,6 +218,54 @@ export function TransactionDetails({
         </FieldRow>
       )}
 
+      {/* Show More / Metadata Toggle */}
+      <FieldRow label="">
+        <button
+          type="button"
+          onClick={() => setShowMetadata(!showMetadata)}
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {showMetadata ? (
+            <>
+              Show less
+              <ChevronUp className="h-3 w-3" />
+            </>
+          ) : (
+            <>
+              Show more
+              <ChevronDown className="h-3 w-3" />
+            </>
+          )}
+        </button>
+      </FieldRow>
+
+      {/* Metadata Section (collapsible) */}
+      {showMetadata && (
+        <div className="space-y-3 pt-2 pb-1 animate-in slide-in-from-top-2 duration-200">
+          <FieldRow label="Dedupe Hash">
+            <span className="font-mono text-xs truncate max-w-[200px]" title={transaction.dedupeHash}>
+              {transaction.dedupeHash.slice(0, 16)}...
+            </span>
+          </FieldRow>
+
+          {transaction.importJobId && (
+            <FieldRow label="Import Job">
+              <span className="font-mono text-xs">
+                {transaction.importJobId.slice(0, 8)}...
+              </span>
+            </FieldRow>
+          )}
+
+          <FieldRow label="Created">
+            {format(transaction.createdAt.toDate(), "MMM d, yyyy HH:mm")}
+          </FieldRow>
+
+          <FieldRow label="Updated">
+            {format(transaction.updatedAt.toDate(), "MMM d, yyyy HH:mm")}
+          </FieldRow>
+        </div>
+      )}
+
       {/* Partner section */}
       <div className="border-t pt-3 mt-3 -mx-4 px-4">
         <h3 className="text-sm font-medium mb-2">Partner</h3>
@@ -265,14 +313,6 @@ export function TransactionDetails({
           </FieldRow>
         )}
       </div>
-
-      {transaction.isComplete && (
-        <FieldRow label="Status">
-          <Badge variant="default" className="bg-green-600 hover:bg-green-700">
-            Complete
-          </Badge>
-        </FieldRow>
-      )}
 
       {/* Add Partner Dialog */}
       <AddPartnerDialog

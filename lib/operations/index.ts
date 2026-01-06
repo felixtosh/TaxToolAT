@@ -31,5 +31,11 @@ export * from "./ai-usage-ops";
 // File operations
 export * from "./file-ops";
 
+// File-Transaction Matching operations
+export * from "./file-transaction-matching-ops";
+
 // GoCardless operations
 export * from "./gocardless-ops";
+
+// No-Receipt Category operations
+export * from "./category-ops";

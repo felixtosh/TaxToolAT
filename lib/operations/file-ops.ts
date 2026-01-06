@@ -301,10 +301,11 @@ export async function connectFileToTransaction(
     updatedAt: now,
   });
 
-  // 3. Update transaction's fileIds array
+  // 3. Update transaction's fileIds array and mark as complete
   const transactionRef = doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId);
   batch.update(transactionRef, {
     fileIds: arrayUnion(fileId),
+    isComplete: true,
     updatedAt: now,
   });
 
@@ -333,6 +334,13 @@ export async function disconnectFileFromTransaction(
     throw new Error("Connection not found");
   }
 
+  // Get transaction to check if this is the last file
+  const transactionDoc = await getDoc(doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId));
+  const txData = transactionDoc.data();
+  const currentFileIds = txData?.fileIds || [];
+  const willHaveNoFiles = currentFileIds.length <= 1;
+  const hasNoReceiptCategory = !!txData?.noReceiptCategoryId;
+
   const now = Timestamp.now();
   const batch = writeBatch(ctx.db);
 
@@ -346,12 +354,19 @@ export async function disconnectFileFromTransaction(
     updatedAt: now,
   });
 
-  // 3. Update transaction's fileIds array
+  // 3. Update transaction's fileIds array and potentially mark incomplete
   const transactionRef = doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId);
-  batch.update(transactionRef, {
+  const transactionUpdate: Record<string, unknown> = {
     fileIds: arrayRemove(fileId),
     updatedAt: now,
-  });
+  };
+
+  // Mark incomplete only if no files remain AND no no-receipt category
+  if (willHaveNoFiles && !hasNoReceiptCategory) {
+    transactionUpdate.isComplete = false;
+  }
+
+  batch.update(transactionRef, transactionUpdate);
 
   await batch.commit();
 }
@@ -451,27 +466,30 @@ async function deleteFileConnections(
 
   const BATCH_SIZE = 500;
   let deleted = 0;
+  const now = Timestamp.now();
 
   for (let i = 0; i < connections.length; i += BATCH_SIZE) {
-    const batch = writeBatch(ctx.db);
     const chunk = connections.slice(i, i + BATCH_SIZE);
-    const now = Timestamp.now();
 
+    // First, delete all connection documents (these always exist)
+    const deleteBatch = writeBatch(ctx.db);
     for (const conn of chunk) {
-      // Delete connection document
-      batch.delete(doc(ctx.db, FILE_CONNECTIONS_COLLECTION, conn.id));
-
-      // Update transaction's fileIds array
-      const transactionRef = doc(ctx.db, TRANSACTIONS_COLLECTION, conn.transactionId);
-      batch.update(transactionRef, {
-        fileIds: arrayRemove(fileId),
-        updatedAt: now,
-      });
-
+      deleteBatch.delete(doc(ctx.db, FILE_CONNECTIONS_COLLECTION, conn.id));
       deleted++;
     }
+    await deleteBatch.commit();
 
-    await batch.commit();
+    // Then, update transactions that still exist (skip orphaned references)
+    for (const conn of chunk) {
+      const transactionRef = doc(ctx.db, TRANSACTIONS_COLLECTION, conn.transactionId);
+      const transactionSnap = await getDoc(transactionRef);
+      if (transactionSnap.exists()) {
+        await updateDoc(transactionRef, {
+          fileIds: arrayRemove(fileId),
+          updatedAt: now,
+        });
+      }
+    }
   }
 
   return { deleted };

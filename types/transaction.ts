@@ -95,6 +95,27 @@ export interface Transaction {
     source: "iban" | "vatId" | "website" | "name";
   }>;
 
+  // === No-Receipt Category ===
+  // Note: These use `| null` (not just `?`) so Firestore queries work.
+
+  /** No-receipt category ID (if assigned instead of file) */
+  noReceiptCategoryId?: string | null;
+
+  /** Template ID for quick identification */
+  noReceiptCategoryTemplateId?: import("./no-receipt-category").NoReceiptCategoryId | null;
+
+  /** How the category was assigned */
+  noReceiptCategoryMatchedBy?: "manual" | "suggestion" | "auto" | null;
+
+  /** Category match confidence (0-100) */
+  noReceiptCategoryConfidence?: number | null;
+
+  /** Top category suggestions (stored for UI display) */
+  categorySuggestions?: import("./no-receipt-category").CategorySuggestion[];
+
+  /** Receipt lost entry (only for "receipt-lost" category) */
+  receiptLostEntry?: import("./no-receipt-category").ReceiptLostEntry | null;
+
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

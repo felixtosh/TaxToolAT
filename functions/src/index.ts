@@ -34,3 +34,6 @@ export {
 
 // Export file extraction functions
 export { extractFileData } from "./extraction/extractFileData";
+
+// Export file-transaction matching functions
+export { matchFileTransactions } from "./matching/matchFileTransactions";

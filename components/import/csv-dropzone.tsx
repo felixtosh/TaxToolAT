@@ -10,6 +10,7 @@ import { CSVAnalysis } from "@/types/import";
 interface CSVDropzoneProps {
   onFileAnalyzed: (analysis: CSVAnalysis, file: File) => void;
   disabled?: boolean;
+  className?: string;
 }
 
 const ACCEPTED_FILE_TYPES = {
@@ -20,7 +21,7 @@ const ACCEPTED_FILE_TYPES = {
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
-export function CSVDropzone({ onFileAnalyzed, disabled }: CSVDropzoneProps) {
+export function CSVDropzone({ onFileAnalyzed, disabled, className }: CSVDropzoneProps) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -69,11 +70,11 @@ export function CSVDropzone({ onFileAnalyzed, disabled }: CSVDropzoneProps) {
     });
 
   return (
-    <div className="space-y-4">
+    <div className={cn("flex flex-col", className)}>
       <div
         {...getRootProps()}
         className={cn(
-          "relative border-2 border-dashed rounded-lg p-12 transition-all duration-200",
+          "relative border-2 border-dashed rounded-lg transition-all duration-200 flex-1 flex items-center justify-center",
           "hover:border-primary hover:bg-primary/5 cursor-pointer",
           isDragActive && "border-primary bg-primary/10 scale-[1.01]",
           (disabled || isAnalyzing) && "pointer-events-none opacity-60",
@@ -82,7 +83,7 @@ export function CSVDropzone({ onFileAnalyzed, disabled }: CSVDropzoneProps) {
       >
         <input {...getInputProps()} />
 
-        <div className="flex flex-col items-center justify-center text-center">
+        <div className="flex flex-col items-center justify-center text-center p-12">
           {isAnalyzing ? (
             <>
               <Loader2 className="h-12 w-12 text-primary animate-spin mb-4" />

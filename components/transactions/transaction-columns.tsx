@@ -4,12 +4,15 @@ import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import {
   Paperclip,
-  CheckCircle2,
   ArrowUpDown,
+  FileText,
+  Tag,
 } from "lucide-react";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
 import { UserPartner, GlobalPartner, PartnerMatchResult } from "@/types/partner";
+import { UserNoReceiptCategory, CategorySuggestion } from "@/types/no-receipt-category";
+import { getCategoryTemplate } from "@/lib/data/no-receipt-category-templates";
 import { Button } from "@/components/ui/button";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
@@ -19,15 +22,49 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
+// Pill component for file/category display (matches PartnerPill styling exactly)
+function FilePill({
+  label,
+  icon: Icon,
+  variant = "default",
+}: {
+  label: string;
+  icon: React.ElementType;
+  variant?: "default" | "suggestion";
+}) {
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm max-w-[160px]",
+        variant === "suggestion"
+          ? "bg-info border-info-border text-info-foreground"
+          : "bg-background border-input"
+      )}
+    >
+      <Icon
+        className={cn(
+          "h-3.5 w-3.5 flex-shrink-0",
+          variant === "suggestion" ? "text-info-foreground" : "text-muted-foreground"
+        )}
+      />
+      <span className="truncate flex-1">{label}</span>
+    </div>
+  );
+}
+
 export function getTransactionColumns(
   sources: TransactionSource[],
   userPartners: UserPartner[] = [],
   globalPartners: GlobalPartner[] = [],
-  patternSuggestions?: Map<string, PartnerMatchResult>
+  patternSuggestions?: Map<string, PartnerMatchResult>,
+  categories: UserNoReceiptCategory[] = [],
+  categorySuggestions?: Map<string, CategorySuggestion>,
+  fileAmountsMap?: Map<string, { amount: number; currency: string }>
 ): ColumnDef<Transaction>[] {
   const sourceMap = new Map(sources.map((s) => [s.id, s]));
   const userPartnerMap = new Map(userPartners.map((p) => [p.id, p]));
   const globalPartnerMap = new Map(globalPartners.map((p) => [p.id, p]));
+  const categoryMap = new Map(categories.map((c) => [c.id, c]));
 
   return [
     {
@@ -151,15 +188,67 @@ export function getTransactionColumns(
       id: "file",
       header: "File",
       cell: ({ row }) => {
-        const hasFile = (row.original.fileIds?.length || 0) > 0;
+        const fileCount = row.original.fileIds?.length || 0;
+        const hasFile = fileCount > 0;
+        const categoryTemplateId = row.original.noReceiptCategoryTemplateId;
+        const hasNoReceiptCategory = !!categoryTemplateId;
+        const txId = row.original.id;
+
+        if (hasFile) {
+          // Show file amount if available, otherwise show count
+          const fileAmount = fileAmountsMap?.get(txId);
+          if (fileAmount) {
+            const formatted = new Intl.NumberFormat("de-DE", {
+              style: "currency",
+              currency: fileAmount.currency || "EUR",
+            }).format(fileAmount.amount / 100);
+            return <FilePill label={formatted} icon={FileText} />;
+          }
+          const label = fileCount === 1 ? "1 file" : `${fileCount} files`;
+          return <FilePill label={label} icon={FileText} />;
+        }
+
+        if (hasNoReceiptCategory) {
+          const template = getCategoryTemplate(categoryTemplateId);
+          const label = template?.name || "No receipt";
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div>
+                  <FilePill label={label} icon={Tag} />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">{template?.helperText || "No receipt required"}</p>
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
+
+        // Check for category suggestion
+        const catSuggestion = categorySuggestions?.get(txId);
+        if (catSuggestion) {
+          const category = categoryMap.get(catSuggestion.categoryId);
+          const label = category?.name || "Category";
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div>
+                  <FilePill label={label} icon={Tag} variant="suggestion" />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">
+                  Suggested: {catSuggestion.confidence}% match
+                </p>
+                <p className="text-xs text-muted-foreground">Click row to assign</p>
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
+
         return (
-          <div className="flex justify-center">
-            {hasFile ? (
-              <CheckCircle2 className="h-4 w-4 text-green-600" />
-            ) : (
-              <Paperclip className="h-4 w-4 text-muted-foreground/50" />
-            )}
-          </div>
+          <span className="text-sm text-muted-foreground">—</span>
         );
       },
     },

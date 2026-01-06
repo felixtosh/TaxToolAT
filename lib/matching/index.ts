@@ -30,3 +30,21 @@ export {
   getConfidenceColor,
   getSourceLabel,
 } from "./partner-matcher";
+
+/**
+ * Transaction matching utilities (file to transaction)
+ */
+export {
+  TRANSACTION_MATCH_CONFIG,
+  scoreTransactionMatch,
+  findTransactionMatches,
+  toTransactionSuggestion,
+  resolvePartnerConflict,
+  shouldAutoMatchTransaction,
+  getTransactionMatchConfidenceTier,
+  getTransactionMatchConfidenceColor,
+  getTransactionMatchSourceLabel,
+  getTransactionMatchSourceIcon,
+} from "./transaction-matcher";
+
+export type { TransactionMatchScore } from "./transaction-matcher";

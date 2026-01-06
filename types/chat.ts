@@ -108,6 +108,8 @@ export interface ChatContextValue {
   // Sidebar state
   isSidebarOpen: boolean;
   toggleSidebar: () => void;
+  sidebarWidth: number;
+  setSidebarWidth: (width: number) => void;
 
   // Tabs & Notifications
   activeTab: ChatTab;

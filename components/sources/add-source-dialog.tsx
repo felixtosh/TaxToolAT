@@ -16,33 +16,51 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SourceFormData } from "@/types/source";
+import { SourceFormData, TransactionSource, AccountKind, CardBrand } from "@/types/source";
 import { isValidIban, normalizeIban, formatIban } from "@/lib/import/deduplication";
+import { Building2, CreditCard } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface AddSourceDialogProps {
   open: boolean;
   onClose: () => void;
   onAdd: (data: SourceFormData) => Promise<string>;
+  sources?: TransactionSource[];
 }
 
-export function AddSourceDialog({ open, onClose, onAdd }: AddSourceDialogProps) {
+const CARD_BRANDS: { value: CardBrand; label: string }[] = [
+  { value: "visa", label: "Visa" },
+  { value: "mastercard", label: "Mastercard" },
+  { value: "amex", label: "American Express" },
+  { value: "discover", label: "Discover" },
+  { value: "other", label: "Other" },
+];
+
+export function AddSourceDialog({ open, onClose, onAdd, sources = [] }: AddSourceDialogProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [ibanError, setIbanError] = useState<string | null>(null);
   const [formData, setFormData] = useState<{
     name: string;
+    accountKind: AccountKind;
     iban: string;
-    bic: string;
-    bankName: string;
+    cardBrand: CardBrand;
+    cardLast4: string;
+    linkedSourceId: string;
     currency: string;
     type: "csv" | "api";
   }>({
     name: "",
+    accountKind: "bank_account",
     iban: "",
-    bic: "",
-    bankName: "",
+    cardBrand: "visa",
+    cardLast4: "",
+    linkedSourceId: "",
     currency: "EUR",
     type: "csv",
   });
+
+  // Filter to only show bank accounts as linkable sources
+  const linkableSources = sources.filter(s => s.accountKind === "bank_account");
 
   const handleIbanChange = (value: string) => {
     setFormData((f) => ({ ...f, iban: value }));
@@ -60,11 +78,44 @@ export function AddSourceDialog({ open, onClose, onAdd }: AddSourceDialogProps) 
     }
   };
 
+  const handleAccountKindChange = (kind: AccountKind) => {
+    setFormData((f) => ({
+      ...f,
+      accountKind: kind,
+    }));
+    if (kind === "credit_card") {
+      setIbanError(null);
+    }
+  };
+
+  const handleLast4Change = (value: string) => {
+    // Only allow digits and max 4 characters
+    const digits = value.replace(/\D/g, "").slice(0, 4);
+    setFormData((f) => ({ ...f, cardLast4: digits }));
+  };
+
+  const canSubmit = () => {
+    if (!formData.name) return false;
+
+    if (formData.accountKind === "bank_account") {
+      // For bank accounts, IBAN is required
+      if (!formData.iban) return false;
+      if (ibanError) return false;
+    } else {
+      // For credit cards, card info is required
+      if (!formData.cardBrand) return false;
+      if (!formData.cardLast4 || formData.cardLast4.length !== 4) return false;
+    }
+
+    return true;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.iban) return;
+    if (!canSubmit()) return;
 
-    if (!isValidIban(formData.iban)) {
+    // Validate IBAN if provided (bank account)
+    if (formData.accountKind === "bank_account" && formData.iban && !isValidIban(formData.iban)) {
       setIbanError("Invalid IBAN format");
       return;
     }
@@ -73,9 +124,11 @@ export function AddSourceDialog({ open, onClose, onAdd }: AddSourceDialogProps) 
     try {
       await onAdd({
         name: formData.name,
-        iban: formData.iban,
-        bic: formData.bic || undefined,
-        bankName: formData.bankName || undefined,
+        accountKind: formData.accountKind,
+        iban: formData.accountKind === "bank_account" ? formData.iban : undefined,
+        cardBrand: formData.accountKind === "credit_card" ? formData.cardBrand : undefined,
+        cardLast4: formData.accountKind === "credit_card" ? formData.cardLast4 : undefined,
+        linkedSourceId: formData.linkedSourceId || undefined,
         currency: formData.currency,
         type: formData.type,
       });
@@ -83,12 +136,15 @@ export function AddSourceDialog({ open, onClose, onAdd }: AddSourceDialogProps) 
       // Reset form
       setFormData({
         name: "",
+        accountKind: "bank_account",
         iban: "",
-        bic: "",
-        bankName: "",
+        cardBrand: "visa",
+        cardLast4: "",
+        linkedSourceId: "",
         currency: "EUR",
         type: "csv" as const,
       });
+      setIbanError(null);
       onClose();
     } finally {
       setIsSubmitting(false);
@@ -99,16 +155,54 @@ export function AddSourceDialog({ open, onClose, onAdd }: AddSourceDialogProps) 
     <Sheet open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <SheetContent className="w-[450px] sm:w-[500px]">
         <SheetHeader>
-          <SheetTitle>Add Bank Account</SheetTitle>
+          <SheetTitle>Add Account</SheetTitle>
         </SheetHeader>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+          {/* Account Type Selector */}
+          <div>
+            <label className="text-sm font-medium mb-2 block">
+              Account Type *
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleAccountKindChange("bank_account")}
+                className={cn(
+                  "flex items-center gap-2 p-3 rounded-lg border-2 transition-colors",
+                  formData.accountKind === "bank_account"
+                    ? "border-primary bg-primary/5"
+                    : "border-muted hover:border-muted-foreground/50"
+                )}
+              >
+                <Building2 className="h-5 w-5" />
+                <span className="font-medium">Bank Account</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAccountKindChange("credit_card")}
+                className={cn(
+                  "flex items-center gap-2 p-3 rounded-lg border-2 transition-colors",
+                  formData.accountKind === "credit_card"
+                    ? "border-primary bg-primary/5"
+                    : "border-muted hover:border-muted-foreground/50"
+                )}
+              >
+                <CreditCard className="h-5 w-5" />
+                <span className="font-medium">Credit Card</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Account Name */}
           <div>
             <label className="text-sm font-medium mb-1.5 block">
               Account Name *
             </label>
             <Input
-              placeholder="e.g., Business Account"
+              placeholder={formData.accountKind === "credit_card"
+                ? "e.g., Amex Business Card"
+                : "e.g., Business Account"}
               value={formData.name}
               onChange={(e) =>
                 setFormData((f) => ({ ...f, name: e.target.value }))
@@ -120,53 +214,74 @@ export function AddSourceDialog({ open, onClose, onAdd }: AddSourceDialogProps) 
             </p>
           </div>
 
-          <div>
-            <label className="text-sm font-medium mb-1.5 block">IBAN *</label>
-            <Input
-              placeholder="AT12 3456 7890 1234 5678"
-              value={formData.iban}
-              onChange={(e) => handleIbanChange(e.target.value)}
-              onBlur={handleIbanBlur}
-              className={ibanError ? "border-destructive" : ""}
-              required
-            />
-            {ibanError && (
-              <p className="text-xs text-destructive mt-1">{ibanError}</p>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">
-              Used for deduplication when importing transactions
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
+          {/* IBAN - Only for bank accounts */}
+          {formData.accountKind === "bank_account" && (
             <div>
               <label className="text-sm font-medium mb-1.5 block">
-                Bank Name
+                IBAN *
               </label>
               <Input
-                placeholder="e.g., Erste Bank"
-                value={formData.bankName}
-                onChange={(e) =>
-                  setFormData((f) => ({ ...f, bankName: e.target.value }))
-                }
+                placeholder="AT12 3456 7890 1234 5678"
+                value={formData.iban}
+                onChange={(e) => handleIbanChange(e.target.value)}
+                onBlur={handleIbanBlur}
+                className={ibanError ? "border-destructive" : ""}
+                required
               />
+              {ibanError && (
+                <p className="text-xs text-destructive mt-1">{ibanError}</p>
+              )}
+              <p className="text-xs text-muted-foreground mt-1">
+                Used for deduplication when importing transactions
+              </p>
             </div>
+          )}
 
-            <div>
-              <label className="text-sm font-medium mb-1.5 block">BIC</label>
-              <Input
-                placeholder="e.g., GIBAATWW"
-                value={formData.bic}
-                onChange={(e) =>
-                  setFormData((f) => ({ ...f, bic: e.target.value }))
-                }
-              />
+          {/* Card Type and Last 4 - Only for credit cards */}
+          {formData.accountKind === "credit_card" && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">
+                  Card Type *
+                </label>
+                <Select
+                  value={formData.cardBrand}
+                  onValueChange={(value) =>
+                    setFormData((f) => ({ ...f, cardBrand: value as CardBrand }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CARD_BRANDS.map((brand) => (
+                      <SelectItem key={brand.value} value={brand.value}>
+                        {brand.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">
+                  Last 4 Digits *
+                </label>
+                <Input
+                  placeholder="1234"
+                  value={formData.cardLast4}
+                  onChange={(e) => handleLast4Change(e.target.value)}
+                  maxLength={4}
+                  className="font-mono"
+                />
+              </div>
             </div>
-          </div>
+          )}
 
+          {/* Primary Currency */}
           <div>
             <label className="text-sm font-medium mb-1.5 block">
-              Currency
+              Primary Currency
             </label>
             <Select
               value={formData.currency}
@@ -186,6 +301,36 @@ export function AddSourceDialog({ open, onClose, onAdd }: AddSourceDialogProps) 
             </Select>
           </div>
 
+          {/* Linked Bank Account - Only for credit cards */}
+          {formData.accountKind === "credit_card" && linkableSources.length > 0 && (
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">
+                Linked Bank Account
+              </label>
+              <Select
+                value={formData.linkedSourceId || "none"}
+                onValueChange={(value) =>
+                  setFormData((f) => ({ ...f, linkedSourceId: value === "none" ? "" : value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a bank account..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {linkableSources.map((source) => (
+                    <SelectItem key={source.id} value={source.id}>
+                      {source.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                The bank account this card bills to
+              </p>
+            </div>
+          )}
+
           <div className="flex gap-2 pt-4">
             <Button
               type="button"
@@ -197,7 +342,7 @@ export function AddSourceDialog({ open, onClose, onAdd }: AddSourceDialogProps) 
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting || !formData.name || !formData.iban}
+              disabled={isSubmitting || !canSubmit()}
               className="flex-1"
             >
               {isSubmitting ? "Adding..." : "Add Account"}

@@ -11,7 +11,7 @@ import {
   Trash2,
   Plus,
 } from "lucide-react";
-import { TaxFile } from "@/types/file";
+import { TaxFile, TransactionSuggestion } from "@/types/file";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,10 +20,19 @@ import { FilePreview } from "./file-preview";
 import { FileViewerDialog } from "./file-viewer-dialog";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
+import { FileTransactionSuggestions } from "./file-transaction-suggestions";
 import { ConnectTransactionDialog } from "./connect-transaction-dialog";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
-import { OperationsContext, disconnectFileFromTransaction, connectFileToTransaction, assignPartnerToFile, removePartnerFromFile } from "@/lib/operations";
+import {
+  OperationsContext,
+  disconnectFileFromTransaction,
+  connectFileToTransaction,
+  assignPartnerToFile,
+  removePartnerFromFile,
+  acceptTransactionSuggestion,
+  dismissTransactionSuggestion,
+} from "@/lib/operations";
 import { useFilePartnerSuggestions, PartnerSuggestionWithDetails } from "@/hooks/use-partner-suggestions";
 import { shouldAutoApply } from "@/lib/matching/partner-matcher";
 import { db } from "@/lib/firebase/config";
@@ -210,6 +219,26 @@ export function FileDetailPanel({
     [ctx, file.id]
   );
 
+  const handleAcceptTransactionSuggestion = useCallback(
+    async (suggestion: TransactionSuggestion) => {
+      await acceptTransactionSuggestion(
+        ctx,
+        file.id,
+        suggestion.transactionId,
+        suggestion.confidence,
+        suggestion.matchSources
+      );
+    },
+    [ctx, file.id]
+  );
+
+  const handleDismissTransactionSuggestion = useCallback(
+    async (transactionId: string) => {
+      await dismissTransactionSuggestion(ctx, file.id, transactionId);
+    },
+    [ctx, file.id]
+  );
+
   return (
     <>
       <div className="h-full flex flex-col">
@@ -346,6 +375,18 @@ export function FileDetailPanel({
               onDisconnect={handleDisconnect}
               onConnectClick={() => setIsConnectTransactionOpen(true)}
             />
+
+            {/* Transaction Suggestions */}
+            {file.transactionSuggestions && file.transactionSuggestions.length > 0 && (
+              <>
+                <Separator />
+                <FileTransactionSuggestions
+                  file={file}
+                  onAccept={handleAcceptTransactionSuggestion}
+                  onDismiss={handleDismissTransactionSuggestion}
+                />
+              </>
+            )}
           </div>
         </ScrollArea>
 
@@ -410,7 +451,11 @@ export function FileDetailPanel({
           extractedAmount: file.extractedAmount,
           extractedCurrency: file.extractedCurrency,
           extractedPartner: file.extractedPartner,
+          extractedIban: file.extractedIban,
+          extractedText: file.extractedText,
+          partnerId: file.partnerId,
         }}
+        suggestions={file.transactionSuggestions}
       />
     </>
   );

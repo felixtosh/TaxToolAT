@@ -148,7 +148,7 @@ export async function POST(request: NextRequest) {
       accountId,
       providerId: connection.providerId,
       providerName: connection.providerName,
-      providerLogo: connection.providerLogo,
+      providerLogo: connection.providerLogo || undefined,
       connectedAt: Timestamp.now(),
     };
 
@@ -166,13 +166,21 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      const existingSource = sourceSnap.data();
+      const sourceIban = iban ? normalizeIban(iban) : existingSource.iban || "";
+
       await updateDoc(sourceRef, {
         type: "api",
         apiConfig,
         bankName: connection.providerName,
-        ...(iban ? { iban: normalizeIban(iban) } : {}),
+        ...(iban ? { iban: sourceIban } : {}),
         updatedAt: now,
       });
+
+      // Trigger initial sync in background
+      triggerInitialSync(sourceId, connection.accessToken, accountId, sourceIban).catch(
+        (err) => console.error("Initial sync failed:", err)
+      );
 
       return NextResponse.json({ sourceId, linked: true });
     }
@@ -200,6 +208,12 @@ export async function POST(request: NextRequest) {
     };
 
     const docRef = await addDoc(collection(db, "sources"), sourceData);
+
+    // Trigger initial sync in background (don't wait)
+    triggerInitialSync(docRef.id, connection.accessToken, accountId, sourceData.iban).catch(
+      (err) => console.error("Initial sync failed:", err)
+    );
+
     return NextResponse.json({ sourceId: docRef.id, linked: false });
   } catch (error) {
     console.error("Error creating/linking source:", error);
@@ -207,5 +221,84 @@ export async function POST(request: NextRequest) {
       { error: error instanceof Error ? error.message : "Failed to create/link source" },
       { status: 500 }
     );
+  }
+}
+
+/**
+ * Trigger initial transaction sync for a newly created source
+ */
+async function triggerInitialSync(
+  sourceId: string,
+  accessToken: string,
+  accountId: string,
+  sourceIban: string
+) {
+  try {
+    const client = getTrueLayerClient();
+
+    // Get transactions from last 90 days
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - 90);
+    const toDate = new Date();
+
+    const transactions = await client.getTransactions(
+      accessToken,
+      accountId,
+      fromDate.toISOString().split("T")[0],
+      toDate.toISOString().split("T")[0]
+    );
+
+    if (transactions.length === 0) {
+      console.log(`No transactions to import for source ${sourceId}`);
+      return;
+    }
+
+    // Import transactions
+    const { generateDedupeHash } = await import("@/lib/import/deduplication");
+    const nowTs = Timestamp.now();
+
+    for (const tx of transactions) {
+      const isCredit = tx.transaction_type === "CREDIT";
+      const amount = isCredit ? Math.abs(tx.amount) : -Math.abs(tx.amount);
+      const txDate = new Date(tx.timestamp);
+      const reference = tx.meta?.provider_reference || tx.transaction_id;
+
+      const dedupeHash = await generateDedupeHash(txDate, amount, sourceIban, reference);
+
+      const transactionDoc = {
+        sourceId,
+        importJobId: null,
+        userId: MOCK_USER_ID,
+        date: Timestamp.fromDate(txDate),
+        amount,
+        currency: tx.currency,
+        name: tx.description,
+        partner: tx.merchant_name || null,
+        partnerIban: null,
+        description: null,
+        reference,
+        isComplete: false,
+        dedupeHash,
+        _original: {
+          date: tx.timestamp,
+          amount: tx.amount.toString(),
+          rawRow: tx as unknown as Record<string, string>,
+        },
+        createdAt: nowTs,
+        updatedAt: nowTs,
+      };
+
+      await addDoc(collection(db, "transactions"), transactionDoc);
+    }
+
+    // Update source with last sync time
+    await updateDoc(doc(db, "sources", sourceId), {
+      "apiConfig.lastSyncAt": nowTs,
+      updatedAt: nowTs,
+    });
+
+    console.log(`Imported ${transactions.length} transactions for source ${sourceId}`);
+  } catch (error) {
+    console.error("Initial sync error:", error);
   }
 }

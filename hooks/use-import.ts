@@ -296,11 +296,11 @@ export function useImport(source: TransactionSource | null) {
           continue;
         }
 
-        // Generate dedupe hash
+        // Generate dedupe hash (use sourceId as fallback for sources without IBAN like credit cards)
         const hash = await generateDedupeHash(
           parsedDate,
           parsedAmount,
-          source.iban,
+          source.iban ?? source.id,
           referenceValue
         );
 

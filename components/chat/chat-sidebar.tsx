@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { MessageSquare, Send, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,9 @@ import { ConfirmationCard } from "./confirmation-card";
 import { ChatTabs } from "./chat-tabs";
 import { NotificationsList } from "./notifications-list";
 
+const MIN_SIDEBAR_WIDTH = 280;
+const MAX_SIDEBAR_WIDTH = 600;
+
 export function ChatSidebar() {
   const {
     messages,
@@ -21,6 +24,8 @@ export function ChatSidebar() {
     startNewSession,
     isSidebarOpen,
     toggleSidebar,
+    sidebarWidth,
+    setSidebarWidth,
     activeTab,
     setActiveTab,
     notifications,
@@ -29,6 +34,52 @@ export function ChatSidebar() {
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const currentWidthRef = useRef(sidebarWidth);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Keep currentWidthRef in sync with sidebarWidth
+  useEffect(() => {
+    currentWidthRef.current = sidebarWidth;
+  }, [sidebarWidth]);
+
+  // Handle resize start
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    resizeRef.current = { startX: e.clientX, startWidth: sidebarWidth };
+  }, [sidebarWidth]);
+
+  // Handle resize drag and end
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!resizeRef.current || !panelRef.current) return;
+      // For left sidebar: dragging right (positive delta) increases width
+      const delta = e.clientX - resizeRef.current.startX;
+      const newWidth = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, resizeRef.current.startWidth + delta));
+      // Update DOM directly during drag - no React re-render
+      panelRef.current.style.width = `${newWidth}px`;
+      currentWidthRef.current = newWidth;
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      // Commit to state only on drag end
+      setSidebarWidth(currentWidthRef.current);
+      resizeRef.current = null;
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing, setSidebarWidth]);
 
   // Scroll to bottom helper
   const scrollToBottom = () => {
@@ -91,13 +142,15 @@ export function ChatSidebar() {
 
       {/* Sidebar */}
       <div
+        ref={panelRef}
         className={cn(
-          "fixed left-0 top-0 z-40 h-full w-80 transform border-r bg-background transition-transform duration-300 ease-in-out",
+          "fixed left-0 top-0 z-40 h-full transform bg-background transition-transform duration-300 ease-in-out flex",
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
+        style={{ width: sidebarWidth }}
         onClick={handleSidebarClick}
       >
-        <div className="flex h-full flex-col">
+        <div className="flex h-full flex-col flex-1 border-r">
           {/* Header with Tabs */}
           <ChatTabs
             activeTab={activeTab}
@@ -171,6 +224,14 @@ export function ChatSidebar() {
             </>
           )}
         </div>
+        {/* Resize handle - on right side for left sidebar */}
+        <div
+          className={cn(
+            "w-1 cursor-col-resize bg-border hover:bg-primary/20 active:bg-primary/30 flex-shrink-0",
+            isResizing && "bg-primary/30"
+          )}
+          onMouseDown={handleResizeStart}
+        />
       </div>
 
       {/* Overlay for mobile */}
@@ -179,6 +240,11 @@ export function ChatSidebar() {
           className="fixed inset-0 z-30 bg-black/20 md:hidden"
           onClick={toggleSidebar}
         />
+      )}
+
+      {/* Prevent text selection while resizing */}
+      {isResizing && (
+        <div className="fixed inset-0 z-50 cursor-col-resize" />
       )}
     </>
   );

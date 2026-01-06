@@ -3,22 +3,25 @@ import { db } from "@/lib/firebase/config";
 
 /**
  * Generate a deduplication hash for a transaction.
- * Uses date (as ISO string) + amount (as string) + source IBAN + reference.
+ * Uses date (as ISO string) + amount (as string) + source identifier + reference.
+ * For sources with IBAN, uses normalized IBAN. For sources without (e.g. credit cards),
+ * uses sourceId as fallback.
  */
 export async function generateDedupeHash(
   date: Date,
   amount: number,
-  sourceIban: string,
+  sourceIdentifier: string,
   reference: string | null
 ): Promise<string> {
   // Normalize inputs
   const dateStr = date.toISOString().split("T")[0]; // YYYY-MM-DD
   const amountStr = amount.toString();
-  const ibanNormalized = normalizeIban(sourceIban);
+  // sourceIdentifier can be IBAN (normalized) or sourceId
+  const identifierNormalized = sourceIdentifier.replace(/\s+/g, "").toUpperCase();
   const refNormalized = (reference || "").trim().toUpperCase();
 
   // Create string to hash
-  const input = `${dateStr}|${amountStr}|${ibanNormalized}|${refNormalized}`;
+  const input = `${dateStr}|${amountStr}|${identifierNormalized}|${refNormalized}`;
 
   // Generate SHA-256 hash
   const hash = await sha256(input);
@@ -69,8 +72,10 @@ export function isValidIban(iban: string): boolean {
 
 /**
  * Format IBAN for display (with spaces every 4 characters)
+ * Returns "—" if IBAN is not provided
  */
-export function formatIban(iban: string): string {
+export function formatIban(iban: string | undefined | null): string {
+  if (!iban) return "—";
   const normalized = normalizeIban(iban);
   return normalized.replace(/(.{4})/g, "$1 ").trim();
 }

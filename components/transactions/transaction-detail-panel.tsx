@@ -1,8 +1,16 @@
 "use client";
 
-import { useCallback, useState, useEffect } from "react";
-import { format } from "date-fns";
-import { X, ChevronUp, ChevronDown, Pencil, Check } from "lucide-react";
+import { useCallback, useState, useMemo } from "react";
+import { useDropzone } from "react-dropzone";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { X, ChevronUp, ChevronDown, Upload, Loader2, History } from "lucide-react";
+import { storage, db } from "@/lib/firebase/config";
+import {
+  createFile,
+  connectFileToTransaction,
+  checkFileDuplicate,
+  OperationsContext,
+} from "@/lib/operations";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
 import { TransactionDetails } from "@/components/sidebar/transaction-details";
@@ -10,19 +18,17 @@ import { TransactionFilesSection } from "@/components/transactions/transaction-f
 import { TransactionHistory } from "@/components/sidebar/transaction-history";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { UserPartner, GlobalPartner, PartnerFormData } from "@/types/partner";
-import { cn } from "@/lib/utils";
 
-// Consistent field row component
-function FieldRow({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
-  return (
-    <div className={cn("flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4", className)}>
-      <span className="text-sm text-muted-foreground shrink-0 sm:w-32">{label}</span>
-      <span className="text-sm">{children}</span>
-    </div>
-  );
-}
+// Constants for file upload
+const MOCK_USER_ID = "dev-user-123";
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const ACCEPTED_TYPES = {
+  "image/jpeg": [".jpg", ".jpeg"],
+  "image/png": [".png"],
+  "image/webp": [".webp"],
+  "application/pdf": [".pdf"],
+};
 
 interface TransactionDetailPanelProps {
   transaction: Transaction;
@@ -55,32 +61,6 @@ export function TransactionDetailPanel({
   onRemovePartner,
   onCreatePartner,
 }: TransactionDetailPanelProps) {
-
-  // Cost description editing state
-  const [isEditingDescription, setIsEditingDescription] = useState(false);
-  const [description, setDescription] = useState(transaction.description || "");
-  const [isSaving, setIsSaving] = useState(false);
-
-  // Update local state when transaction changes
-  useEffect(() => {
-    setDescription(transaction.description || "");
-    setIsEditingDescription(false);
-  }, [transaction.id, transaction.description]);
-
-  const handleSaveDescription = async () => {
-    setIsSaving(true);
-    try {
-      const trimmedDescription = description.trim() || null;
-      await onUpdate({
-        description: trimmedDescription,
-        isComplete: (transaction.fileIds?.length || 0) > 0 && !!trimmedDescription,
-      });
-      setIsEditingDescription(false);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   // Handler for assigning a partner to the transaction
   const handleAssignPartner = useCallback(
     async (
@@ -107,8 +87,141 @@ export function TransactionDetailPanel({
     [onCreatePartner]
   );
 
+  // File upload state
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Edit history expanded state
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+
+  // Operations context for file operations
+  const ctx: OperationsContext = useMemo(
+    () => ({ db, userId: MOCK_USER_ID }),
+    []
+  );
+
+  // Calculate SHA-256 hash of file content for duplicate detection
+  const calculateFileHash = useCallback(async (file: File): Promise<string> => {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }, []);
+
+  // Handle file drop - upload and connect to transaction
+  const handleFileDrop = useCallback(
+    async (acceptedFiles: File[]) => {
+      if (acceptedFiles.length === 0) return;
+
+      const file = acceptedFiles[0];
+      setUploading(true);
+      setUploadError(null);
+
+      try {
+        // Calculate hash for duplicate detection
+        const contentHash = await calculateFileHash(file);
+
+        // Check for duplicate
+        const existingFile = await checkFileDuplicate(ctx, contentHash);
+        if (existingFile) {
+          throw new Error(`Duplicate: "${existingFile.fileName}" already exists`);
+        }
+
+        // Create storage path
+        const timestamp = Date.now();
+        const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+        const storagePath = `files/${MOCK_USER_ID}/${timestamp}_${sanitizedName}`;
+
+        // Upload to Firebase Storage
+        const storageRef = ref(storage, storagePath);
+        const uploadTask = uploadBytesResumable(storageRef, file);
+
+        // Wait for upload to complete
+        await new Promise<void>((resolve, reject) => {
+          uploadTask.on(
+            "state_changed",
+            null,
+            (err) => reject(err),
+            () => resolve()
+          );
+        });
+
+        // Get download URL
+        const downloadUrl = await getDownloadURL(storageRef);
+
+        // Create file record in Firestore
+        const fileId = await createFile(ctx, {
+          fileName: file.name,
+          fileType: file.type,
+          fileSize: file.size,
+          storagePath,
+          downloadUrl,
+          contentHash,
+        });
+
+        // Connect file to transaction
+        await connectFileToTransaction(ctx, fileId, transaction.id, "manual");
+      } catch (err) {
+        console.error("File upload failed:", err);
+        setUploadError(err instanceof Error ? err.message : "Upload failed");
+      } finally {
+        setUploading(false);
+      }
+    },
+    [ctx, calculateFileHash, transaction.id]
+  );
+
+  // Configure dropzone
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop: handleFileDrop,
+    accept: ACCEPTED_TYPES,
+    maxSize: MAX_FILE_SIZE,
+    multiple: false,
+    noClick: true,
+    noKeyboard: true,
+    disabled: uploading,
+  });
+
   return (
-    <div className="h-full flex flex-col bg-background overflow-hidden">
+    <div {...getRootProps()} className="h-full flex flex-col bg-background overflow-hidden relative">
+      <input {...getInputProps()} />
+
+      {/* Drag overlay - matches files page styling */}
+      {isDragActive && (
+        <div className="absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center pointer-events-none">
+          <div className="bg-background rounded-lg p-6 shadow-lg text-center">
+            <Upload className="h-12 w-12 mx-auto text-primary mb-2" />
+            <p className="text-lg font-medium">Drop file to upload</p>
+            <p className="text-sm text-muted-foreground">PDF, JPG, PNG, or WebP up to 10MB</p>
+          </div>
+        </div>
+      )}
+
+      {/* Uploading overlay */}
+      {uploading && (
+        <div className="absolute inset-0 z-50 bg-background/80 flex items-center justify-center pointer-events-none">
+          <div className="bg-background rounded-lg p-6 shadow-lg text-center">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto text-primary mb-2" />
+            <p className="text-sm font-medium">Uploading...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Upload error toast */}
+      {uploadError && (
+        <div className="absolute top-4 left-4 right-4 z-50 bg-destructive/10 border border-destructive text-destructive px-4 py-3 rounded-lg flex items-center gap-2">
+          <X className="h-4 w-4 flex-shrink-0" />
+          <span className="text-sm flex-1">{uploadError}</span>
+          <button
+            onClick={() => setUploadError(null)}
+            className="p-1 hover:bg-destructive/20 rounded"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Header with navigation and close button */}
       <div className="flex items-center justify-between py-3 border-b px-2">
         <h2 className="text-lg font-semibold pl-2">Transaction Details</h2>
@@ -160,121 +273,54 @@ export function TransactionDetailPanel({
           />
 
           {/* Files Section */}
-          <div className="border-t pt-3 mt-3 -mx-4 px-4 space-y-3">
-            <TransactionFilesSection transaction={transaction} />
-
-          {/* Cost Description */}
-          {isEditingDescription ? (
-            <div className="space-y-2">
-              <FieldRow label="Cost Desc.">
-                <div className="flex-1 flex gap-2 items-center">
-                  <Input
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="For tax purposes..."
-                    className="h-7 text-sm"
-                    autoFocus
-                  />
-                  <Button
-                    size="sm"
-                    onClick={handleSaveDescription}
-                    disabled={isSaving}
-                    className="h-7 px-2"
-                  >
-                    <Check className="h-3 w-3" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setDescription(transaction.description || "");
-                      setIsEditingDescription(false);
-                    }}
-                    disabled={isSaving}
-                    className="h-7 px-2"
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
-              </FieldRow>
-            </div>
-          ) : (
-            <FieldRow label="Cost Desc.">
-              {transaction.description ? (
-                <span className="inline-flex items-center gap-2">
-                  {transaction.description}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsEditingDescription(true)}
-                    className="h-5 px-1 text-muted-foreground"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </Button>
-                </span>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsEditingDescription(true)}
-                  className="h-7 px-3"
-                >
-                  <Pencil className="h-3 w-3 mr-1" />
-                  Add
-                </Button>
-              )}
-            </FieldRow>
-          )}
-          </div>
-
-          {/* Metadata Section */}
-          <div className="border-t pt-3 mt-3 -mx-4 px-4 space-y-3">
-            <h3 className="text-sm font-medium mb-2">Metadata</h3>
-
-            {transaction.reference && (
-              <FieldRow label="Reference">
-                {transaction.reference}
-              </FieldRow>
-            )}
-
-            {transaction.partnerIban && (
-              <FieldRow label="Partner IBAN">
-                {transaction.partnerIban}
-              </FieldRow>
-            )}
-
-            <FieldRow label="Dedupe Hash">
-              <span className="truncate max-w-[200px]" title={transaction.dedupeHash}>
-                {transaction.dedupeHash.slice(0, 16)}...
-              </span>
-            </FieldRow>
-
-            {transaction.importJobId && (
-              <FieldRow label="Import Job">
-                {transaction.importJobId.slice(0, 8)}...
-              </FieldRow>
-            )}
-
-            <FieldRow label="Created">
-              {format(transaction.createdAt.toDate(), "MMM d, yyyy HH:mm")}
-            </FieldRow>
-
-            <FieldRow label="Updated">
-              {format(transaction.updatedAt.toDate(), "MMM d, yyyy HH:mm")}
-            </FieldRow>
-          </div>
-
-          {/* Edit History Section - at the bottom */}
           <div className="border-t pt-3 mt-3 -mx-4 px-4">
+            <TransactionFilesSection transaction={transaction} />
+          </div>
+        </div>
+      </ScrollArea>
+
+      {/* Sticky footer with Edit History button */}
+      <div className="border-t px-4 py-2 bg-background">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowHistoryPanel(true)}
+          className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
+        >
+          <History className="h-4 w-4" />
+          <span>Edit History</span>
+        </Button>
+      </div>
+
+      {/* Full-panel Edit History overlay */}
+      {showHistoryPanel && (
+        <div className="absolute inset-0 z-40 bg-background flex flex-col">
+          {/* Header */}
+          <div className="flex items-center justify-between py-3 border-b px-4">
+            <h2 className="text-lg font-semibold">Edit History</h2>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowHistoryPanel(false)}
+              className="h-8 w-8"
+            >
+              <X className="h-4 w-4" />
+              <span className="sr-only">Close history</span>
+            </Button>
+          </div>
+
+          {/* History content */}
+          <ScrollArea className="flex-1 px-4 py-4">
             <TransactionHistory
               transactionId={transaction.id}
               onRollback={() => {
                 // Trigger a refresh of the transaction data
               }}
+              expandedByDefault
             />
-          </div>
+          </ScrollArea>
         </div>
-      </ScrollArea>
+      )}
     </div>
   );
 }
