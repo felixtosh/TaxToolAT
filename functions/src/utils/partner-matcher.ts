@@ -166,7 +166,8 @@ export function globMatch(pattern: string, text: string): boolean {
 /** Base pattern interface (used by both global and user partners) */
 export interface MatchPattern {
   pattern: string;
-  field: "partner" | "name";
+  /** DEPRECATED: field is ignored, patterns match all text fields combined */
+  field?: "partner" | "name";
   confidence: number;
 }
 
@@ -282,36 +283,26 @@ function matchSinglePartner(
   }
 
   // 2. Pattern match - works for both learnedPatterns (user) and patterns (global)
-  // Check multiple fields with decreasing confidence
+  // Combine all text fields for matching (no field-specific penalties)
   const allPatterns: MatchPattern[] = [
     ...(partner.learnedPatterns || []),
     ...(partner.patterns || []),
   ];
 
+  const textToMatch = [transaction.name, transaction.partner, transaction.reference]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
   for (const p of allPatterns) {
-    const fieldsToCheck = [
-      // Primary field (specified in pattern)
-      { value: p.field === "partner" ? transaction.partner : transaction.name, penalty: 0 },
-      // Secondary field (the other one)
-      { value: p.field === "partner" ? transaction.name : transaction.partner, penalty: 10 },
-      // Reference field (bank reference)
-      { value: transaction.reference, penalty: 15 },
-    ];
-
-    for (const field of fieldsToCheck) {
-      if (!field.value) continue;
-
-      if (globMatch(p.pattern, field.value)) {
-        const adjustedConfidence = Math.max(50, p.confidence - field.penalty);
-        candidates.push({
-          partnerId: partner.id,
-          partnerType,
-          partnerName: partner.name,
-          confidence: adjustedConfidence,
-          source: "pattern",
-        });
-        break; // Found match for this pattern, move to next
-      }
+    if (globMatch(p.pattern, textToMatch)) {
+      candidates.push({
+        partnerId: partner.id,
+        partnerType,
+        partnerName: partner.name,
+        confidence: p.confidence, // Use pattern confidence directly, no penalty
+        source: "pattern",
+      });
     }
   }
 

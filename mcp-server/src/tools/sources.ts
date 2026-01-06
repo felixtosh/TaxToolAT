@@ -9,10 +9,15 @@ import {
   doc,
   updateDoc,
   addDoc,
+  deleteDoc,
+  writeBatch,
   Timestamp,
 } from "firebase/firestore";
 import { OperationsContext } from "../types.js";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
+
+const IMPORTS_COLLECTION = "imports";
+const TRANSACTIONS_COLLECTION = "transactions";
 
 const SOURCES_COLLECTION = "sources";
 
@@ -92,7 +97,7 @@ export const sourceToolDefinitions: Tool[] = [
   },
   {
     name: "delete_source",
-    description: "Soft-delete a bank account/source (marks as inactive)",
+    description: "Delete a bank account/source and all associated imports and transactions",
     inputSchema: {
       type: "object",
       properties: {
@@ -228,13 +233,70 @@ export async function registerSourceTools(
         };
       }
 
-      await updateDoc(docRef, {
-        isActive: false,
-        updatedAt: Timestamp.now(),
-      });
+      const BATCH_SIZE = 500;
+      let deletedImports = 0;
+      let deletedTransactions = 0;
+
+      // 1. Find and delete all imports for this source (cascade to their transactions)
+      const importsQuery = query(
+        collection(ctx.db, IMPORTS_COLLECTION),
+        where("sourceId", "==", sourceId),
+        where("userId", "==", ctx.userId)
+      );
+      const importsSnapshot = await getDocs(importsQuery);
+
+      for (const importDoc of importsSnapshot.docs) {
+        // Delete transactions for this import
+        const txQuery = query(
+          collection(ctx.db, TRANSACTIONS_COLLECTION),
+          where("importJobId", "==", importDoc.id),
+          where("userId", "==", ctx.userId)
+        );
+        const txSnapshot = await getDocs(txQuery);
+
+        for (let i = 0; i < txSnapshot.docs.length; i += BATCH_SIZE) {
+          const batch = writeBatch(ctx.db);
+          const chunk = txSnapshot.docs.slice(i, i + BATCH_SIZE);
+          for (const txDoc of chunk) {
+            batch.delete(txDoc.ref);
+            deletedTransactions++;
+          }
+          await batch.commit();
+        }
+
+        // Delete the import record
+        await deleteDoc(importDoc.ref);
+        deletedImports++;
+      }
+
+      // 2. Delete any orphaned transactions (without importJobId)
+      const orphanedTxQuery = query(
+        collection(ctx.db, TRANSACTIONS_COLLECTION),
+        where("sourceId", "==", sourceId),
+        where("userId", "==", ctx.userId)
+      );
+      const orphanedTxSnapshot = await getDocs(orphanedTxQuery);
+
+      for (let i = 0; i < orphanedTxSnapshot.docs.length; i += BATCH_SIZE) {
+        const batch = writeBatch(ctx.db);
+        const chunk = orphanedTxSnapshot.docs.slice(i, i + BATCH_SIZE);
+        for (const txDoc of chunk) {
+          batch.delete(txDoc.ref);
+          deletedTransactions++;
+        }
+        await batch.commit();
+      }
+
+      // 3. Delete the source document
+      await deleteDoc(docRef);
 
       return {
-        content: [{ type: "text", text: `Deleted source ${sourceId}` }],
+        content: [
+          {
+            type: "text",
+            text: `Deleted source ${sourceId} (${deletedImports} imports, ${deletedTransactions} transactions)`,
+          },
+        ],
       };
     }
 

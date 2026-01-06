@@ -24,6 +24,10 @@ export default function SourcesPage() {
     router.push(`/sources/${source.id}/import`);
   };
 
+  const handleConnectClick = (source: TransactionSource) => {
+    router.push(`/sources/connect?sourceId=${source.id}`);
+  };
+
   return (
     <div className="container mx-auto px-4 py-6">
       <div className="flex items-center justify-between mb-6">
@@ -58,6 +62,7 @@ export default function SourcesPage() {
         loading={loading}
         onSourceClick={handleSourceClick}
         onImportClick={handleImportClick}
+        onConnectClick={handleConnectClick}
       />
 
       <AddSourceDialog

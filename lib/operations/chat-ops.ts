@@ -285,7 +285,7 @@ export function serializeMessagesForSDK(
     id: m.id,
     role: m.role,
     content: m.content,
-    createdAt: m.createdAt?.toDate(),
+    createdAt: m.createdAt instanceof Date ? m.createdAt : m.createdAt?.toDate(),
   }));
 }
 

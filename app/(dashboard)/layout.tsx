@@ -2,13 +2,20 @@
 
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { FileSpreadsheet, Receipt, Building2, Users, Settings } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { ChatProvider, ChatSidebar, useChat } from "@/components/chat";
 
 const navItems = [
   { href: "/transactions", label: "Transactions", icon: Receipt },
+  { href: "/files", label: "Files", icon: Files },
   { href: "/sources", label: "Accounts", icon: Building2 },
   { href: "/partners", label: "Partners", icon: Users },
 ];
@@ -56,11 +63,27 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
             <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
               Dev Mode
             </span>
-            <Button variant="ghost" size="icon" asChild>
-              <Link href="/admin/partners">
-                <Settings className="h-4 w-4" />
-              </Link>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <Link href="/admin/partners" className="flex items-center gap-2">
+                    <Globe className="h-4 w-4" />
+                    Global Partners
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/admin/usage" className="flex items-center gap-2">
+                    <Activity className="h-4 w-4" />
+                    AI Usage
+                  </Link>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
       </header>
 

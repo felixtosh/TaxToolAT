@@ -1,5 +1,34 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
+import { initializeApp, getApps } from "firebase/app";
+import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
+import { logAIUsageToFirestore } from "@/lib/ai/usage-logger";
+
+// Initialize Firebase for server-side
+const firebaseConfig = {
+  apiKey: "AIzaSyDhxXMbHgaD1z9n0bkuVaSRmmiCrbNL-l4",
+  authDomain: "taxstudio-f12fb.firebaseapp.com",
+  projectId: "taxstudio-f12fb",
+  storageBucket: "taxstudio-f12fb.firebasestorage.app",
+  messagingSenderId: "534848611676",
+  appId: "1:534848611676:web:8a3d1ede57c65b7e884d99",
+};
+
+const app = getApps().length === 0 ? initializeApp(firebaseConfig, "lookup-company") : getApps().find(a => a.name === "lookup-company") || initializeApp(firebaseConfig, "lookup-company");
+const db = getFirestore(app);
+
+// Connect to Firestore emulator in development
+let emulatorConnected = false;
+if (process.env.NODE_ENV === "development" && !emulatorConnected) {
+  try {
+    connectFirestoreEmulator(db, "localhost", 8080);
+    emulatorConnected = true;
+  } catch {
+    // Already connected
+  }
+}
+
+const MOCK_USER_ID = "dev-user-123";
 
 interface CompanyInfo {
   name?: string;
@@ -48,7 +77,7 @@ async function fetchPageContent(url: string): Promise<string | null> {
   }
 }
 
-// Extract company info from page content using Claude
+// Extract company info from page content using Claude (Haiku for structured extraction)
 async function extractFromContent(
   anthropic: Anthropic,
   content: string,
@@ -56,7 +85,7 @@ async function extractFromContent(
 ): Promise<CompanyInfo | null> {
   try {
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-3-5-haiku-20241022", // Using Haiku for structured JSON extraction
       max_tokens: 1024,
       messages: [
         {
@@ -89,6 +118,15 @@ Return ONLY a JSON object with this structure (include only fields you found):
 If no company info found, return {}. Return ONLY the JSON, no explanation.`,
         },
       ],
+    });
+
+    // Log AI usage
+    await logAIUsageToFirestore(db, MOCK_USER_ID, {
+      function: "companyLookup",
+      model: "claude-3-5-haiku-20241022",
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+      metadata: { webSearchUsed: false },
     });
 
     const text =
@@ -164,6 +202,15 @@ Return ONLY the JSON, no explanation.`,
     ],
   });
 
+  // Log AI usage
+  await logAIUsageToFirestore(db, MOCK_USER_ID, {
+    function: "companyLookup",
+    model: "claude-sonnet-4-20250514",
+    inputTokens: response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
+    metadata: { webSearchUsed: true },
+  });
+
   let jsonText = "";
   for (const block of response.content) {
     if (block.type === "text") {
@@ -234,6 +281,15 @@ Include only fields you found from official sources. If nothing found, return {}
 Return ONLY the JSON, no explanation.`,
       },
     ],
+  });
+
+  // Log AI usage
+  await logAIUsageToFirestore(db, MOCK_USER_ID, {
+    function: "companyLookup",
+    model: "claude-sonnet-4-20250514",
+    inputTokens: response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
+    metadata: { webSearchUsed: true },
   });
 
   let jsonText = "";

@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import Anthropic from "@anthropic-ai/sdk";
+import { logAIUsage } from "../utils/ai-usage-logger";
 
 const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 
@@ -261,6 +262,7 @@ export const matchColumns = onCall<MatchColumnsRequest>(
     secrets: [anthropicApiKey],
   },
   async (request): Promise<MatchColumnsResponse> => {
+    const userId = request.auth?.uid || "dev-user-123";
     const { headers, sampleRows } = request.data;
 
     // Validate input
@@ -281,6 +283,14 @@ export const matchColumns = onCall<MatchColumnsRequest>(
         model: "claude-3-5-haiku-20241022",
         max_tokens: 1024,
         messages: [{ role: "user", content: prompt }],
+      });
+
+      // Log AI usage
+      await logAIUsage(userId, {
+        function: "columnMatching",
+        model: "claude-3-5-haiku-20241022",
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
       });
 
       // Extract text from response

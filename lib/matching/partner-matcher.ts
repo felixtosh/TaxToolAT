@@ -333,10 +333,8 @@ export function matchTransactionsBatch(
  * Only checks learned patterns - no IBAN, name, or website matching
  * Use this for instant UI suggestions without server calls
  *
- * Patterns check multiple fields with decreasing confidence:
- * - Primary field (specified): full confidence
- * - Secondary field (other of partner/name): -10% confidence
- * - Reference field: -15% confidence
+ * Patterns match against combined text from all fields (name, partner, reference)
+ * with no field-specific penalties - confidence is used as-is.
  */
 export function matchTransactionByPattern(
   transaction: Transaction,
@@ -345,56 +343,36 @@ export function matchTransactionByPattern(
 ): PartnerMatchResult | null {
   if (transaction.partnerId) return null; // Already assigned
 
+  // Combine all text fields for matching (no field-specific penalties)
+  const textToMatch = [transaction.name, transaction.partner, transaction.reference]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (!textToMatch) return null;
+
   let bestMatch: PartnerMatchResult | null = null;
 
   for (const partner of partners) {
     if (!partner.learnedPatterns || partner.learnedPatterns.length === 0) continue;
 
     for (const lp of partner.learnedPatterns) {
-      // Build list of fields to check with confidence penalties
-      const fieldsToCheck: Array<{ value: string | null; penalty: number; name: string }> = [
-        // Primary field (specified in pattern)
-        {
-          value: lp.field === "partner" ? transaction.partner : transaction.name,
-          penalty: 0,
-          name: lp.field
-        },
-        // Secondary field (the other one)
-        {
-          value: lp.field === "partner" ? transaction.name : transaction.partner,
-          penalty: 10,
-          name: lp.field === "partner" ? "name" : "partner"
-        },
-        // Reference field (bank reference)
-        {
-          value: transaction.reference,
-          penalty: 15,
-          name: "reference"
-        },
-      ];
-
       if (debug) {
-        console.log(`  Pattern "${lp.pattern}" (${lp.field} field, ${lp.confidence}%):`);
+        console.log(`  Pattern "${lp.pattern}" (${lp.confidence}%):`);
       }
 
-      for (const field of fieldsToCheck) {
-        if (!field.value) continue;
-
-        if (globMatch(lp.pattern, field.value)) {
-          const adjustedConfidence = Math.max(50, lp.confidence - field.penalty);
-          if (debug) {
-            console.log(`    → MATCH on ${field.name}="${field.value}" (${adjustedConfidence}%${field.penalty > 0 ? ` = ${lp.confidence}%-${field.penalty}%` : ""})`);
-          }
-          if (!bestMatch || adjustedConfidence > bestMatch.confidence) {
-            bestMatch = {
-              partnerId: partner.id,
-              partnerType: "user",
-              partnerName: partner.name,
-              confidence: adjustedConfidence,
-              source: "pattern",
-            };
-          }
-          break; // Found match for this pattern, move to next pattern
+      if (globMatch(lp.pattern, textToMatch)) {
+        if (debug) {
+          console.log(`    → MATCH on text="${textToMatch}" (${lp.confidence}%)`);
+        }
+        if (!bestMatch || lp.confidence > bestMatch.confidence) {
+          bestMatch = {
+            partnerId: partner.id,
+            partnerType: "user",
+            partnerName: partner.name,
+            confidence: lp.confidence,
+            source: "pattern",
+          };
         }
       }
     }

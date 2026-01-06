@@ -282,15 +282,15 @@ export function useImport(source: TransactionSource | null) {
           continue;
         }
 
-        // Parse date
-        const parsedDate = parseDate(dateValue, dateFormat);
+        // Parse date (dateValue is validated above)
+        const parsedDate = parseDate(dateValue!, dateFormat);
         if (!parsedDate) {
           errors.push({ row: i + 1, message: `Invalid date: ${dateValue}`, rowData: row });
           continue;
         }
 
-        // Parse amount
-        const parsedAmount = parseAmount(amountValue, amountConfig);
+        // Parse amount (amountValue is validated above)
+        const parsedAmount = parseAmount(amountValue!, amountConfig);
         if (parsedAmount === null) {
           errors.push({ row: i + 1, message: `Invalid amount: ${amountValue}`, rowData: row });
           continue;
@@ -314,18 +314,24 @@ export function useImport(source: TransactionSource | null) {
           amount: parsedAmount,
           currency: source.currency,
           _original: {
-            date: dateValue,
-            amount: amountValue,
+            date: dateValue!,
+            amount: amountValue!,
             rawRow: row,
           },
-          name: nameValue,
+          name: nameValue || partnerValue || "",
           description: null,
           partner: partnerValue,
           reference: referenceValue,
           partnerIban: partnerIbanValue,
           dedupeHash: hash,
-          receiptIds: [],
+          fileIds: [],
           isComplete: false,
+          // Partner fields - explicitly null for Firestore query compatibility
+          partnerId: null,
+          partnerType: null,
+          partnerMatchedBy: null,
+          partnerMatchConfidence: null,
+          partnerSuggestions: [],
           importJobId,
           userId: MOCK_USER_ID,
           createdAt: now,

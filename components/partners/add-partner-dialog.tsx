@@ -151,7 +151,8 @@ export function AddPartnerDialog({
   mode = "add",
 }: AddPartnerDialogProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isLookingUp, setIsLookingUp] = useState(false);
+  const [isLookingUpUrl, setIsLookingUpUrl] = useState(false);
+  const [isLookingUpName, setIsLookingUpName] = useState(false);
   const [lookupStatus, setLookupStatus] = useState<string | null>(null);
   const [lookupResult, setLookupResult] = useState<{
     found: string[];
@@ -193,7 +194,7 @@ export function AddPartnerDialog({
   const handleLookup = async () => {
     if (!lookupUrl.trim()) return;
 
-    setIsLookingUp(true);
+    setIsLookingUpUrl(true);
     setLookupResult(null);
     setLookupStatus("Searching for company info...");
 
@@ -253,7 +254,7 @@ export function AddPartnerDialog({
       setLookupStatus(null);
       setLookupResult({ found: [], notFound: ["Lookup failed"] });
     } finally {
-      setIsLookingUp(false);
+      setIsLookingUpUrl(false);
     }
   };
 
@@ -261,7 +262,7 @@ export function AddPartnerDialog({
   const handleNameLookup = async () => {
     if (!formData.name.trim()) return;
 
-    setIsLookingUp(true);
+    setIsLookingUpName(true);
     setLookupResult(null);
     setLookupStatus("Searching for company info...");
 
@@ -320,7 +321,7 @@ export function AddPartnerDialog({
       setLookupStatus(null);
       setLookupResult({ found: [], notFound: ["Lookup failed"] });
     } finally {
-      setIsLookingUp(false);
+      setIsLookingUpName(false);
     }
   };
 
@@ -332,6 +333,15 @@ export function AddPartnerDialog({
     const websiteDomain = lookupUrl.trim()
       ? lookupUrl.trim().replace(/^https?:\/\//, "").split("/")[0]
       : undefined;
+
+    // Parse address string into PartnerAddress object
+    let address: PartnerAddress | undefined;
+    if (formData.address.trim() || formData.country.trim()) {
+      address = {
+        street: formData.address.trim() || undefined,
+        country: formData.country.trim() || "",
+      };
+    }
 
     setIsSubmitting(true);
     try {
@@ -347,6 +357,7 @@ export function AddPartnerDialog({
           .map((i) => i.trim())
           .filter(Boolean),
         website: websiteDomain,
+        address,
         country: formData.country.trim() || undefined,
         notes: formData.notes.trim() || undefined,
       });
@@ -441,11 +452,11 @@ export function AddPartnerDialog({
                       variant="outline"
                       size="sm"
                       onClick={handleLookup}
-                      disabled={isLookingUp || !lookupUrl.trim()}
+                      disabled={isLookingUpUrl || !lookupUrl.trim()}
                       className="px-3"
-                      title={isLookingUp ? lookupStatus || "Looking up..." : "Look up company info"}
+                      title={isLookingUpUrl ? lookupStatus || "Looking up..." : "Look up company info"}
                     >
-                      {isLookingUp ? (
+                      {isLookingUpUrl ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <Sparkles className="h-4 w-4" />
@@ -453,40 +464,16 @@ export function AddPartnerDialog({
                     </Button>
                   </div>
 
-                  {/* Status while loading */}
-                  {isLookingUp && lookupStatus && (
+                  {/* Status while loading URL */}
+                  {isLookingUpUrl && lookupStatus && (
                     <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1.5">
                       <Loader2 className="h-3 w-3 animate-spin" />
                       {lookupStatus}
                     </p>
                   )}
 
-                  {/* Result summary after lookup */}
-                  {!isLookingUp && lookupResult && (
-                    <div className="mt-1.5 text-xs">
-                      {lookupResult.found.length > 0 && (
-                        <p className="text-green-600 dark:text-green-500 flex items-center gap-1">
-                          <Check className="h-3 w-3" />
-                          Found: {lookupResult.found.join(", ")}
-                        </p>
-                      )}
-                      {lookupResult.notFound.length > 0 && lookupResult.found.length > 0 && (
-                        <p className="text-muted-foreground flex items-center gap-1 mt-0.5">
-                          <AlertCircle className="h-3 w-3" />
-                          Not found: {lookupResult.notFound.join(", ")}
-                        </p>
-                      )}
-                      {lookupResult.found.length === 0 && (
-                        <p className="text-amber-600 dark:text-amber-500 flex items-center gap-1">
-                          <AlertCircle className="h-3 w-3" />
-                          No company info found
-                        </p>
-                      )}
-                    </div>
-                  )}
-
                   {/* Helper text when no lookup has been done */}
-                  {!isLookingUp && !lookupResult && (
+                  {!isLookingUpUrl && !lookupResult && (
                     <p className="text-xs text-muted-foreground mt-1">
                       Press Enter or click sparkle to auto-fill company info
                     </p>
@@ -519,17 +506,49 @@ export function AddPartnerDialog({
                       variant="outline"
                       size="sm"
                       onClick={handleNameLookup}
-                      disabled={isLookingUp || !formData.name.trim()}
+                      disabled={isLookingUpName || !formData.name.trim()}
                       className="px-3"
                       title="Search for company info by name"
                     >
-                      {isLookingUp ? (
+                      {isLookingUpName ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <Sparkles className="h-4 w-4" />
                       )}
                     </Button>
                   </div>
+
+                  {/* Status while loading name */}
+                  {isLookingUpName && lookupStatus && (
+                    <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1.5">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {lookupStatus}
+                    </p>
+                  )}
+
+                  {/* Result summary after lookup */}
+                  {!(isLookingUpUrl || isLookingUpName) && lookupResult && (
+                    <div className="mt-1.5 text-xs">
+                      {lookupResult.found.length > 0 && (
+                        <p className="text-green-600 dark:text-green-500 flex items-center gap-1">
+                          <Check className="h-3 w-3" />
+                          Found: {lookupResult.found.join(", ")}
+                        </p>
+                      )}
+                      {lookupResult.notFound.length > 0 && lookupResult.found.length > 0 && (
+                        <p className="text-muted-foreground flex items-center gap-1 mt-0.5">
+                          <AlertCircle className="h-3 w-3" />
+                          Not found: {lookupResult.notFound.join(", ")}
+                        </p>
+                      )}
+                      {lookupResult.found.length === 0 && (
+                        <p className="text-amber-600 dark:text-amber-500 flex items-center gap-1">
+                          <AlertCircle className="h-3 w-3" />
+                          No company info found
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Patterns */}

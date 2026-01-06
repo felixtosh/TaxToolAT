@@ -44,9 +44,37 @@ export interface TransactionSource {
 }
 
 /**
- * Configuration for API-based transaction connectors (future implementation)
+ * Configuration for API-based transaction connectors
  */
-export interface ApiConnectorConfig {
+export type ApiConnectorConfig = GoCardlessConnectorConfig | GenericConnectorConfig;
+
+/**
+ * GoCardless-specific connector configuration
+ */
+export interface GoCardlessConnectorConfig {
+  provider: "gocardless";
+  /** GoCardless requisition ID */
+  requisitionId: string;
+  /** GoCardless account ID */
+  accountId: string;
+  /** Institution identifier */
+  institutionId: string;
+  institutionName: string;
+  institutionLogo?: string;
+  /** When the agreement expires (90 days PSD2 limit) */
+  agreementExpiresAt: Timestamp;
+  /** Last successful sync */
+  lastSyncAt?: Timestamp;
+  /** Last sync error if any */
+  lastSyncError?: string;
+  /** Sync schedule (cron expression) */
+  syncSchedule?: string;
+}
+
+/**
+ * Generic connector configuration for future providers
+ */
+export interface GenericConnectorConfig {
   /** Provider identifier: "plaid" | "nordigen" | "custom" */
   provider: string;
 

@@ -57,10 +57,10 @@ export interface Transaction {
 
   // === Classification ===
 
-  /** Array of receipt document IDs */
-  receiptIds: string[];
+  /** Array of connected file IDs (many-to-many relationship). Optional for backward compatibility. */
+  fileIds?: string[];
 
-  /** Whether transaction has receipt + description */
+  /** Whether transaction has file + description */
   isComplete: boolean;
 
   // === Metadata ===
@@ -72,18 +72,20 @@ export interface Transaction {
   userId: string;
 
   // === Partner Matching ===
+  // Note: These use `| null` (not just `?`) so Firestore queries work.
+  // Firestore `where("partnerId", "==", null)` only matches explicit null, not missing fields.
 
   /** Linked partner ID (if matched) */
-  partnerId?: string;
+  partnerId?: string | null;
 
   /** Whether linked partner is global or user-specific */
-  partnerType?: "global" | "user";
+  partnerType?: "global" | "user" | null;
 
   /** Match confidence (0-100) */
-  partnerMatchConfidence?: number;
+  partnerMatchConfidence?: number | null;
 
   /** How the partner was matched: auto (≥95%), manual, or suggestion click */
-  partnerMatchedBy?: "auto" | "manual" | "suggestion";
+  partnerMatchedBy?: "auto" | "manual" | "suggestion" | null;
 
   /** Top 3 partner suggestions (stored for UI display) */
   partnerSuggestions?: Array<{
@@ -113,8 +115,8 @@ export interface TransactionFilters {
   /** Date range end */
   dateTo?: Date;
 
-  /** Filter by receipt attachment status */
-  hasReceipt?: boolean;
+  /** Filter by file attachment status */
+  hasFile?: boolean;
 
   /** Filter by completion status */
   isComplete?: boolean;

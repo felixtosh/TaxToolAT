@@ -102,8 +102,12 @@ export interface MatchPattern {
   /** Glob-style pattern, e.g., "google*cloud*" or "*netflix*" */
   pattern: string;
 
-  /** Which transaction field to match against */
-  field: "partner" | "name";
+  /**
+   * Which transaction field to match against (DEPRECATED)
+   * Patterns now match against all text fields combined, no penalties.
+   * Kept optional for backward compatibility with existing patterns.
+   */
+  field?: "partner" | "name";
 
   /** Confidence score (0-100) */
   confidence: number;
@@ -118,6 +122,24 @@ export interface LearnedPattern extends MatchPattern {
 
   /** Transaction IDs that contributed to learning this pattern */
   sourceTransactionIds: string[];
+}
+
+/**
+ * Record of a transaction that was manually removed from this partner.
+ * Used as negative training signal (false positive) for pattern learning.
+ */
+export interface ManualRemoval {
+  /** ID of the transaction that was removed */
+  transactionId: string;
+
+  /** When the removal happened */
+  removedAt: Timestamp;
+
+  /** Snapshot of transaction's partner field (for pattern learning) */
+  partner: string | null;
+
+  /** Snapshot of transaction's name field (for pattern learning) */
+  name: string;
 }
 
 /**
@@ -165,6 +187,13 @@ export interface UserPartner {
 
   /** When patterns were last updated */
   patternsUpdatedAt?: Timestamp;
+
+  /**
+   * Transactions user explicitly removed from this partner.
+   * Used as negative training signal (false positives) for pattern learning.
+   * Capped at 50 entries.
+   */
+  manualRemovals?: ManualRemoval[];
 
   /** Active status (soft delete) */
   isActive: boolean;

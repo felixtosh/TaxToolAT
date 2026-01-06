@@ -164,50 +164,26 @@ export function AddSourceDialog({ open, onClose, onAdd }: AddSourceDialogProps) 
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Currency
-              </label>
-              <Select
-                value={formData.currency}
-                onValueChange={(value) =>
-                  setFormData((f) => ({ ...f, currency: value }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="EUR">EUR - Euro</SelectItem>
-                  <SelectItem value="USD">USD - US Dollar</SelectItem>
-                  <SelectItem value="GBP">GBP - British Pound</SelectItem>
-                  <SelectItem value="CHF">CHF - Swiss Franc</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Import Type
-              </label>
-              <Select
-                value={formData.type}
-                onValueChange={(value: "csv" | "api") =>
-                  setFormData((f) => ({ ...f, type: value }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="csv">CSV Upload</SelectItem>
-                  <SelectItem value="api" disabled>
-                    API (Coming Soon)
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          <div>
+            <label className="text-sm font-medium mb-1.5 block">
+              Currency
+            </label>
+            <Select
+              value={formData.currency}
+              onValueChange={(value) =>
+                setFormData((f) => ({ ...f, currency: value }))
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="EUR">EUR - Euro</SelectItem>
+                <SelectItem value="USD">USD - US Dollar</SelectItem>
+                <SelectItem value="GBP">GBP - British Pound</SelectItem>
+                <SelectItem value="CHF">CHF - Swiss Franc</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="flex gap-2 pt-4">

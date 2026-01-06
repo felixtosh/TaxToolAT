@@ -8,10 +8,15 @@ const db = getFirestore();
 // Types
 // ============================================================================
 
+interface ManualRemoval {
+  transactionId: string;
+}
+
 interface PartnerWithPatterns {
   id: string;
   name: string;
   learnedPatterns: LearnedPattern[];
+  manualRemovalIds: Set<string>;
 }
 
 interface MatchResult {
@@ -25,6 +30,7 @@ interface MatchResult {
 // ============================================================================
 
 function findBestMatch(
+  txId: string,
   txPartner: string | null,
   txName: string,
   txReference: string | null,
@@ -32,30 +38,31 @@ function findBestMatch(
 ): MatchResult | null {
   let bestMatch: MatchResult | null = null;
 
+  // Combine all text fields for matching (no field-specific penalties)
+  const textToMatch = [txName, txPartner, txReference]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (!textToMatch) return null;
+
   for (const partner of partners) {
     if (!partner.learnedPatterns || partner.learnedPatterns.length === 0) continue;
 
+    // CRITICAL: Skip this partner if user manually removed this transaction from it
+    if (partner.manualRemovalIds.has(txId)) {
+      continue;
+    }
+
     for (const pattern of partner.learnedPatterns) {
-      // Check multiple fields with decreasing confidence
-      const fieldsToCheck = [
-        { value: pattern.field === "partner" ? txPartner : txName, penalty: 0 },
-        { value: pattern.field === "partner" ? txName : txPartner, penalty: 10 },
-        { value: txReference, penalty: 15 },
-      ];
-
-      for (const field of fieldsToCheck) {
-        if (!field.value) continue;
-
-        if (globMatch(pattern.pattern, field.value)) {
-          const adjustedConfidence = Math.max(50, pattern.confidence - field.penalty);
-          if (!bestMatch || adjustedConfidence > bestMatch.confidence) {
-            bestMatch = {
-              partnerId: partner.id,
-              partnerName: partner.name,
-              confidence: adjustedConfidence,
-            };
-          }
-          break; // Found match for this pattern
+      if (globMatch(pattern.pattern, textToMatch)) {
+        // Use pattern confidence directly, no penalty
+        if (!bestMatch || pattern.confidence > bestMatch.confidence) {
+          bestMatch = {
+            partnerId: partner.id,
+            partnerName: partner.name,
+            confidence: pattern.confidence,
+          };
         }
       }
     }
@@ -87,11 +94,19 @@ export async function applyAllPatternsToTransactions(userId: string): Promise<{ 
       const data = doc.data();
       return data.learnedPatterns && data.learnedPatterns.length > 0;
     })
-    .map((doc) => ({
-      id: doc.id,
-      name: doc.data().name,
-      learnedPatterns: doc.data().learnedPatterns,
-    }));
+    .map((doc) => {
+      const data = doc.data();
+      // Build set of transaction IDs that user manually removed from this partner
+      const manualRemovals: ManualRemoval[] = data.manualRemovals || [];
+      const manualRemovalIds = new Set(manualRemovals.map((r) => r.transactionId));
+
+      return {
+        id: doc.id,
+        name: data.name,
+        learnedPatterns: data.learnedPatterns,
+        manualRemovalIds,
+      };
+    });
 
   if (partners.length === 0) {
     console.log("No partners with patterns found");
@@ -129,7 +144,7 @@ export async function applyAllPatternsToTransactions(userId: string): Promise<{ 
 
       for (const doc of unassigned) {
         const data = doc.data();
-        const match = findBestMatch(data.partner || null, data.name || "", data.reference || null, partners);
+        const match = findBestMatch(doc.id, data.partner || null, data.name || "", data.reference || null, partners);
 
         if (match && match.confidence >= 89) {
           updates.update(doc.ref, {

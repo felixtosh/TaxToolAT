@@ -8,7 +8,7 @@ const SEARCH_STORAGE_KEY = "transactionSearch";
  */
 interface StoredFilters {
   importId?: string;
-  hasReceipt?: boolean;
+  hasFile?: boolean;
   dateFrom?: string; // ISO string
   dateTo?: string; // ISO string
   amountType?: "income" | "expense" | "all";
@@ -24,7 +24,7 @@ export function saveFiltersToStorage(
 ): void {
   const stored: StoredFilters = {};
   if (filters.importId) stored.importId = filters.importId;
-  if (filters.hasReceipt !== undefined) stored.hasReceipt = filters.hasReceipt;
+  if (filters.hasFile !== undefined) stored.hasFile = filters.hasFile;
   if (filters.dateFrom) stored.dateFrom = filters.dateFrom.toISOString();
   if (filters.dateTo) stored.dateTo = filters.dateTo.toISOString();
   if (filters.amountType && filters.amountType !== "all")
@@ -50,7 +50,7 @@ export function loadFiltersFromStorage(): {
     if (stored) {
       const parsed: StoredFilters = JSON.parse(stored);
       if (parsed.importId) filters.importId = parsed.importId;
-      if (parsed.hasReceipt !== undefined) filters.hasReceipt = parsed.hasReceipt;
+      if (parsed.hasFile !== undefined) filters.hasFile = parsed.hasFile;
       if (parsed.dateFrom) filters.dateFrom = new Date(parsed.dateFrom);
       if (parsed.dateTo) filters.dateTo = new Date(parsed.dateTo);
       if (parsed.amountType) filters.amountType = parsed.amountType;
@@ -74,8 +74,8 @@ export function buildSearchParamsString(
 
   if (search) params.set("search", search);
   if (filters.importId) params.set("importId", filters.importId);
-  if (filters.hasReceipt !== undefined)
-    params.set("hasReceipt", String(filters.hasReceipt));
+  if (filters.hasFile !== undefined)
+    params.set("hasFile", String(filters.hasFile));
   if (filters.dateFrom) params.set("dateFrom", filters.dateFrom.toISOString());
   if (filters.dateTo) params.set("dateTo", filters.dateTo.toISOString());
   if (filters.amountType && filters.amountType !== "all")
@@ -92,7 +92,7 @@ export function hasUrlParams(searchParams: URLSearchParams): boolean {
   return (
     searchParams.has("search") ||
     searchParams.has("importId") ||
-    searchParams.has("hasReceipt") ||
+    searchParams.has("hasFile") ||
     searchParams.has("dateFrom") ||
     searchParams.has("dateTo") ||
     searchParams.has("amountType") ||
@@ -111,9 +111,9 @@ export function parseFiltersFromUrl(
   const importId = searchParams.get("importId");
   if (importId) filters.importId = importId;
 
-  const hasReceipt = searchParams.get("hasReceipt");
-  if (hasReceipt === "true") filters.hasReceipt = true;
-  if (hasReceipt === "false") filters.hasReceipt = false;
+  const hasFile = searchParams.get("hasFile");
+  if (hasFile === "true") filters.hasFile = true;
+  if (hasFile === "false") filters.hasFile = false;
 
   const dateFrom = searchParams.get("dateFrom");
   if (dateFrom) filters.dateFrom = new Date(dateFrom);
@@ -142,8 +142,8 @@ export function buildFilterUrl(
   const params = new URLSearchParams();
 
   if (filters.importId) params.set("importId", filters.importId);
-  if (filters.hasReceipt !== undefined)
-    params.set("hasReceipt", String(filters.hasReceipt));
+  if (filters.hasFile !== undefined)
+    params.set("hasFile", String(filters.hasFile));
   if (filters.dateFrom) params.set("dateFrom", filters.dateFrom.toISOString());
   if (filters.dateTo) params.set("dateTo", filters.dateTo.toISOString());
   if (filters.amountType && filters.amountType !== "all")
@@ -160,7 +160,7 @@ export function buildFilterUrl(
 export function hasActiveFilters(filters: TransactionFilters): boolean {
   return !!(
     filters.importId ||
-    filters.hasReceipt !== undefined ||
+    filters.hasFile !== undefined ||
     filters.dateFrom ||
     filters.dateTo ||
     (filters.amountType && filters.amountType !== "all") ||
@@ -174,7 +174,7 @@ export function hasActiveFilters(filters: TransactionFilters): boolean {
 export function countActiveFilters(filters: TransactionFilters): number {
   let count = 0;
   if (filters.importId) count++;
-  if (filters.hasReceipt !== undefined) count++;
+  if (filters.hasFile !== undefined) count++;
   if (filters.dateFrom || filters.dateTo) count++;
   if (filters.amountType && filters.amountType !== "all") count++;
   if (filters.sourceId) count++;

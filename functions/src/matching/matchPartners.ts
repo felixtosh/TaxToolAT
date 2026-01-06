@@ -46,8 +46,21 @@ export const matchPartners = onCall<MatchPartnersRequest>(
       db.collection("globalPartners").where("isActive", "==", true).get(),
     ]);
 
+    // Build map of partnerId -> Set<transactionIds> for manual removals
+    const partnerManualRemovals = new Map<string, Set<string>>();
+
     const userPartners: PartnerData[] = userPartnersSnapshot.docs.map((doc) => {
       const data = doc.data();
+
+      // Track manual removals for this partner
+      const removals = data.manualRemovals || [];
+      if (removals.length > 0) {
+        partnerManualRemovals.set(
+          doc.id,
+          new Set(removals.map((r: { transactionId: string }) => r.transactionId))
+        );
+      }
+
       return {
         id: doc.id,
         name: data.name,
@@ -129,9 +142,24 @@ export const matchPartners = onCall<MatchPartnersRequest>(
       processed++;
 
       if (matches.length > 0) {
-        const topMatch = matches[0];
+        // Filter out matches where user explicitly removed this transaction from the partner
+        const filteredMatches = matches.filter((m) => {
+          const removals = partnerManualRemovals.get(m.partnerId);
+          if (removals && removals.has(txDoc.id)) {
+            console.log(`  -> Skipping partner ${m.partnerId} - tx ${txDoc.id} was manually removed`);
+            return false;
+          }
+          return true;
+        });
+
+        if (filteredMatches.length === 0) {
+          // All matches were filtered out due to manual removals
+          continue;
+        }
+
+        const topMatch = filteredMatches[0];
         const updates: Record<string, unknown> = {
-          partnerSuggestions: matches.map((m) => ({
+          partnerSuggestions: filteredMatches.map((m) => ({
             partnerId: m.partnerId,
             partnerType: m.partnerType,
             confidence: m.confidence,

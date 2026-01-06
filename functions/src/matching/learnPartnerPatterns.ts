@@ -2,6 +2,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import Anthropic from "@anthropic-ai/sdk";
+import { logAIUsage } from "../utils/ai-usage-logger";
 
 const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 const db = getFirestore();
@@ -22,9 +23,20 @@ interface CollisionTransaction {
   assignedPartnerName: string;
 }
 
+/**
+ * Record of a transaction that was manually removed from this partner.
+ * Used as negative training signal (false positive) for pattern learning.
+ */
+interface ManualRemovalRecord {
+  transactionId: string;
+  partner: string | null;
+  name: string;
+}
+
 interface LearnedPattern {
   pattern: string;
-  field: "partner" | "name";
+  /** DEPRECATED: field is ignored, patterns match all text fields combined */
+  field?: "partner" | "name";
   confidence: number;
   createdAt: Timestamp;
   sourceTransactionIds: string[];
@@ -33,7 +45,6 @@ interface LearnedPattern {
 interface AIPatternResponse {
   patterns: Array<{
     pattern: string;
-    field: "partner" | "name";
     confidence: number;
     reasoning: string;
   }>;
@@ -43,7 +54,6 @@ interface LearnPatternsResponse {
   patternsLearned: number;
   patterns: Array<{
     pattern: string;
-    field: string;
     confidence: number;
   }>;
 }
@@ -56,7 +66,8 @@ function buildPrompt(
   partnerName: string,
   partnerAliases: string[],
   assignedTransactions: Array<{ id: string; partner: string | null; name: string }>,
-  collisionTransactions: CollisionTransaction[]
+  collisionTransactions: CollisionTransaction[],
+  manualRemovals: ManualRemovalRecord[] = []
 ): string {
   const assignedList = assignedTransactions
     .map((tx) => `- partner: "${tx.partner || "(empty)"}" | name: "${tx.name}"`)
@@ -68,6 +79,12 @@ function buildPrompt(
     .map((tx) => `- partner: "${tx.partner || "(empty)"}" | name: "${tx.name}" → assigned to: ${tx.assignedPartnerName}`)
     .join("\n");
 
+  // Manual removals - transactions user explicitly said are NOT this partner
+  const removalsList = manualRemovals
+    .slice(0, 20) // Limit to 20 samples
+    .map((tx) => `- partner: "${tx.partner || "(empty)"}" | name: "${tx.name}"`)
+    .join("\n");
+
   return `You are analyzing bank transaction data to learn matching patterns for a partner.
 
 ## Partner Information
@@ -77,6 +94,10 @@ Existing Aliases: ${partnerAliases.length > 0 ? partnerAliases.join(", ") : "(no
 ## MUST MATCH - Transactions assigned to this partner
 Your patterns MUST match ALL of these:
 ${assignedList || "(no transactions yet)"}
+
+## MUST NOT MATCH - FALSE POSITIVES (user explicitly removed these)
+These transactions were auto-matched but the user said they are WRONG. Your patterns MUST NOT match any of these:
+${removalsList || "(none)"}
 
 ## MUST NOT MATCH - Transactions assigned to OTHER partners
 Your patterns must NOT match ANY of these (collision check):
@@ -111,16 +132,11 @@ Confidence Guidelines:
 - 70-84: More specific pattern needed to avoid collisions
 - Below 70: Don't suggest patterns this weak
 
-For each pattern, specify:
-- "field": which transaction field to match ("partner" for bank statement name, "name" for description)
-- Use "partner" field when possible as it's more reliable
-
 Respond ONLY with valid JSON (no markdown, no explanation):
 {
   "patterns": [
     {
       "pattern": "google*",
-      "field": "partner",
       "confidence": 95,
       "reasoning": "All Google transactions start with 'google' and no collisions with other partners"
     }
@@ -170,12 +186,15 @@ interface RematchResult {
 /**
  * Re-match unassigned transactions against newly learned patterns
  * Auto-assigns if pattern confidence >= 89%
+ *
+ * IMPORTANT: Skips transactions that are in manualRemovals (user explicitly removed them)
  */
 async function rematchUnassignedTransactions(
   userId: string,
   partnerId: string,
   partnerName: string,
-  learnedPatterns: LearnedPattern[]
+  learnedPatterns: LearnedPattern[],
+  manualRemovalIds: Set<string> = new Set()
 ): Promise<RematchResult> {
   // Get ALL user transactions and filter client-side
   // (Firestore "== null" doesn't match missing/undefined fields)
@@ -194,6 +213,7 @@ async function rematchUnassignedTransactions(
   });
 
   console.log(`Found ${unassignedDocs.length} unassigned transactions to check`);
+  console.log(`Excluding ${manualRemovalIds.size} transactions that user manually removed`);
 
   if (unassignedDocs.length === 0) return { matchedCount: 0, matchedTransactions: [] };
 
@@ -203,26 +223,29 @@ async function rematchUnassignedTransactions(
 
   for (const txDoc of unassignedDocs) {
     const txData = txDoc.data();
+
+    // CRITICAL: Skip transactions that user explicitly removed from this partner
+    if (manualRemovalIds.has(txDoc.id)) {
+      console.log(`  -> SKIPPING tx ${txDoc.id} - user manually removed it from this partner`);
+      continue;
+    }
+
     let bestMatch: { confidence: number; pattern: string } | null = null;
 
-    // Check each pattern against multiple fields with decreasing confidence
+    // Combine all text fields for matching (no field-specific penalties)
+    const textToMatch = [txData.name, txData.partner, txData.reference]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    if (!textToMatch) continue;
+
+    // Check each pattern against combined text
     for (const pattern of learnedPatterns) {
-      const fieldsToCheck = [
-        { value: pattern.field === "partner" ? txData.partner : txData.name, penalty: 0, name: pattern.field },
-        { value: pattern.field === "partner" ? txData.name : txData.partner, penalty: 10, name: "secondary" },
-        { value: txData.reference, penalty: 15, name: "reference" },
-      ];
-
-      for (const field of fieldsToCheck) {
-        if (!field.value) continue;
-
-        if (globMatch(pattern.pattern, field.value)) {
-          const adjustedConfidence = Math.max(50, pattern.confidence - field.penalty);
-          console.log(`  -> MATCH: "${pattern.pattern}" on ${field.name}="${field.value}" (${adjustedConfidence}%)`);
-          if (!bestMatch || adjustedConfidence > bestMatch.confidence) {
-            bestMatch = { confidence: adjustedConfidence, pattern: pattern.pattern };
-          }
-          break; // Found match for this pattern
+      if (globMatch(pattern.pattern, textToMatch)) {
+        console.log(`  -> MATCH: "${pattern.pattern}" on text="${textToMatch}" (${pattern.confidence}%)`);
+        if (!bestMatch || pattern.confidence > bestMatch.confidence) {
+          bestMatch = { confidence: pattern.confidence, pattern: pattern.pattern };
         }
       }
     }
@@ -270,6 +293,95 @@ async function rematchUnassignedTransactions(
 }
 
 // ============================================================================
+// Helper: Cascade unassign auto-matched transactions
+// ============================================================================
+
+/**
+ * Unassign auto-matched transactions that no longer match the current patterns.
+ * Called when patterns are updated or cleared to maintain consistency.
+ *
+ * @param userId - The user ID
+ * @param partnerId - The partner ID whose auto-assignments to check
+ * @param newPatterns - The new patterns to check against (empty = unassign all)
+ * @returns Number of transactions that were unassigned
+ */
+async function cascadeUnassignTransactions(
+  userId: string,
+  partnerId: string,
+  newPatterns: LearnedPattern[] = []
+): Promise<number> {
+  // Get all transactions assigned to this partner
+  // We can't use compound queries with "in" on partnerMatchedBy because we also need
+  // to handle legacy transactions without the field, so we fetch all and filter client-side
+  const allAssignedSnapshot = await db
+    .collection("transactions")
+    .where("userId", "==", userId)
+    .where("partnerId", "==", partnerId)
+    .limit(500)
+    .get();
+
+  // Filter to only auto-matched OR legacy transactions without partnerMatchedBy
+  // Manual/suggestion assignments are user decisions and should NOT be cascade-unassigned
+  const autoAssignedDocs = allAssignedSnapshot.docs.filter((doc) => {
+    const data = doc.data();
+    const matchedBy = data.partnerMatchedBy;
+    // Include: "auto", null, undefined, or missing field (legacy)
+    return matchedBy === "auto" || !matchedBy;
+  });
+
+  if (autoAssignedDocs.length === 0) return 0;
+
+  console.log(`Found ${autoAssignedDocs.length} auto/legacy-assigned transactions to re-evaluate (of ${allAssignedSnapshot.size} total)`);
+
+  const batch = db.batch();
+  let unassignedCount = 0;
+
+  for (const txDoc of autoAssignedDocs) {
+    const txData = txDoc.data();
+
+    // If we have new patterns, check if transaction still matches
+    if (newPatterns.length > 0) {
+      // Combine all text fields for matching (no field-specific penalties)
+      const textToMatch = [txData.name, txData.partner, txData.reference]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      let stillMatches = false;
+
+      for (const pattern of newPatterns) {
+        if (textToMatch && globMatch(pattern.pattern, textToMatch)) {
+          // Check confidence meets threshold (no penalty)
+          if (pattern.confidence >= 89) {
+            stillMatches = true;
+            break;
+          }
+        }
+      }
+
+      if (stillMatches) continue; // Keep this assignment
+    }
+
+    // Unassign transaction (no matching pattern or patterns are empty)
+    batch.update(txDoc.ref, {
+      partnerId: null,
+      partnerType: null,
+      partnerMatchedBy: null,
+      partnerMatchConfidence: null,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    unassignedCount++;
+  }
+
+  if (unassignedCount > 0) {
+    await batch.commit();
+    console.log(`Cascade-unassigned ${unassignedCount} transactions that no longer match patterns`);
+  }
+
+  return unassignedCount;
+}
+
+// ============================================================================
 // Cloud Function
 // ============================================================================
 
@@ -309,11 +421,25 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
       const partnerName = partnerData.name || "";
       const partnerAliases: string[] = partnerData.aliases || [];
 
-      // 2. Fetch all transactions assigned to this partner
+      // Get manual removals (false positives) from partner data
+      const manualRemovals: ManualRemovalRecord[] = (partnerData.manualRemovals || []).map(
+        (r: { transactionId: string; partner: string | null; name: string }) => ({
+          transactionId: r.transactionId,
+          partner: r.partner || null,
+          name: r.name || "",
+        })
+      );
+
+      console.log(`Found ${manualRemovals.length} manual removals (false positives) for partner ${partnerId}`);
+
+      // 2. Fetch ONLY manually assigned transactions (not auto-assigned)
+      // This ensures patterns are only learned from explicit user decisions,
+      // not from previous auto-matches (which could create feedback loops)
       const assignedSnapshot = await db
         .collection("transactions")
         .where("userId", "==", userId)
         .where("partnerId", "==", partnerId)
+        .where("partnerMatchedBy", "in", ["manual", "suggestion"])
         .limit(50) // Limit to avoid huge prompts
         .get();
 
@@ -326,9 +452,41 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
         };
       });
 
-      // Skip if no transactions assigned yet
+      // Handle case where no manual/suggestion assignments remain
       if (assignedTransactions.length === 0) {
-        console.log(`No transactions assigned to partner ${partnerId}, skipping pattern learning`);
+        console.log(`No manual assignments for partner ${partnerId}, clearing patterns and cascade-unassigning`);
+
+        // Clear all learned patterns from the partner
+        await partnerDoc.ref.update({
+          learnedPatterns: [],
+          patternsUpdatedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        // Cascade-unassign all auto-assigned transactions (passing empty patterns)
+        const unassignedCount = await cascadeUnassignTransactions(userId, partnerId, []);
+
+        // Create notification if any transactions were unassigned
+        if (unassignedCount > 0) {
+          try {
+            await db.collection(`users/${userId}/notifications`).add({
+              type: "patterns_cleared",
+              title: `Patterns cleared for ${partnerName}`,
+              message: `All manual assignments removed. ${unassignedCount} auto-matched transaction${unassignedCount !== 1 ? "s were" : " was"} unassigned.`,
+              createdAt: FieldValue.serverTimestamp(),
+              readAt: null,
+              context: {
+                partnerId,
+                partnerName,
+                unassignedCount,
+              },
+            });
+            console.log(`Created patterns_cleared notification for ${partnerName}`);
+          } catch (err) {
+            console.error("Failed to create patterns_cleared notification:", err);
+          }
+        }
+
         return { patternsLearned: 0, patterns: [] };
       }
 
@@ -381,12 +539,21 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
 
       // 4. Call Claude to generate patterns
       const client = new Anthropic({ apiKey: anthropicApiKey.value() });
-      const prompt = buildPrompt(partnerName, partnerAliases, assignedTransactions, collisionTransactions);
+      const prompt = buildPrompt(partnerName, partnerAliases, assignedTransactions, collisionTransactions, manualRemovals);
 
       const response = await client.messages.create({
         model: "claude-3-5-haiku-20241022",
         max_tokens: 1024,
         messages: [{ role: "user", content: prompt }],
+      });
+
+      // Log AI usage
+      await logAIUsage(userId, {
+        function: "patternLearning",
+        model: "claude-3-5-haiku-20241022",
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        metadata: { partnerId },
       });
 
       // Extract text from response
@@ -415,10 +582,27 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
       const now = Timestamp.now();
       const transactionIds = assignedTransactions.map((tx) => tx.id);
 
-      // Helper to check collision
-      const hasCollision = (pattern: string, field: "partner" | "name"): CollisionTransaction | null => {
+      // Helper to check collision with other partners
+      const hasCollision = (pattern: string): CollisionTransaction | null => {
         for (const tx of collisionTransactions) {
-          const textToMatch = field === "partner" ? tx.partner : tx.name;
+          const textToMatch = [tx.name, tx.partner]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          if (textToMatch && globMatch(pattern, textToMatch)) {
+            return tx;
+          }
+        }
+        return null;
+      };
+
+      // Helper to check collision with manual removals (false positives)
+      const matchesFalsePositive = (pattern: string): ManualRemovalRecord | null => {
+        for (const tx of manualRemovals) {
+          const textToMatch = [tx.name, tx.partner]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
           if (textToMatch && globMatch(pattern, textToMatch)) {
             return tx;
           }
@@ -430,12 +614,19 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
         .filter((p) => {
           // Validate pattern structure
           if (!p.pattern || typeof p.pattern !== "string") return false;
-          if (!["partner", "name"].includes(p.field)) return false;
           if (typeof p.confidence !== "number" || p.confidence < 50) return false;
 
-          // Server-side collision validation
           const normalizedPattern = p.pattern.toLowerCase().trim();
-          const collision = hasCollision(normalizedPattern, p.field as "partner" | "name");
+
+          // Server-side validation: reject patterns matching false positives
+          const falsePositive = matchesFalsePositive(normalizedPattern);
+          if (falsePositive) {
+            console.log(`REJECTED pattern "${normalizedPattern}" - matches false positive: "${falsePositive.partner || falsePositive.name}"`);
+            return false;
+          }
+
+          // Server-side validation: reject patterns matching other partners
+          const collision = hasCollision(normalizedPattern);
           if (collision) {
             console.log(`REJECTED pattern "${normalizedPattern}" - collides with "${collision.assignedPartnerName}" (tx: ${collision.partner || collision.name})`);
             return false;
@@ -445,7 +636,6 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
         })
         .map((p) => ({
           pattern: p.pattern.toLowerCase().trim(),
-          field: p.field as "partner" | "name",
           confidence: Math.min(100, Math.max(0, Math.round(p.confidence))),
           createdAt: now,
           sourceTransactionIds: transactionIds,
@@ -462,16 +652,26 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
         console.log(`Learned ${learnedPatterns.length} patterns for partner ${partnerId}:`,
           learnedPatterns.map((p) => p.pattern));
 
-        // 6. Re-match unassigned transactions with the new patterns
+        // 6. Cascade-unassign auto-matched transactions that no longer match
+        // This is important when patterns change (e.g., manual assignment removed)
+        const unassignedCount = await cascadeUnassignTransactions(userId, partnerId, learnedPatterns);
+        if (unassignedCount > 0) {
+          console.log(`Cascade-unassigned ${unassignedCount} transactions that no longer match updated patterns`);
+        }
+
+        // 8. Re-match unassigned transactions with the new patterns
+        // IMPORTANT: Pass manualRemovalIds to prevent re-assigning transactions user explicitly removed
+        const manualRemovalIds = new Set(manualRemovals.map((r) => r.transactionId));
         const { matchedCount: autoMatched, matchedTransactions } = await rematchUnassignedTransactions(
           userId,
           partnerId,
           partnerName,
-          learnedPatterns
+          learnedPatterns,
+          manualRemovalIds
         );
         console.log(`Auto-matched ${autoMatched} additional transactions with new patterns`);
 
-        // 7. Create notification for pattern learning
+        // 9. Create notification for pattern learning
         if (autoMatched > 0) {
           try {
             console.log(`Creating notification for user ${userId} - ${autoMatched} transactions matched`);
@@ -502,7 +702,6 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
         patternsLearned: learnedPatterns.length,
         patterns: learnedPatterns.map((p) => ({
           pattern: p.pattern,
-          field: p.field,
           confidence: p.confidence,
         })),
       };
@@ -549,16 +748,28 @@ export async function learnPatternsForPartnersBatch(
         continue;
       }
 
-      // Fetch assigned transactions
+      // Fetch ONLY manually assigned transactions (not auto-assigned)
       const assignedSnapshot = await db
         .collection("transactions")
         .where("userId", "==", userId)
         .where("partnerId", "==", partnerId)
+        .where("partnerMatchedBy", "in", ["manual", "suggestion"])
         .limit(50)
         .get();
 
+      // If no manual/suggestion assignments, clear patterns and cascade-unassign
       if (assignedSnapshot.empty) {
-        console.log(`No transactions assigned to partner ${partnerId}, skipping`);
+        console.log(`No manual assignments for partner ${partnerId}, clearing patterns`);
+
+        // Clear learned patterns
+        await partnerDoc.ref.update({
+          learnedPatterns: [],
+          patternsUpdatedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        // Cascade-unassign all auto-assigned transactions
+        await cascadeUnassignTransactions(userId, partnerId, []);
         continue;
       }
 
@@ -567,6 +778,15 @@ export async function learnPatternsForPartnersBatch(
         partner: doc.data().partner || null,
         name: doc.data().name || "",
       }));
+
+      // Get manual removals (false positives) from partner data
+      const manualRemovals: ManualRemovalRecord[] = (partnerData.manualRemovals || []).map(
+        (r: { transactionId: string; partner: string | null; name: string }) => ({
+          transactionId: r.transactionId,
+          partner: r.partner || null,
+          name: r.name || "",
+        })
+      );
 
       // Fetch collision set
       const allAssignedSnapshot = await db
@@ -618,13 +838,23 @@ export async function learnPatternsForPartnersBatch(
         partnerData.name,
         partnerData.aliases || [],
         assignedTransactions,
-        collisionTransactions
+        collisionTransactions,
+        manualRemovals
       );
 
       const response = await client.messages.create({
         model: "claude-3-5-haiku-20241022",
         max_tokens: 1024,
         messages: [{ role: "user", content: prompt }],
+      });
+
+      // Log AI usage
+      await logAIUsage(userId, {
+        function: "patternLearning",
+        model: "claude-3-5-haiku-20241022",
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        metadata: { partnerId },
       });
 
       const textBlock = response.content.find((block) => block.type === "text");
@@ -650,9 +880,25 @@ export async function learnPatternsForPartnersBatch(
       const now = Timestamp.now();
       const transactionIds = assignedTransactions.map((tx) => tx.id);
 
-      const hasCollision = (pattern: string, field: "partner" | "name"): CollisionTransaction | null => {
+      const hasCollision = (pattern: string): CollisionTransaction | null => {
         for (const tx of collisionTransactions) {
-          const textToMatch = field === "partner" ? tx.partner : tx.name;
+          const textToMatch = [tx.name, tx.partner]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          if (textToMatch && globMatch(pattern, textToMatch)) {
+            return tx;
+          }
+        }
+        return null;
+      };
+
+      const matchesFalsePositive = (pattern: string): ManualRemovalRecord | null => {
+        for (const tx of manualRemovals) {
+          const textToMatch = [tx.name, tx.partner]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
           if (textToMatch && globMatch(pattern, textToMatch)) {
             return tx;
           }
@@ -663,11 +909,18 @@ export async function learnPatternsForPartnersBatch(
       const learnedPatterns: LearnedPattern[] = aiResult.patterns
         .filter((p) => {
           if (!p.pattern || typeof p.pattern !== "string") return false;
-          if (!["partner", "name"].includes(p.field)) return false;
           if (typeof p.confidence !== "number" || p.confidence < 50) return false;
 
           const normalizedPattern = p.pattern.toLowerCase().trim();
-          const collision = hasCollision(normalizedPattern, p.field as "partner" | "name");
+
+          // Check against false positives first
+          const falsePositive = matchesFalsePositive(normalizedPattern);
+          if (falsePositive) {
+            console.log(`REJECTED pattern "${normalizedPattern}" for ${partnerData.name} - matches false positive: "${falsePositive.partner || falsePositive.name}"`);
+            return false;
+          }
+
+          const collision = hasCollision(normalizedPattern);
           if (collision) {
             console.log(`REJECTED pattern "${normalizedPattern}" for ${partnerData.name} - collides with ${collision.assignedPartnerName}`);
             return false;
@@ -676,7 +929,6 @@ export async function learnPatternsForPartnersBatch(
         })
         .map((p) => ({
           pattern: p.pattern.toLowerCase().trim(),
-          field: p.field as "partner" | "name",
           confidence: Math.min(100, Math.max(0, Math.round(p.confidence))),
           createdAt: now,
           sourceTransactionIds: transactionIds,

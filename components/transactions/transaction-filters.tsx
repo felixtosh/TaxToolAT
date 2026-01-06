@@ -42,10 +42,10 @@ export function TransactionFiltersPopover({
 
   const activeFilterCount = countActiveFilters(filters);
 
-  const handleHasReceiptChange = (value: string) => {
+  const handleHasFileChange = (value: string) => {
     onFiltersChange({
       ...filters,
-      hasReceipt: value === "yes" ? true : value === "no" ? false : undefined,
+      hasFile: value === "yes" ? true : value === "no" ? false : undefined,
     });
   };
 
@@ -119,12 +119,12 @@ export function TransactionFiltersPopover({
         </Badge>
       )}
 
-      {filters.hasReceipt !== undefined && (
+      {filters.hasFile !== undefined && (
         <Badge variant="secondary" className="gap-1 h-8">
-          {filters.hasReceipt ? "Has receipt" : "No receipt"}
+          {filters.hasFile ? "Has file" : "No file"}
           <button
             onClick={() =>
-              onFiltersChange({ ...filters, hasReceipt: undefined })
+              onFiltersChange({ ...filters, hasFile: undefined })
             }
             className="ml-1 hover:bg-muted rounded"
           >
@@ -192,26 +192,26 @@ export function TransactionFiltersPopover({
 
             <Separator />
 
-            {/* Receipt filter */}
+            {/* File filter */}
             <div className="space-y-2">
-              <label className="text-sm font-medium">Receipt attached</label>
+              <label className="text-sm font-medium">File attached</label>
               <Select
                 value={
-                  filters.hasReceipt === true
+                  filters.hasFile === true
                     ? "yes"
-                    : filters.hasReceipt === false
+                    : filters.hasFile === false
                       ? "no"
                       : "all"
                 }
-                onValueChange={handleHasReceiptChange}
+                onValueChange={handleHasFileChange}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="All" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="yes">Has receipt</SelectItem>
-                  <SelectItem value="no">No receipt</SelectItem>
+                  <SelectItem value="yes">Has file</SelectItem>
+                  <SelectItem value="no">No file</SelectItem>
                 </SelectContent>
               </Select>
             </div>

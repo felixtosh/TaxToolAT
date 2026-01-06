@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { memo } from "react";
+import { memo, forwardRef, useImperativeHandle } from "react";
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -22,6 +22,10 @@ interface DataTableProps<TData, TValue> {
   data: TData[];
   onRowClick?: (row: TData) => void;
   selectedRowId?: string | null;
+}
+
+export interface DataTableHandle {
+  scrollToIndex: (index: number) => void;
 }
 
 // Memoized row component to prevent unnecessary re-renders
@@ -105,12 +109,15 @@ const VirtualRow = memo(
   }
 ) as <TData extends { id: string }>(props: VirtualRowProps<TData>) => React.ReactElement;
 
-export function DataTable<TData extends { id: string }, TValue>({
-  columns,
-  data,
-  onRowClick,
-  selectedRowId,
-}: DataTableProps<TData, TValue>) {
+function DataTableInner<TData extends { id: string }, TValue>(
+  {
+    columns,
+    data,
+    onRowClick,
+    selectedRowId,
+  }: DataTableProps<TData, TValue>,
+  ref: React.ForwardedRef<DataTableHandle>
+) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
     []
@@ -140,13 +147,20 @@ export function DataTable<TData extends { id: string }, TValue>({
     overscan: 10,
   });
 
-  // Type guard to check if row has receipt info
+  // Expose scrollToIndex method via ref
+  useImperativeHandle(ref, () => ({
+    scrollToIndex: (index: number) => {
+      virtualizer.scrollToIndex(index, { align: "center" });
+    },
+  }), [virtualizer]);
+
+  // Type guard to check if row is a transaction
   const isTransactionRow = (row: TData): row is TData & Transaction => {
-    return "receiptIds" in row && "description" in row;
+    return "description" in row;
   };
 
-  // Column min-widths - must match the number of columns (memoized to prevent re-renders)
-  const columnWidths = React.useMemo(() => ["110px", "220px", "110px", "180px", "50px", "130px"], []);
+  // Column widths - Date, Amount, Description, Partner, File, Account
+  const columnWidths = React.useMemo(() => ["100px", "90px", "210px", "180px", "50px", "130px"], []);
 
   // Stable click handler
   const handleRowClick = React.useCallback((row: TData) => {
@@ -161,7 +175,7 @@ export function DataTable<TData extends { id: string }, TValue>({
             <col key={i} style={{ width }} />
           ))}
         </colgroup>
-        <thead className="sticky top-0 z-10 bg-muted/50">
+        <thead className="sticky top-0 z-10 bg-muted">
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id} className="border-b">
               {headerGroup.headers.map((header, index) => (
@@ -191,7 +205,7 @@ export function DataTable<TData extends { id: string }, TValue>({
               const original = row.original;
               const isComplete =
                 isTransactionRow(original) &&
-                original.receiptIds.length > 0 &&
+                (original.fileIds?.length || 0) > 0 &&
                 !!original.description;
 
               return (
@@ -219,3 +233,11 @@ export function DataTable<TData extends { id: string }, TValue>({
     </div>
   );
 }
+
+// Export with forwardRef - using type assertion for generic component with ref
+export const DataTable = forwardRef(DataTableInner) as <
+  TData extends { id: string },
+  TValue
+>(
+  props: DataTableProps<TData, TValue> & { ref?: React.Ref<DataTableHandle> }
+) => React.ReactElement;

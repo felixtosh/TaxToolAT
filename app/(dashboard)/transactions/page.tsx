@@ -1,7 +1,9 @@
 "use client";
 
 import { Suspense, useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { DataTableHandle } from "@/components/transactions/data-table";
 import { useRouter, useSearchParams } from "next/navigation";
+import { httpsCallable } from "firebase/functions";
 import { TransactionTable } from "@/components/transactions/transaction-table";
 import { TransactionDetailPanel } from "@/components/transactions/transaction-detail-panel";
 import { useTransactions } from "@/hooks/use-transactions";
@@ -9,6 +11,7 @@ import { useSources } from "@/hooks/use-sources";
 import { usePartners } from "@/hooks/use-partners";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
+import { functions } from "@/lib/firebase/config";
 import {
   parseFiltersFromUrl,
   saveFiltersToStorage,
@@ -24,27 +27,40 @@ const PANEL_WIDTH_KEY = "transactionDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 480;
 const MIN_PANEL_WIDTH = 380;
 const MAX_PANEL_WIDTH = 700;
+const HEADER_HEIGHT = 56; // h-14 = 3.5rem = 56px
+const SCROLL_RENDER_DELAY = 150; // ms to wait for virtualized table to render
 
 function TransactionTableFallback() {
   return (
     <div className="h-full flex flex-col overflow-hidden bg-card">
+      {/* Toolbar skeleton */}
       <div className="flex items-center gap-2 px-4 py-2 border-b">
         <Skeleton className="h-9 w-[300px]" />
         <Skeleton className="h-9 w-[100px]" />
       </div>
+      {/* Table header skeleton */}
+      <div className="flex items-center gap-2 px-4 h-10 border-b bg-muted">
+        <Skeleton className="h-4 w-[50px]" />
+        <Skeleton className="h-4 w-[55px]" />
+        <Skeleton className="h-4 w-[80px]" />
+        <Skeleton className="h-4 w-[50px]" />
+        <Skeleton className="h-4 w-[30px]" />
+        <Skeleton className="h-4 w-[55px]" />
+      </div>
+      {/* Table rows skeleton */}
       <div className="flex-1">
         {[...Array(15)].map((_, i) => (
           <div
             key={i}
-            className="flex items-center space-x-4 px-4 py-3 border-b last:border-b-0"
+            className="flex items-center gap-2 px-4 border-b last:border-b-0"
+            style={{ height: 64 }}
           >
-            <Skeleton className="h-4 w-[80px]" />
-            <Skeleton className="h-4 w-[80px]" />
-            <Skeleton className="h-4 w-[200px]" />
-            <Skeleton className="h-4 w-[120px]" />
-            <Skeleton className="h-4 w-[80px]" />
-            <Skeleton className="h-4 w-[60px]" />
-            <Skeleton className="h-4 w-[24px]" />
+            <Skeleton className="h-5 w-[64px]" />
+            <Skeleton className="h-5 w-[64px]" />
+            <Skeleton className="h-5 w-[200px]" />
+            <Skeleton className="h-5 w-[100px] rounded-full" />
+            <Skeleton className="h-4 w-4" />
+            <Skeleton className="h-5 w-[100px]" />
           </div>
         ))}
       </div>
@@ -67,11 +83,18 @@ function TransactionsContent() {
 
   // Restore filters from localStorage on initial mount if no URL params
   const hasRestoredRef = useRef(false);
+  // Track pattern count to detect when new patterns are learned
+  const lastPatternCountRef = useRef(0);
   useEffect(() => {
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
 
-    // Only restore if URL has no filter/search params (id param is fine)
+    // If navigating directly to a transaction (only id param), don't restore filters
+    // This ensures the transaction is visible in the list
+    const hasOnlyIdParam = searchParams.has("id") && !hasUrlParams(searchParams);
+    if (hasOnlyIdParam) return;
+
+    // Only restore if URL has no filter/search params
     if (!hasUrlParams(searchParams)) {
       const { filters: savedFilters, search: savedSearch } =
         loadFiltersFromStorage();
@@ -111,6 +134,7 @@ function TransactionsContent() {
   );
   const panelRef = useRef<HTMLDivElement>(null);
   const currentWidthRef = useRef(panelWidth);
+  const tableRef = useRef<DataTableHandle>(null);
 
   // Get selected transaction ID from URL
   const selectedId = searchParams.get("id");
@@ -231,19 +255,82 @@ function TransactionsContent() {
     }
   }, [currentIndex, filteredTransactions, handleSelectTransaction]);
 
-  // Scroll to selected transaction when it changes from URL
+  // Track previous selectedId to avoid unnecessary scrolls
+  const prevSelectedIdRef = useRef<string | null>(null);
+
+  // Check if element is visible in viewport (below header, above bottom)
+  const isElementInView = useCallback((element: Element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.top >= HEADER_HEIGHT && rect.bottom <= window.innerHeight - 20;
+  }, []);
+
+  // Scroll to a transaction by ID
+  const scrollToTransaction = useCallback((id: string) => {
+    const index = filteredTransactions.findIndex((t) => t.id === id);
+    if (index === -1) return;
+
+    // Use virtualizer to scroll first (ensures row is rendered)
+    tableRef.current?.scrollToIndex(index);
+
+    // Fine-tune with scrollIntoView after virtualized table renders
+    setTimeout(() => {
+      const element = document.querySelector(`[data-transaction-id="${id}"]`);
+      element?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, SCROLL_RENDER_DELAY);
+  }, [filteredTransactions]);
+
+  // Scroll to selected transaction when it changes
   useEffect(() => {
-    if (selectedId && !loading) {
-      setTimeout(() => {
-        const element = document.querySelector(
-          `[data-transaction-id="${selectedId}"]`
-        );
-        if (element) {
-          element.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-      }, 100);
+    if (loading || !selectedId || !filteredTransactions.length) return;
+    if (selectedId === prevSelectedIdRef.current) return;
+
+    prevSelectedIdRef.current = selectedId;
+
+    // Skip scroll if element is already visible
+    const element = document.querySelector(`[data-transaction-id="${selectedId}"]`);
+    if (element && isElementInView(element)) return;
+
+    scrollToTransaction(selectedId);
+  }, [selectedId, loading, filteredTransactions, isElementInView, scrollToTransaction]);
+
+  // Trigger backend matching when patterns change or on initial load
+  useEffect(() => {
+    if (loading || !transactions.length || !partners.length) return;
+
+    // Count total learned patterns across all partners
+    const currentPatternCount = partners.reduce(
+      (sum, p) => sum + (p.learnedPatterns?.length || 0),
+      0
+    );
+
+    // Skip if pattern count hasn't changed (already processed this state)
+    if (currentPatternCount === lastPatternCountRef.current) return;
+
+    // Check if there are unassigned transactions
+    const unassignedCount = transactions.filter(t => !t.partnerId).length;
+    if (unassignedCount === 0) {
+      lastPatternCountRef.current = currentPatternCount;
+      return;
     }
-  }, [selectedId, loading]);
+
+    console.log(`[Partner Matching] Pattern count changed: ${lastPatternCountRef.current} → ${currentPatternCount}, unassigned: ${unassignedCount}`);
+
+    // Update ref to prevent duplicate calls for same pattern count
+    lastPatternCountRef.current = currentPatternCount;
+
+    // Call backend to match all unassigned transactions
+    const matchPartnersFunc = httpsCallable(functions, "matchPartners");
+    matchPartnersFunc({ matchAll: false }) // matchAll: false = only unassigned
+      .then((result) => {
+        const data = result.data as { processed: number; autoMatched: number; withSuggestions: number };
+        console.log(`[Partner Matching] Result: processed=${data.processed}, autoMatched=${data.autoMatched}, suggestions=${data.withSuggestions}`);
+      })
+      .catch((error) => {
+        console.error("Background partner matching failed:", error);
+        // Reset to allow retry
+        lastPatternCountRef.current = 0;
+      });
+  }, [loading, transactions, partners]);
 
   if (loading) {
     return <TransactionTableFallback />;
@@ -257,6 +344,7 @@ function TransactionsContent() {
         style={{ marginRight: selectedTransaction ? panelWidth : 0 }}
       >
         <TransactionTable
+          tableRef={tableRef}
           onSelectTransaction={handleSelectTransaction}
           selectedTransactionId={selectedId}
           searchValue={searchValue}

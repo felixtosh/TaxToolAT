@@ -122,7 +122,12 @@ export async function registerTransactionTools(
         constraints.push(where("isComplete", "==", filters.isComplete));
       }
 
-      if (filters.limit) {
+      // Only apply limit in Firestore if NOT doing client-side filtering
+      // (search, date filters need to scan all results first, then limit)
+      const hasClientSideFilters = filters.search || filters.dateFrom || filters.dateTo ||
+        filters.hasReceipt !== undefined;
+
+      if (filters.limit && !hasClientSideFilters) {
         constraints.push(firestoreLimit(filters.limit));
       }
 
@@ -178,6 +183,11 @@ export async function registerTransactionTools(
           const partner = t.partner?.toLowerCase() || "";
           return name.includes(search) || description.includes(search) || partner.includes(search);
         });
+      }
+
+      // Apply limit AFTER client-side filters
+      if (filters.limit && hasClientSideFilters) {
+        transactions = transactions.slice(0, filters.limit);
       }
 
       // Format for display

@@ -12,7 +12,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import {
   CalendarDays,
-  Receipt,
+  FileText,
   ArrowUpDown,
   X,
   CalendarIcon,
@@ -37,13 +37,13 @@ export function TransactionToolbar({
   importFileName,
 }: TransactionToolbarProps) {
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
-  const [receiptPopoverOpen, setReceiptPopoverOpen] = useState(false);
+  const [filePopoverOpen, setFilePopoverOpen] = useState(false);
   const [typePopoverOpen, setTypePopoverOpen] = useState(false);
   const [showFromCalendar, setShowFromCalendar] = useState(false);
   const [showToCalendar, setShowToCalendar] = useState(false);
 
   const hasDateFilter = filters.dateFrom || filters.dateTo;
-  const hasReceiptFilter = filters.hasReceipt !== undefined;
+  const hasFileFilter = filters.hasFile !== undefined;
   const hasAmountFilter = filters.amountType && filters.amountType !== "all";
 
   const handleDatePresetClick = (preset: string) => {
@@ -86,9 +86,9 @@ export function TransactionToolbar({
     onFiltersChange({ ...filters, dateFrom: undefined, dateTo: undefined });
   };
 
-  const clearReceiptFilter = (e: React.MouseEvent) => {
+  const clearFileFilter = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onFiltersChange({ ...filters, hasReceipt: undefined });
+    onFiltersChange({ ...filters, hasFile: undefined });
   };
 
   const clearAmountFilter = (e: React.MouseEvent) => {
@@ -106,10 +106,10 @@ export function TransactionToolbar({
     return "Date";
   };
 
-  const getReceiptLabel = () => {
-    if (filters.hasReceipt === true) return "Has receipt";
-    if (filters.hasReceipt === false) return "No receipt";
-    return "Receipt";
+  const getFileLabel = () => {
+    if (filters.hasFile === true) return "Has file";
+    if (filters.hasFile === false) return "No file";
+    return "File";
   };
 
   const getAmountLabel = () => {
@@ -266,22 +266,22 @@ export function TransactionToolbar({
         </PopoverContent>
       </Popover>
 
-      {/* Receipt filter */}
-      <Popover open={receiptPopoverOpen} onOpenChange={setReceiptPopoverOpen}>
+      {/* File filter */}
+      <Popover open={filePopoverOpen} onOpenChange={setFilePopoverOpen}>
         <PopoverTrigger asChild>
           <Button
-            variant={hasReceiptFilter ? "secondary" : "outline"}
+            variant={hasFileFilter ? "secondary" : "outline"}
             size="sm"
             className="h-9 gap-2"
           >
-            <Receipt className="h-4 w-4" />
-            <span>{getReceiptLabel()}</span>
-            {hasReceiptFilter && (
+            <FileText className="h-4 w-4" />
+            <span>{getFileLabel()}</span>
+            {hasFileFilter && (
               <span
                 role="button"
                 tabIndex={0}
-                onClick={clearReceiptFilter}
-                onKeyDown={(e) => e.key === "Enter" && clearReceiptFilter(e as unknown as React.MouseEvent)}
+                onClick={clearFileFilter}
+                onKeyDown={(e) => e.key === "Enter" && clearFileFilter(e as unknown as React.MouseEvent)}
                 className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
               >
                 <X className="h-3 w-3" />
@@ -292,37 +292,37 @@ export function TransactionToolbar({
         <PopoverContent className="w-auto p-2" align="start">
           <div className="flex flex-col gap-1">
             <Button
-              variant={filters.hasReceipt === undefined ? "secondary" : "ghost"}
+              variant={filters.hasFile === undefined ? "secondary" : "ghost"}
               size="sm"
               className="justify-start h-8"
               onClick={() => {
-                onFiltersChange({ ...filters, hasReceipt: undefined });
-                setReceiptPopoverOpen(false);
+                onFiltersChange({ ...filters, hasFile: undefined });
+                setFilePopoverOpen(false);
               }}
             >
               All
             </Button>
             <Button
-              variant={filters.hasReceipt === true ? "secondary" : "ghost"}
+              variant={filters.hasFile === true ? "secondary" : "ghost"}
               size="sm"
               className="justify-start h-8"
               onClick={() => {
-                onFiltersChange({ ...filters, hasReceipt: true });
-                setReceiptPopoverOpen(false);
+                onFiltersChange({ ...filters, hasFile: true });
+                setFilePopoverOpen(false);
               }}
             >
-              Has receipt
+              Has file
             </Button>
             <Button
-              variant={filters.hasReceipt === false ? "secondary" : "ghost"}
+              variant={filters.hasFile === false ? "secondary" : "ghost"}
               size="sm"
               className="justify-start h-8"
               onClick={() => {
-                onFiltersChange({ ...filters, hasReceipt: false });
-                setReceiptPopoverOpen(false);
+                onFiltersChange({ ...filters, hasFile: false });
+                setFilePopoverOpen(false);
               }}
             >
-              No receipt
+              No file
             </Button>
           </div>
         </PopoverContent>

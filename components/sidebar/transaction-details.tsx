@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { format } from "date-fns";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { httpsCallable } from "firebase/functions";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
@@ -35,7 +36,7 @@ interface TransactionDetailsProps {
   onAssignPartner: (
     partnerId: string,
     partnerType: "global" | "user",
-    matchedBy: "manual" | "suggestion",
+    matchedBy: "manual" | "suggestion" | "auto",
     confidence?: number
   ) => Promise<void>;
   onRemovePartner: () => Promise<void>;
@@ -51,6 +52,7 @@ export function TransactionDetails({
   onRemovePartner,
   onCreatePartner,
 }: TransactionDetailsProps) {
+  const router = useRouter();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
@@ -83,22 +85,25 @@ export function TransactionDetails({
     }
   }, [transaction.id, assignedPartner, suggestions.length]);
 
-  // Auto-apply high-confidence suggestions (matches server-side behavior)
+  // Auto-apply high-confidence suggestions (>= 89%)
+  // NOTE: This uses "auto" matchedBy because this is automatic, not user-initiated.
+  // Only user clicks should use "suggestion" or "manual".
   useEffect(() => {
     if (assignedPartner || isAssigningPartner) return;
     if (autoAppliedRef.current.has(transaction.id)) return;
 
-    // Find ANY suggestion with high confidence (>= 89%)
     const highConfidenceSuggestion = suggestions.find(
       (s) => shouldAutoApply(s.confidence)
     );
 
     if (highConfidenceSuggestion) {
       autoAppliedRef.current.add(transaction.id);
+      // Use "auto" because this is automatic application, not user clicking a suggestion
+      // This ensures auto-applied matches don't influence pattern learning
       onAssignPartner(
         highConfidenceSuggestion.partnerId,
         highConfidenceSuggestion.partnerType,
-        "suggestion",
+        "auto",
         highConfidenceSuggestion.confidence
       ).catch((error) => {
         console.error("Failed to auto-apply partner:", error);
@@ -124,9 +129,25 @@ export function TransactionDetails({
   const handleRemovePartner = async () => {
     setIsAssigningPartner(true);
     try {
+      // CRITICAL: Add to both refs BEFORE removal to prevent race conditions
+      // 1. autoAppliedRef prevents client-side auto-apply effect from re-assigning
+      // 2. matchedTransactionIds prevents triggering matchPartners on the server
+      autoAppliedRef.current.add(transaction.id);
+      matchedTransactionIds.current.add(transaction.id);
       await onRemovePartner();
+    } catch (error) {
+      // If removal failed, allow matching/auto-apply again
+      autoAppliedRef.current.delete(transaction.id);
+      matchedTransactionIds.current.delete(transaction.id);
+      throw error;
     } finally {
       setIsAssigningPartner(false);
+    }
+  };
+
+  const handleNavigateToPartner = () => {
+    if (transaction.partnerId) {
+      router.push(`/partners?id=${transaction.partnerId}`);
     }
   };
 
@@ -205,7 +226,9 @@ export function TransactionDetails({
           {assignedPartner ? (
             <PartnerPill
               name={assignedPartner.name}
-              confidence={transaction.partnerMatchConfidence}
+              confidence={transaction.partnerMatchConfidence ?? undefined}
+              partnerType={transaction.partnerType ?? undefined}
+              onClick={handleNavigateToPartner}
               onRemove={handleRemovePartner}
             />
           ) : isLoadingSuggestions ? (
@@ -233,6 +256,7 @@ export function TransactionDetails({
                   name={suggestion.partner.name}
                   confidence={suggestion.confidence}
                   variant="suggestion"
+                  partnerType={suggestion.partnerType}
                   onClick={() => handleSelectSuggestion(suggestion)}
                   disabled={isAssigningPartner}
                 />

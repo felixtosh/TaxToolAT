@@ -12,6 +12,7 @@ import {
   writeBatch,
   limit,
   deleteDoc,
+  arrayUnion,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase/config";
@@ -23,6 +24,7 @@ import {
   GlobalPartnerFormData,
   PartnerFilters,
   PromotionCandidate,
+  ManualRemoval,
 } from "@/types/partner";
 import { normalizeIban } from "@/lib/import/deduplication";
 import { normalizeUrl } from "@/lib/matching/url-normalizer";
@@ -193,11 +195,54 @@ export async function deleteUserPartner(
     throw new Error(`Partner ${partnerId} not found or access denied`);
   }
 
-  const docRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
-  await updateDoc(docRef, {
+  const batch = writeBatch(ctx.db);
+
+  // 1. Soft delete the partner
+  const partnerRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
+  batch.update(partnerRef, {
     isActive: false,
     updatedAt: Timestamp.now(),
   });
+
+  // 2. Remove partner reference from all transactions
+  const transactionsQuery = query(
+    collection(ctx.db, TRANSACTIONS_COLLECTION),
+    where("userId", "==", ctx.userId),
+    where("partnerId", "==", partnerId)
+  );
+  const transactionsSnapshot = await getDocs(transactionsQuery);
+
+  for (const txDoc of transactionsSnapshot.docs) {
+    batch.update(txDoc.ref, {
+      partnerId: null,
+      partnerType: null,
+      partnerMatchedBy: null,
+      partnerMatchConfidence: null,
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  // 3. Remove partner reference from all files
+  const filesQuery = query(
+    collection(ctx.db, "files"),
+    where("userId", "==", ctx.userId),
+    where("partnerId", "==", partnerId)
+  );
+  const filesSnapshot = await getDocs(filesQuery);
+
+  for (const fileDoc of filesSnapshot.docs) {
+    batch.update(fileDoc.ref, {
+      partnerId: null,
+      partnerType: null,
+      partnerMatchedBy: null,
+      partnerMatchConfidence: null,
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  await batch.commit();
+
+  console.log(`Deleted partner ${partnerId}, unlinked ${transactionsSnapshot.size} transactions and ${filesSnapshot.size} files`);
 }
 
 /**
@@ -273,8 +318,8 @@ export async function createLocalPartnerFromGlobal(
       vatId: globalPartner.vatId,
       ibans: globalPartner.ibans,
       website: globalPartner.website,
-      notes: null,
-      defaultCategoryId: null,
+      notes: undefined,
+      defaultCategoryId: undefined,
     },
     { globalPartnerId }
   );
@@ -455,14 +500,17 @@ export async function findGlobalPartnerByIban(
 // ============ Transaction Partner Assignment ============
 
 /**
- * Assign a partner to a transaction
+ * Assign a partner to a transaction.
+ *
+ * If the transaction was previously in this partner's manualRemovals list
+ * (user changed their mind), removes it from the list.
  */
 export async function assignPartnerToTransaction(
   ctx: OperationsContext,
   transactionId: string,
   partnerId: string,
   partnerType: "global" | "user",
-  matchedBy: "manual" | "suggestion",
+  matchedBy: "manual" | "suggestion" | "auto",
   confidence?: number
 ): Promise<void> {
   // Verify transaction ownership
@@ -491,6 +539,33 @@ export async function assignPartnerToTransaction(
     updatedAt: Timestamp.now(),
   });
 
+  // Remove from manualRemovals if this transaction was previously removed
+  // (user changed their mind about the removal)
+  try {
+    const partnerDocRef = doc(ctx.db, PARTNERS_COLLECTION, finalPartnerId);
+    const partnerSnapshot = await getDoc(partnerDocRef);
+
+    if (partnerSnapshot.exists()) {
+      const partnerData = partnerSnapshot.data();
+      const manualRemovals = partnerData.manualRemovals as ManualRemoval[] | undefined;
+
+      if (manualRemovals?.some((r) => r.transactionId === transactionId)) {
+        // Filter out this transaction from manualRemovals
+        const updatedRemovals = manualRemovals.filter(
+          (r) => r.transactionId !== transactionId
+        );
+        await updateDoc(partnerDocRef, {
+          manualRemovals: updatedRemovals,
+          updatedAt: Timestamp.now(),
+        });
+        console.log(`[Manual Removal] Cleared false positive for tx ${transactionId} (user reassigned)`);
+      }
+    }
+  } catch (error) {
+    console.error("Failed to clear manual removal on reassign:", error);
+    // Don't throw - manual removal tracking is non-critical
+  }
+
   // Trigger pattern learning (non-blocking)
   // Learn immediately so patterns improve with each assignment
   if (matchedBy === "manual" || matchedBy === "suggestion") {
@@ -516,7 +591,13 @@ async function triggerPatternLearning(partnerId: string): Promise<void> {
 }
 
 /**
- * Remove partner assignment from transaction
+ * Remove partner assignment from transaction.
+ *
+ * If the removal was from an auto/suggestion assignment (system-recommended),
+ * stores it as a "manual removal" (false positive) for pattern learning.
+ *
+ * Always triggers pattern re-learning when removing auto/suggestion assignments
+ * so the AI can learn from the correction.
  */
 export async function removePartnerFromTransaction(
   ctx: OperationsContext,
@@ -529,6 +610,19 @@ export async function removePartnerFromTransaction(
     throw new Error(`Transaction ${transactionId} not found or access denied`);
   }
 
+  const txData = txSnapshot.data();
+  const partnerId = txData.partnerId;
+  const matchedBy = txData.partnerMatchedBy;
+
+  // Determine if this was a system-recommended assignment (auto or suggestion)
+  // These removals are stored as "manual removals" (false positives) for pattern learning
+  const wasSystemRecommended =
+    matchedBy === "auto" || matchedBy === "suggestion";
+
+  // Also check for pure manual assignments (for backwards compatibility)
+  const wasManual = matchedBy === "manual";
+
+  // Clear the assignment
   await updateDoc(txDoc, {
     partnerId: null,
     partnerType: null,
@@ -536,6 +630,56 @@ export async function removePartnerFromTransaction(
     partnerMatchConfidence: null,
     updatedAt: Timestamp.now(),
   });
+
+  // If this was a system-recommended assignment, track as false positive
+  if (wasSystemRecommended && partnerId) {
+    try {
+      const partnerDocRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
+      const partnerSnapshot = await getDoc(partnerDocRef);
+
+      if (partnerSnapshot.exists()) {
+        const partnerData = partnerSnapshot.data();
+        const existingRemovals: ManualRemoval[] = partnerData.manualRemovals || [];
+
+        // Check if this transaction is already in manualRemovals (prevent duplicates)
+        const alreadyRemoved = existingRemovals.some((r) => r.transactionId === transactionId);
+
+        if (!alreadyRemoved) {
+          // Store as manual removal (false positive) for pattern learning
+          const removalEntry: ManualRemoval = {
+            transactionId,
+            removedAt: Timestamp.now(),
+            partner: txData.partner || null,
+            name: txData.name || "",
+          };
+
+          await updateDoc(partnerDocRef, {
+            manualRemovals: arrayUnion(removalEntry),
+            updatedAt: Timestamp.now(),
+          });
+
+          console.log(`[Manual Removal] Stored false positive for partner ${partnerId}: tx ${transactionId}`);
+        } else {
+          console.log(`[Manual Removal] Tx ${transactionId} already in manualRemovals, skipping`);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to store manual removal:", error);
+      // Don't throw - manual removal tracking is non-critical
+    }
+
+    // Trigger pattern re-learning with the new false positive
+    triggerPatternLearning(partnerId).catch((error) => {
+      console.error("Failed to trigger pattern re-learning on removal:", error);
+    });
+  }
+
+  // For pure manual assignments, still trigger re-learning (existing behavior)
+  if (wasManual && partnerId) {
+    triggerPatternLearning(partnerId).catch((error) => {
+      console.error("Failed to trigger pattern re-learning on removal:", error);
+    });
+  }
 }
 
 /**

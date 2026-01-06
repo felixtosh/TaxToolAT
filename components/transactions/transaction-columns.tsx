@@ -6,7 +6,6 @@ import {
   Paperclip,
   CheckCircle2,
   ArrowUpDown,
-  Building2,
 } from "lucide-react";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
@@ -50,7 +49,7 @@ export function getTransactionColumns(
         const timeStr = format(dateObj, "HH:mm");
         const showTime = timeStr !== "00:00";
         return (
-          <div className="w-[100px]">
+          <div>
             <p className="text-sm whitespace-nowrap">
               {format(dateObj, "MMM d, yyyy")}
             </p>
@@ -62,18 +61,6 @@ export function getTransactionColumns(
           </div>
         );
       },
-    },
-    {
-      accessorKey: "name",
-      header: "Description",
-      cell: ({ row }) => (
-        <div className="max-w-[220px]">
-          <p className="text-sm truncate">{row.original.partner || "—"}</p>
-          <p className="text-sm text-muted-foreground truncate">
-            {row.getValue("name")}
-          </p>
-        </div>
-      ),
     },
     {
       accessorKey: "amount",
@@ -108,6 +95,18 @@ export function getTransactionColumns(
       },
     },
     {
+      accessorKey: "name",
+      header: "Description",
+      cell: ({ row }) => (
+        <div className="min-w-0">
+          <p className="text-sm truncate">{row.original.partner || "—"}</p>
+          <p className="text-sm text-muted-foreground truncate">
+            {row.getValue("name")}
+          </p>
+        </div>
+      ),
+    },
+    {
       id: "assignedPartner",
       header: "Partner",
       cell: ({ row }) => {
@@ -121,7 +120,7 @@ export function getTransactionColumns(
           return (
             <PartnerPill
               name={partner?.name || partnerId.slice(0, 8) + "..."}
-              confidence={partnerMatchConfidence}
+              confidence={partnerMatchConfidence ?? undefined}
             />
           );
         }
@@ -149,17 +148,13 @@ export function getTransactionColumns(
       },
     },
     {
-      id: "receipt",
-      header: () => (
-        <div className="flex justify-center">
-          <Paperclip className="h-4 w-4" />
-        </div>
-      ),
+      id: "file",
+      header: "File",
       cell: ({ row }) => {
-        const hasReceipt = row.original.receiptIds.length > 0;
+        const hasFile = (row.original.fileIds?.length || 0) > 0;
         return (
           <div className="flex justify-center">
-            {hasReceipt ? (
+            {hasFile ? (
               <CheckCircle2 className="h-4 w-4 text-green-600" />
             ) : (
               <Paperclip className="h-4 w-4 text-muted-foreground/50" />
@@ -182,20 +177,15 @@ export function getTransactionColumns(
           return <span className="text-muted-foreground text-xs">{sourceId.slice(0, 8)}...</span>;
         }
         return (
-          <div className="max-w-[120px]">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex items-center gap-1.5">
-                  <Building2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                  <span className="text-sm truncate">{source.name}</span>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="font-medium">{source.name}</p>
-                <p className="text-xs text-muted-foreground font-mono">{source.iban}</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-sm truncate">{source.name}</span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">{source.name}</p>
+              <p className="text-xs text-muted-foreground font-mono">{source.iban}</p>
+            </TooltipContent>
+          </Tooltip>
         );
       },
     },

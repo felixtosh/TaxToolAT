@@ -8,11 +8,14 @@ import {
   doc,
   updateDoc,
   addDoc,
+  deleteDoc,
   Timestamp,
 } from "firebase/firestore";
 import { TransactionSource, SourceFormData, SavedFieldMapping } from "@/types/source";
 import { normalizeIban } from "@/lib/import/deduplication";
 import { OperationsContext } from "./types";
+import { deleteImportsBySource } from "./import-ops";
+import { deleteTransactionsBySource } from "./transaction-ops";
 
 const SOURCES_COLLECTION = "sources";
 
@@ -104,23 +107,37 @@ export async function updateSource(
 }
 
 /**
- * Soft-delete a source (marks as inactive)
+ * Delete a source and all associated imports/transactions
+ *
+ * This performs a cascade delete:
+ * 1. Deletes all imports for this source (and their transactions)
+ * 2. Deletes any remaining transactions without an import
+ * 3. Deletes the source document itself
  */
 export async function deleteSource(
   ctx: OperationsContext,
   sourceId: string
-): Promise<void> {
+): Promise<{ deletedImports: number; deletedTransactions: number }> {
   // Verify ownership first
   const existing = await getSourceById(ctx, sourceId);
   if (!existing) {
     throw new Error(`Source ${sourceId} not found or access denied`);
   }
 
+  // 1. Delete all imports (which cascade-deletes their transactions)
+  const importResult = await deleteImportsBySource(ctx, sourceId);
+
+  // 2. Delete any orphaned transactions (e.g., those without importJobId)
+  const txResult = await deleteTransactionsBySource(ctx, sourceId);
+
+  // 3. Delete the source document itself
   const docRef = doc(ctx.db, SOURCES_COLLECTION, sourceId);
-  await updateDoc(docRef, {
-    isActive: false,
-    updatedAt: Timestamp.now(),
-  });
+  await deleteDoc(docRef);
+
+  return {
+    deletedImports: importResult.deletedImports,
+    deletedTransactions: importResult.deletedTransactions + txResult.deleted,
+  };
 }
 
 /**

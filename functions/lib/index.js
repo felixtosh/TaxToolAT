@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.matchColumns = exports.generatePromotionCandidates = exports.applyPatternsToTransactions = exports.triggerLearningNow = exports.processLearningQueue = exports.queuePartnerForLearning = exports.searchExternalPartners = exports.learnPartnerPatterns = exports.matchPartners = exports.onPartnerCreate = void 0;
+exports.extractFileData = exports.sendReauthReminders = exports.triggerGoCardlessSync = exports.scheduledGoCardlessSync = exports.matchColumns = exports.generatePromotionCandidates = exports.applyPatternsToTransactions = exports.triggerLearningNow = exports.processLearningQueue = exports.queuePartnerForLearning = exports.searchExternalPartners = exports.learnPartnerPatterns = exports.matchPartners = exports.onPartnerCreate = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize Firebase Admin
 (0, app_1.initializeApp)();
@@ -27,4 +27,12 @@ Object.defineProperty(exports, "generatePromotionCandidates", { enumerable: true
 // Export import functions
 var matchColumns_1 = require("./import/matchColumns");
 Object.defineProperty(exports, "matchColumns", { enumerable: true, get: function () { return matchColumns_1.matchColumns; } });
+// Export GoCardless sync functions
+var scheduledSync_1 = require("./gocardless/scheduledSync");
+Object.defineProperty(exports, "scheduledGoCardlessSync", { enumerable: true, get: function () { return scheduledSync_1.scheduledGoCardlessSync; } });
+Object.defineProperty(exports, "triggerGoCardlessSync", { enumerable: true, get: function () { return scheduledSync_1.triggerGoCardlessSync; } });
+Object.defineProperty(exports, "sendReauthReminders", { enumerable: true, get: function () { return scheduledSync_1.sendReauthReminders; } });
+// Export file extraction functions
+var extractFileData_1 = require("./extraction/extractFileData");
+Object.defineProperty(exports, "extractFileData", { enumerable: true, get: function () { return extractFileData_1.extractFileData; } });
 //# sourceMappingURL=index.js.map

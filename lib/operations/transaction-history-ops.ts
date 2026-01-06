@@ -42,13 +42,16 @@ export async function createHistoryEntry(
 
   // Only store the fields that are about to change
   const previousState: Partial<
-    Pick<Transaction, "description" | "receiptIds" | "isComplete">
+    Pick<Transaction, "description" | "fileIds" | "isComplete">
   > = {};
 
   for (const field of changedFields) {
-    if (field in currentState) {
-      const key = field as keyof typeof previousState;
-      previousState[key] = currentState[key] as (typeof previousState)[typeof key];
+    if (field === "description" && "description" in currentState) {
+      previousState.description = currentState.description;
+    } else if (field === "fileIds" && "fileIds" in currentState) {
+      previousState.fileIds = currentState.fileIds;
+    } else if (field === "isComplete" && "isComplete" in currentState) {
+      previousState.isComplete = currentState.isComplete;
     }
   }
 
@@ -159,7 +162,7 @@ export async function rollbackTransaction(
 export async function updateTransactionWithHistory(
   ctx: OperationsContext,
   transactionId: string,
-  data: Partial<Pick<Transaction, "description" | "receiptIds" | "isComplete">>,
+  data: Partial<Pick<Transaction, "description" | "fileIds" | "isComplete">>,
   changedBy: ChangeAuthor,
   changeReason?: string
 ): Promise<void> {

@@ -7,6 +7,7 @@ exports.matchColumns = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const params_1 = require("firebase-functions/params");
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const ai_usage_logger_1 = require("../utils/ai-usage-logger");
 const anthropicApiKey = (0, params_1.defineSecret)("ANTHROPIC_API_KEY");
 const TRANSACTION_FIELDS = [
     {
@@ -207,6 +208,7 @@ exports.matchColumns = (0, https_1.onCall)({
     timeoutSeconds: 60,
     secrets: [anthropicApiKey],
 }, async (request) => {
+    const userId = request.auth?.uid || "dev-user-123";
     const { headers, sampleRows } = request.data;
     // Validate input
     if (!headers || !Array.isArray(headers) || headers.length === 0) {
@@ -223,6 +225,13 @@ exports.matchColumns = (0, https_1.onCall)({
             model: "claude-3-5-haiku-20241022",
             max_tokens: 1024,
             messages: [{ role: "user", content: prompt }],
+        });
+        // Log AI usage
+        await (0, ai_usage_logger_1.logAIUsage)(userId, {
+            function: "columnMatching",
+            model: "claude-3-5-haiku-20241022",
+            inputTokens: response.usage.input_tokens,
+            outputTokens: response.usage.output_tokens,
         });
         // Extract text from response
         const textBlock = response.content.find((block) => block.type === "text");

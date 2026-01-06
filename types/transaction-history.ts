@@ -25,7 +25,7 @@ export interface TransactionHistoryEntry {
   id: string;
 
   /** Snapshot of the transaction fields before the change */
-  previousState: Partial<Pick<Transaction, "description" | "receiptIds" | "isComplete">>;
+  previousState: Partial<Pick<Transaction, "description" | "fileIds" | "isComplete">>;
 
   /** List of field names that were changed */
   changedFields: string[];

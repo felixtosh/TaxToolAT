@@ -2,14 +2,14 @@
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { X, Building2, Globe, CreditCard, FileText, Pencil, Trash2, ExternalLink, Receipt, Sparkles, ChevronRight } from "lucide-react";
+import { X, Building2, Globe, CreditCard, FileText, Pencil, Trash2, ExternalLink, Receipt, Sparkles, ChevronRight, Ban } from "lucide-react";
 import { UserPartner, PartnerFormData } from "@/types/partner";
 import { Transaction } from "@/types/transaction";
 import { usePartners } from "@/hooks/use-partners";
 import { formatIban } from "@/lib/import/deduplication";
 import { useState, useEffect } from "react";
 import { AddPartnerDialog } from "./add-partner-dialog";
-import { collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
+import { collection, query, where, orderBy, limit, getDocs, documentId } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { format } from "date-fns";
 import Link from "next/link";
@@ -24,29 +24,62 @@ interface PartnerDetailPanelProps {
 export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps) {
   const { updatePartner, deletePartner } = usePartners();
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [connectedTransactions, setConnectedTransactions] = useState<Transaction[]>([]);
-  const [transactionCount, setTransactionCount] = useState(0);
+  const [manualTransactions, setManualTransactions] = useState<Transaction[]>([]);
+  const [autoTransactions, setAutoTransactions] = useState<Transaction[]>([]);
+  const [manualRemovalTransactions, setManualRemovalTransactions] = useState<Transaction[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(true);
 
-  // Fetch connected transactions
+  // Fetch connected transactions, separated by match type
   useEffect(() => {
     async function fetchTransactions() {
       setIsLoadingTransactions(true);
       try {
+        // Fetch all connected transactions (we need to categorize them)
         const q = query(
           collection(db, "transactions"),
           where("userId", "==", MOCK_USER_ID),
           where("partnerId", "==", partner.id),
           orderBy("date", "desc"),
-          limit(10)
+          limit(50) // Fetch more to properly categorize
         );
         const snapshot = await getDocs(q);
         const transactions = snapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         })) as Transaction[];
-        setConnectedTransactions(transactions);
-        setTransactionCount(snapshot.size);
+
+        // Separate manual vs auto/suggestion connections
+        const manual = transactions.filter(tx => tx.partnerMatchedBy === "manual");
+        const auto = transactions.filter(tx => tx.partnerMatchedBy !== "manual");
+
+        setManualTransactions(manual.slice(0, 10));
+        setAutoTransactions(auto.slice(0, 10));
+        setTotalCount(transactions.length);
+
+        // Fetch manual removal transactions (to show date and amount)
+        if (partner.manualRemovals && partner.manualRemovals.length > 0) {
+          const uniqueRemovalIds = [...new Set(partner.manualRemovals.map(r => r.transactionId))];
+          // Firestore 'in' queries are limited to 30 items
+          const batchSize = 30;
+          const removalTransactions: Transaction[] = [];
+
+          for (let i = 0; i < uniqueRemovalIds.length && i < 30; i += batchSize) {
+            const batch = uniqueRemovalIds.slice(i, i + batchSize);
+            const removalQuery = query(
+              collection(db, "transactions"),
+              where("userId", "==", MOCK_USER_ID),
+              where(documentId(), "in", batch)
+            );
+            const removalSnapshot = await getDocs(removalQuery);
+            removalTransactions.push(...removalSnapshot.docs.map((doc) => ({
+              id: doc.id,
+              ...doc.data(),
+            })) as Transaction[]);
+          }
+
+          setManualRemovalTransactions(removalTransactions);
+        }
       } catch (error) {
         console.error("Failed to fetch transactions:", error);
       } finally {
@@ -54,7 +87,7 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
       }
     }
     fetchTransactions();
-  }, [partner.id]);
+  }, [partner.id, partner.manualRemovals]);
 
   const handleEdit = async (data: PartnerFormData) => {
     await updatePartner(partner.id, data);
@@ -150,12 +183,16 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
               Address
             </h3>
             <div className="text-sm space-y-0.5">
-              {partner.address.street && <p>{partner.address.street}</p>}
-              <p>
-                {[partner.address.postalCode, partner.address.city]
-                  .filter(Boolean)
-                  .join(" ")}
-              </p>
+              {partner.address.street && (
+                <p className="whitespace-pre-line">{partner.address.street}</p>
+              )}
+              {(partner.address.postalCode || partner.address.city) && (
+                <p>
+                  {[partner.address.postalCode, partner.address.city]
+                    .filter(Boolean)
+                    .join(" ")}
+                </p>
+              )}
               {partner.address.country && <p>{partner.address.country}</p>}
             </div>
           </div>
@@ -211,46 +248,139 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
             <Receipt className="h-3 w-3 inline mr-1" />
             Connected Transactions
             {!isLoadingTransactions && (
-              <span className="ml-1 text-foreground">({transactionCount})</span>
+              <span className="ml-1 text-foreground">({totalCount})</span>
             )}
           </h3>
           {isLoadingTransactions ? (
             <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : connectedTransactions.length === 0 ? (
+          ) : manualTransactions.length === 0 && autoTransactions.length === 0 ? (
             <p className="text-sm text-muted-foreground">No transactions connected yet</p>
           ) : (
             <div className="space-y-1">
-              {connectedTransactions.map((tx) => (
-                <Link
-                  key={tx.id}
-                  href={`/transactions?selected=${tx.id}`}
-                  className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm truncate">{tx.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {tx.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
-                      {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
-                    </span>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </div>
-                </Link>
-              ))}
-              {transactionCount > 10 && (
+              {/* Manual connections */}
+              {manualTransactions.length > 0 && (
+                <>
+                  <p className="text-xs text-muted-foreground font-medium mt-2 mb-1">
+                    Manually connected ({manualTransactions.length})
+                  </p>
+                  {manualTransactions.map((tx) => (
+                    <Link
+                      key={tx.id}
+                      href={`/transactions?id=${tx.id}`}
+                      className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm truncate">{tx.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {tx.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
+                          {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
+                        </span>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                    </Link>
+                  ))}
+                </>
+              )}
+
+              {/* Auto-matched connections */}
+              {autoTransactions.length > 0 && (
+                <>
+                  <p className="text-xs text-muted-foreground font-medium mt-3 mb-1 pt-2 border-t">
+                    Auto-matched ({autoTransactions.length})
+                  </p>
+                  {autoTransactions.map((tx) => (
+                    <Link
+                      key={tx.id}
+                      href={`/transactions?id=${tx.id}`}
+                      className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm truncate">{tx.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {tx.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
+                          {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
+                        </span>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                    </Link>
+                  ))}
+                </>
+              )}
+
+              {totalCount > 20 && (
                 <Link
                   href={`/transactions?partnerId=${partner.id}`}
                   className="text-xs text-primary hover:underline block mt-2"
                 >
-                  View all {transactionCount} transactions
+                  View all {totalCount} transactions
                 </Link>
               )}
             </div>
           )}
         </div>
+
+        {/* Manual Removals (False Positives) */}
+        {partner.manualRemovals && partner.manualRemovals.length > 0 && (() => {
+          // Deduplicate by transactionId (can have duplicates from repeated remove attempts)
+          const uniqueRemovals = partner.manualRemovals.filter(
+            (removal, index, self) =>
+              index === self.findIndex((r) => r.transactionId === removal.transactionId)
+          );
+          return (
+            <div>
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                <Ban className="h-3 w-3 inline mr-1" />
+                Manual Removals
+                <span className="ml-1 text-foreground">({uniqueRemovals.length})</span>
+              </h3>
+              <p className="text-xs text-muted-foreground mb-2">
+                Transactions you removed from this partner. Used to improve pattern learning.
+              </p>
+              <div className="space-y-1">
+                {uniqueRemovals.slice(0, 10).map((removal) => {
+                  // Find the actual transaction data for date and amount
+                  const tx = manualRemovalTransactions.find(t => t.id === removal.transactionId);
+                  const transactionId = tx?.id || removal.transactionId;
+                  return (
+                    <Link
+                      key={transactionId}
+                      href={`/transactions?id=${transactionId}`}
+                      className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm truncate">{tx?.name || removal.name || removal.partner || "Unknown"}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {tx?.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {tx && (
+                          <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
+                            {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
+                          </span>
+                        )}
+                        <X className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    </Link>
+                  );
+                })}
+                {uniqueRemovals.length > 10 && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    +{uniqueRemovals.length - 10} more
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Footer Actions */}

@@ -137,11 +137,14 @@ export function PartnerSearchList({
                   ) : (
                     <Building2 className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
                   )}
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 overflow-hidden">
                     <p className="text-sm font-medium truncate">{partner.name}</p>
-                    <div className="text-xs text-muted-foreground space-y-0.5">
+                    <div className="text-xs text-muted-foreground overflow-hidden">
                       {partner.vatId && (
                         <p className="truncate">VAT: {partner.vatId}</p>
+                      )}
+                      {partner.ibans && partner.ibans.length > 0 && (
+                        <p className="truncate">IBAN: {partner.ibans[0]}</p>
                       )}
                       {partner.website && (
                         <p className="truncate">{partner.website}</p>

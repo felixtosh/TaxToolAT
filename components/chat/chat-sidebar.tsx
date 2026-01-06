@@ -24,9 +24,6 @@ export function ChatSidebar() {
     activeTab,
     setActiveTab,
     notifications,
-    unreadNotificationCount,
-    markAllNotificationsRead,
-    startConversationFromNotification,
   } = useChat();
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -105,7 +102,6 @@ export function ChatSidebar() {
           <ChatTabs
             activeTab={activeTab}
             onTabChange={setActiveTab}
-            unreadCount={unreadNotificationCount}
             onNewChat={startNewSession}
             onClose={toggleSidebar}
           />
@@ -114,12 +110,10 @@ export function ChatSidebar() {
           {activeTab === "notifications" ? (
             <NotificationsList
               notifications={notifications}
-              onStartConversation={startConversationFromNotification}
               onStartNewConversation={() => {
                 setActiveTab("chat");
                 startNewSession();
               }}
-              onMarkAllRead={markAllNotificationsRead}
             />
           ) : (
             <>

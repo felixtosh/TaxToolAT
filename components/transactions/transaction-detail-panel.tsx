@@ -6,8 +6,7 @@ import { X, ChevronUp, ChevronDown, Pencil, Check } from "lucide-react";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
 import { TransactionDetails } from "@/components/sidebar/transaction-details";
-import { CompactFileUploadZone } from "@/components/sidebar/compact-file-upload-zone";
-import { ReceiptList } from "@/components/sidebar/receipt-list";
+import { TransactionFilesSection } from "@/components/transactions/transaction-files-section";
 import { TransactionHistory } from "@/components/sidebar/transaction-history";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -74,7 +73,7 @@ export function TransactionDetailPanel({
       const trimmedDescription = description.trim() || null;
       await onUpdate({
         description: trimmedDescription,
-        isComplete: transaction.receiptIds.length > 0 && !!trimmedDescription,
+        isComplete: (transaction.fileIds?.length || 0) > 0 && !!trimmedDescription,
       });
       setIsEditingDescription(false);
     } finally {
@@ -87,10 +86,10 @@ export function TransactionDetailPanel({
     async (
       partnerId: string,
       partnerType: "global" | "user",
-      matchedBy: "manual" | "suggestion",
+      matchedBy: "manual" | "suggestion" | "auto",
       confidence?: number
     ) => {
-      await onAssignPartner(transaction.id, partnerId, partnerType, matchedBy, confidence);
+      await onAssignPartner(transaction.id, partnerId, partnerType, matchedBy as "manual" | "suggestion", confidence);
     },
     [onAssignPartner, transaction.id]
   );
@@ -160,29 +159,9 @@ export function TransactionDetailPanel({
             onCreatePartner={handleCreatePartner}
           />
 
-          {/* Receipt Section */}
+          {/* Files Section */}
           <div className="border-t pt-3 mt-3 -mx-4 px-4 space-y-3">
-            <h3 className="text-sm font-medium mb-2">Receipt</h3>
-
-            <FieldRow label="Files" className="sm:items-start">
-              <div className="flex-1 space-y-2">
-                {/* Show receipts list if there are files */}
-                {transaction.receiptIds.length > 0 && (
-                  <ReceiptList
-                    receiptIds={transaction.receiptIds}
-                    transactionId={transaction.id}
-                  />
-                )}
-
-                {/* Always show the compact upload dropzone */}
-                <CompactFileUploadZone
-                  transactionId={transaction.id}
-                  onUploadComplete={(receipt) => {
-                    console.log("Upload complete:", receipt);
-                  }}
-                />
-              </div>
-            </FieldRow>
+            <TransactionFilesSection transaction={transaction} />
 
           {/* Cost Description */}
           {isEditingDescription ? (

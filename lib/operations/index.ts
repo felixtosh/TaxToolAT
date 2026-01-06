@@ -7,6 +7,9 @@ export * from "./source-ops";
 // Transaction operations
 export * from "./transaction-ops";
 
+// Import operations
+export * from "./import-ops";
+
 // Partner operations
 export * from "./partner-ops";
 
@@ -21,3 +24,12 @@ export * from "./chat-ops";
 
 // Notification operations
 export * from "./notification-ops";
+
+// AI usage operations
+export * from "./ai-usage-ops";
+
+// File operations
+export * from "./file-ops";
+
+// GoCardless operations
+export * from "./gocardless-ops";

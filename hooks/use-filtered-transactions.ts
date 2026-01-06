@@ -36,12 +36,12 @@ export function useFilteredTransactions(
       result = result.filter((t) => t.sourceId === filters.sourceId);
     }
 
-    // Receipt filter
-    if (filters.hasReceipt !== undefined) {
+    // File filter
+    if (filters.hasFile !== undefined) {
       result = result.filter((t) =>
-        filters.hasReceipt
-          ? t.receiptIds.length > 0
-          : t.receiptIds.length === 0
+        filters.hasFile
+          ? (t.fileIds?.length || 0) > 0
+          : (t.fileIds?.length || 0) === 0
       );
     }
 

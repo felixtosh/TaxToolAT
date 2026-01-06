@@ -1,18 +1,17 @@
 "use client";
 
-import { useMemo, useEffect, useCallback } from "react";
+import { useMemo, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransactions } from "@/hooks/use-transactions";
 import { useSources } from "@/hooks/use-sources";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { parseFiltersFromUrl, buildFilterUrl } from "@/lib/filters/url-params";
 import { matchAllTransactionsByPattern } from "@/lib/matching";
-import { DataTable } from "./data-table";
+import { DataTable, DataTableHandle } from "./data-table";
 import { getTransactionColumns } from "./transaction-columns";
 import { TransactionToolbar } from "./transaction-toolbar";
 import { Transaction, TransactionFilters } from "@/types/transaction";
 import { UserPartner, GlobalPartner } from "@/types/partner";
-import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 interface TransactionTableProps {
@@ -22,6 +21,7 @@ interface TransactionTableProps {
   onSearchChange: (value: string) => void;
   userPartners?: UserPartner[];
   globalPartners?: GlobalPartner[];
+  tableRef?: React.RefObject<DataTableHandle | null>;
 }
 
 export function TransactionTable({
@@ -31,6 +31,7 @@ export function TransactionTable({
   onSearchChange,
   userPartners = [],
   globalPartners = [],
+  tableRef: externalTableRef,
 }: TransactionTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -38,19 +39,9 @@ export function TransactionTable({
   const { transactions, loading, error } = useTransactions();
   const { sources } = useSources();
 
-  // Scroll to and highlight a transaction by ID
-  const scrollToTransactionById = useCallback((transactionId: string) => {
-    const element = document.querySelector(
-      `[data-transaction-id="${transactionId}"]`
-    );
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth", block: "center" });
-      element.classList.add("animate-pulse", "bg-primary/10");
-      setTimeout(() => {
-        element.classList.remove("animate-pulse", "bg-primary/10");
-      }, 2000);
-    }
-  }, []);
+  // Internal ref for DataTable, use external if provided
+  const internalTableRef = useRef<DataTableHandle>(null);
+  const tableRef = externalTableRef || internalTableRef;
 
   // Find and open a transaction by ID (for chat UI control)
   const openTransactionById = useCallback(
@@ -62,6 +53,43 @@ export function TransactionTable({
     },
     [transactions, onSelectTransaction]
   );
+
+  // Parse filters from URL
+  const filters = useMemo(
+    () => parseFiltersFromUrl(searchParams),
+    [searchParams]
+  );
+
+  // Apply filters using the hook
+  const filteredTransactions = useFilteredTransactions(
+    transactions,
+    filters,
+    searchValue
+  );
+
+  // Scroll to and highlight a transaction by ID (uses virtualizer for off-screen items)
+  const scrollToTransactionById = useCallback((transactionId: string) => {
+    // Find the index in filtered transactions (what's displayed in the table)
+    const index = filteredTransactions.findIndex((t) => t.id === transactionId);
+    if (index !== -1) {
+      // Use virtualizer to scroll first (ensures row is rendered)
+      tableRef.current?.scrollToIndex(index);
+
+      // Then highlight after a short delay for the row to render
+      setTimeout(() => {
+        const element = document.querySelector(
+          `[data-transaction-id="${transactionId}"]`
+        );
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "center" });
+          element.classList.add("animate-pulse", "bg-primary/10");
+          setTimeout(() => {
+            element.classList.remove("animate-pulse", "bg-primary/10");
+          }, 2000);
+        }
+      }, 50);
+    }
+  }, [filteredTransactions, tableRef]);
 
   // Listen for chat UI control events
   useEffect(() => {
@@ -112,19 +140,6 @@ export function TransactionTable({
     };
   }, [openTransactionById, scrollToTransactionById]);
 
-  // Parse filters from URL
-  const filters = useMemo(
-    () => parseFiltersFromUrl(searchParams),
-    [searchParams]
-  );
-
-  // Apply filters using the hook
-  const filteredTransactions = useFilteredTransactions(
-    transactions,
-    filters,
-    searchValue
-  );
-
   // Update URL when filters change
   const handleFiltersChange = (newFilters: TransactionFilters) => {
     const url = buildFilterUrl("/transactions", newFilters);
@@ -146,33 +161,6 @@ export function TransactionTable({
   const handleRowClick = (transaction: Transaction) => {
     onSelectTransaction(transaction);
   };
-
-  if (loading) {
-    return (
-      <div className="flex flex-col h-full overflow-hidden bg-background">
-        <div className="flex items-center gap-2 px-4 py-2 border-b bg-background">
-          <Skeleton className="h-9 w-[300px]" />
-          <Skeleton className="h-9 w-[100px]" />
-        </div>
-        <div className="flex-1">
-          {[...Array(15)].map((_, i) => (
-            <div
-              key={i}
-              className="flex items-center space-x-4 px-4 py-3 border-b last:border-b-0"
-            >
-              <Skeleton className="h-4 w-[80px]" />
-              <Skeleton className="h-4 w-[80px]" />
-              <Skeleton className="h-4 w-[200px]" />
-              <Skeleton className="h-4 w-[120px]" />
-              <Skeleton className="h-4 w-[80px]" />
-              <Skeleton className="h-4 w-[60px]" />
-              <Skeleton className="h-4 w-[24px]" />
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
 
   if (error) {
     return (
@@ -197,6 +185,7 @@ export function TransactionTable({
       <div className="flex-1 flex flex-col min-h-0">
         <TooltipProvider>
           <DataTable
+            ref={tableRef}
             columns={columns}
             data={filteredTransactions}
             onRowClick={handleRowClick}

@@ -24,3 +24,13 @@ export { generatePromotionCandidates } from "./admin/generatePromotionCandidates
 
 // Export import functions
 export { matchColumns } from "./import/matchColumns";
+
+// Export GoCardless sync functions
+export {
+  scheduledGoCardlessSync,
+  triggerGoCardlessSync,
+  sendReauthReminders,
+} from "./gocardless/scheduledSync";
+
+// Export file extraction functions
+export { extractFileData } from "./extraction/extractFileData";

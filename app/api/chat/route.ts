@@ -5,6 +5,7 @@ import { initializeApp, getApps } from "firebase/app";
 import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { SYSTEM_PROMPT } from "@/lib/chat/system-prompt";
 import { requiresConfirmation } from "@/lib/chat/confirmation-config";
+import { logAIUsageToFirestore } from "@/lib/ai/usage-logger";
 import {
   listSources,
   getSourceById,
@@ -145,7 +146,11 @@ function convertMessages(uiMessages: UIMessage[]): any[] {
 
     // Fallback: simple text content
     if (typeof msg.content === "string" && msg.content.trim()) {
-      result.push({ role: msg.role, content: msg.content });
+      if (msg.role === "system") {
+        result.push({ role: "system", content: msg.content });
+      } else if (msg.role === "assistant") {
+        result.push({ role: "assistant", content: [{ type: "text", text: msg.content }] });
+      }
     }
   }
 
@@ -164,22 +169,31 @@ export async function POST(req: Request) {
     system: SYSTEM_PROMPT,
     messages,
     stopWhen: stepCountIs(5), // Allow up to 5 steps for multi-tool execution
-    onStepFinish: ({ stepType, text, toolCalls, toolResults }) => {
+    onStepFinish: ({ text, toolCalls, toolResults }) => {
       console.log("[Step finished]", {
-        stepType,
         hasText: !!text,
         textLength: text?.length,
         toolCallsCount: toolCalls?.length,
         toolResultsCount: toolResults?.length,
       });
     },
-    onFinish: ({ text, finishReason, usage, steps }) => {
+    onFinish: async ({ text, finishReason, usage, steps }) => {
       console.log("[Stream finished]", {
         finishReason,
         totalSteps: steps?.length,
         totalText: text?.length,
         usage,
       });
+
+      // Log AI usage to Firestore
+      if (usage && usage.inputTokens !== undefined && usage.outputTokens !== undefined) {
+        await logAIUsageToFirestore(db, MOCK_USER_ID, {
+          function: "chat",
+          model: "claude-sonnet-4-20250514",
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        });
+      }
     },
     tools: {
       // ===== READ-ONLY TOOLS (no confirmation) =====
@@ -221,7 +235,7 @@ export async function POST(req: Request) {
               description: t.description,
             partner: t.partner,
             isComplete: t.isComplete,
-            hasReceipts: t.receiptIds.length > 0,
+            hasFiles: (t.fileIds?.length || 0) > 0,
             };
           });
           console.log("[Tool] listTransactions returning:", JSON.stringify(result, null, 2));
@@ -249,7 +263,7 @@ export async function POST(req: Request) {
             reference: t.reference,
             partnerIban: t.partnerIban,
             isComplete: t.isComplete,
-            receiptIds: t.receiptIds,
+            fileIds: t.fileIds || [],
             sourceId: t.sourceId,
           };
         },

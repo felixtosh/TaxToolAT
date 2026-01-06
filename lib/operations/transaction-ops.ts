@@ -42,7 +42,7 @@ export async function listTransactions(
   // Only apply limit in Firestore if NOT doing client-side search
   // (search needs to scan all results first, then limit)
   const hasClientSideFilters = filters?.search || filters?.dateFrom || filters?.dateTo ||
-    filters?.hasReceipt !== undefined || (filters?.amountType && filters.amountType !== "all");
+    filters?.hasFile !== undefined || (filters?.amountType && filters.amountType !== "all");
 
   if (filters?.limit && !hasClientSideFilters) {
     constraints.push(firestoreLimit(filters.limit));
@@ -67,9 +67,9 @@ export async function listTransactions(
     transactions = transactions.filter((t) => t.date.toMillis() <= toTimestamp.toMillis());
   }
 
-  if (filters?.hasReceipt !== undefined) {
+  if (filters?.hasFile !== undefined) {
     transactions = transactions.filter((t) =>
-      filters.hasReceipt ? t.receiptIds.length > 0 : t.receiptIds.length === 0
+      filters.hasFile ? (t.fileIds?.length || 0) > 0 : (t.fileIds?.length || 0) === 0
     );
   }
 
@@ -77,9 +77,9 @@ export async function listTransactions(
     const searchLower = filters.search.toLowerCase();
     transactions = transactions.filter(
       (t) =>
-        t.name.toLowerCase().includes(searchLower) ||
-        t.description?.toLowerCase().includes(searchLower) ||
-        t.partner?.toLowerCase().includes(searchLower)
+        (t.name?.toLowerCase() || "").includes(searchLower) ||
+        (t.description?.toLowerCase() || "").includes(searchLower) ||
+        (t.partner?.toLowerCase() || "").includes(searchLower)
     );
   }
 
@@ -126,7 +126,7 @@ export async function getTransaction(
 export async function updateTransaction(
   ctx: OperationsContext,
   transactionId: string,
-  data: Partial<Pick<Transaction, "description" | "receiptIds" | "isComplete">>
+  data: Partial<Pick<Transaction, "description" | "fileIds" | "isComplete">>
 ): Promise<void> {
   // Verify ownership first
   const existing = await getTransaction(ctx, transactionId);

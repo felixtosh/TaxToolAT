@@ -9,6 +9,7 @@ interface SourceListProps {
   loading: boolean;
   onSourceClick: (source: TransactionSource) => void;
   onImportClick: (source: TransactionSource) => void;
+  onConnectClick: (source: TransactionSource) => void;
 }
 
 export function SourceList({
@@ -16,6 +17,7 @@ export function SourceList({
   loading,
   onSourceClick,
   onImportClick,
+  onConnectClick,
 }: SourceListProps) {
   if (loading) {
     return (
@@ -50,6 +52,7 @@ export function SourceList({
           source={source}
           onClick={() => onSourceClick(source)}
           onImportClick={() => onImportClick(source)}
+          onConnectClick={() => onConnectClick(source)}
         />
       ))}
     </div>

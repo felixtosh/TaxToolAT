@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   collection,
   query,
@@ -8,17 +8,14 @@ import {
   onSnapshot,
   doc,
   setDoc,
-  deleteDoc,
   Timestamp,
   where,
-  writeBatch,
-  getDocs,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { ImportRecord } from "@/types/import";
+import { deleteImport as deleteImportOp } from "@/lib/operations";
 
 const IMPORTS_COLLECTION = "imports";
-const TRANSACTIONS_COLLECTION = "transactions";
 const MOCK_USER_ID = "dev-user-123";
 
 export function useImports(sourceId?: string) {
@@ -82,35 +79,17 @@ export function useImports(sourceId?: string) {
     []
   );
 
+  const ctx = useMemo(() => ({ db, userId: MOCK_USER_ID }), []);
+
   /**
    * Delete an import and all its associated transactions
    */
-  const deleteImport = useCallback(async (importId: string) => {
-    // Find all transactions with this importJobId
-    const txQuery = query(
-      collection(db, TRANSACTIONS_COLLECTION),
-      where("importJobId", "==", importId)
-    );
-    const txSnapshot = await getDocs(txQuery);
-
-    // Batch delete transactions (Firestore has 500 doc limit per batch)
-    const BATCH_SIZE = 500;
-    const docs = txSnapshot.docs;
-
-    for (let i = 0; i < docs.length; i += BATCH_SIZE) {
-      const batch = writeBatch(db);
-      const chunk = docs.slice(i, i + BATCH_SIZE);
-
-      for (const txDoc of chunk) {
-        batch.delete(txDoc.ref);
-      }
-
-      await batch.commit();
-    }
-
-    // Delete the import record
-    await deleteDoc(doc(db, IMPORTS_COLLECTION, importId));
-  }, []);
+  const deleteImport = useCallback(
+    async (importId: string) => {
+      await deleteImportOp(ctx, importId);
+    },
+    [ctx]
+  );
 
   /**
    * Get a single import by ID (from the already-loaded imports)
