@@ -7,7 +7,7 @@ import { useTestSource } from "@/hooks/use-test-source";
 import { SourceList } from "@/components/sources/source-list";
 import { AddSourceDialog } from "@/components/sources/add-source-dialog";
 import { Button } from "@/components/ui/button";
-import { Plus, FlaskConical, Loader2 } from "lucide-react";
+import { Plus, FlaskConical, Loader2, Link2 } from "lucide-react";
 import { TransactionSource } from "@/types/source";
 
 export default function SourcesPage() {

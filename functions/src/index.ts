@@ -9,6 +9,10 @@ export { matchPartners } from "./matching/matchPartners";
 export { learnPartnerPatterns } from "./matching/learnPartnerPatterns";
 export { searchExternalPartners } from "./matching/searchExternalPartners";
 
+// Export category matching functions
+export { matchCategories } from "./matching/matchCategories";
+export { onCategoryCreate } from "./matching/onCategoryCreate";
+
 // Export learning queue functions
 export {
   queuePartnerForLearning,

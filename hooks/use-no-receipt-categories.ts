@@ -19,6 +19,7 @@ import {
   retriggerUserCategories,
   hasUserCategories,
   updateUserCategory,
+  clearManualRemoval,
 } from "@/lib/operations";
 import { CategoryLearnedPattern } from "@/types/no-receipt-category";
 import {
@@ -201,6 +202,17 @@ export function useNoReceiptCategories() {
     [ctx]
   );
 
+  /**
+   * Clear a manual removal entry from a category.
+   * Allows the transaction to be auto-matched again.
+   */
+  const clearRemoval = useCallback(
+    async (categoryId: string, transactionId: string): Promise<void> => {
+      await clearManualRemoval(ctx, categoryId, transactionId);
+    },
+    [ctx]
+  );
+
   return {
     categories,
     loading: loading || initializing,
@@ -214,6 +226,7 @@ export function useNoReceiptCategories() {
     getSuggestionsForTransaction,
     retrigger,
     updateCategory,
+    clearRemoval,
   };
 }
 

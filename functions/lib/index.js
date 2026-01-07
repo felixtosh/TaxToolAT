@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.extractFileData = exports.sendReauthReminders = exports.triggerGoCardlessSync = exports.scheduledGoCardlessSync = exports.matchColumns = exports.generatePromotionCandidates = exports.applyPatternsToTransactions = exports.triggerLearningNow = exports.processLearningQueue = exports.queuePartnerForLearning = exports.searchExternalPartners = exports.learnPartnerPatterns = exports.matchPartners = exports.onPartnerCreate = void 0;
+exports.matchFileTransactions = exports.extractFileData = exports.sendReauthReminders = exports.triggerGoCardlessSync = exports.scheduledGoCardlessSync = exports.matchColumns = exports.generatePromotionCandidates = exports.applyPatternsToTransactions = exports.triggerLearningNow = exports.processLearningQueue = exports.queuePartnerForLearning = exports.onCategoryCreate = exports.matchCategories = exports.searchExternalPartners = exports.learnPartnerPatterns = exports.matchPartners = exports.onPartnerCreate = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize Firebase Admin
 (0, app_1.initializeApp)();
@@ -13,6 +13,11 @@ var learnPartnerPatterns_1 = require("./matching/learnPartnerPatterns");
 Object.defineProperty(exports, "learnPartnerPatterns", { enumerable: true, get: function () { return learnPartnerPatterns_1.learnPartnerPatterns; } });
 var searchExternalPartners_1 = require("./matching/searchExternalPartners");
 Object.defineProperty(exports, "searchExternalPartners", { enumerable: true, get: function () { return searchExternalPartners_1.searchExternalPartners; } });
+// Export category matching functions
+var matchCategories_1 = require("./matching/matchCategories");
+Object.defineProperty(exports, "matchCategories", { enumerable: true, get: function () { return matchCategories_1.matchCategories; } });
+var onCategoryCreate_1 = require("./matching/onCategoryCreate");
+Object.defineProperty(exports, "onCategoryCreate", { enumerable: true, get: function () { return onCategoryCreate_1.onCategoryCreate; } });
 // Export learning queue functions
 var learningQueue_1 = require("./matching/learningQueue");
 Object.defineProperty(exports, "queuePartnerForLearning", { enumerable: true, get: function () { return learningQueue_1.queuePartnerForLearning; } });
@@ -35,4 +40,7 @@ Object.defineProperty(exports, "sendReauthReminders", { enumerable: true, get: f
 // Export file extraction functions
 var extractFileData_1 = require("./extraction/extractFileData");
 Object.defineProperty(exports, "extractFileData", { enumerable: true, get: function () { return extractFileData_1.extractFileData; } });
+// Export file-transaction matching functions
+var matchFileTransactions_1 = require("./matching/matchFileTransactions");
+Object.defineProperty(exports, "matchFileTransactions", { enumerable: true, get: function () { return matchFileTransactions_1.matchFileTransactions; } });
 //# sourceMappingURL=index.js.map

@@ -6,6 +6,7 @@ import {
   PartnerData,
   TransactionData,
 } from "../utils/partner-matcher";
+import { matchCategoriesForTransactions } from "./matchCategories";
 
 const db = getFirestore();
 
@@ -122,6 +123,7 @@ export const matchPartners = onCall<MatchPartnersRequest>(
     let processed = 0;
     let autoMatched = 0;
     let withSuggestions = 0;
+    const processedTransactionIds: string[] = [];
 
     let batch = db.batch();
     let batchCount = 0;
@@ -140,6 +142,7 @@ export const matchPartners = onCall<MatchPartnersRequest>(
 
       const matches = matchTransaction(transaction, userPartners, globalPartners);
       processed++;
+      processedTransactionIds.push(txDoc.id);
 
       if (matches.length > 0) {
         // Filter out matches where user explicitly removed this transaction from the partner
@@ -217,6 +220,22 @@ export const matchPartners = onCall<MatchPartnersRequest>(
         });
       } catch (err) {
         console.error("Failed to create partner matching notification:", err);
+      }
+    }
+
+    // Chain category matching after partner matching completes
+    // Categories can use partnerId for 85% confidence matching
+    if (processedTransactionIds.length > 0) {
+      try {
+        const categoryResult = await matchCategoriesForTransactions(
+          userId,
+          processedTransactionIds
+        );
+        console.log(
+          `Category matching chained: ${categoryResult.autoMatched} auto-matched, ${categoryResult.withSuggestions} with suggestions`
+        );
+      } catch (err) {
+        console.error("Failed to chain category matching:", err);
       }
     }
 

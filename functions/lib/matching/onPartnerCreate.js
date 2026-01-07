@@ -4,6 +4,7 @@ exports.onPartnerCreate = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const firestore_2 = require("firebase-admin/firestore");
 const partner_matcher_1 = require("../utils/partner-matcher");
+const matchCategories_1 = require("./matchCategories");
 const db = (0, firestore_2.getFirestore)();
 /**
  * Triggered when a new user partner is created
@@ -79,6 +80,7 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
         let autoMatched = 0;
         let suggestionsAdded = 0;
         const BATCH_LIMIT = 500;
+        const processedTransactionIds = [];
         for (const txDoc of unmatchedSnapshot.docs) {
             const txData = txDoc.data();
             const transaction = {
@@ -89,6 +91,7 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
                 reference: txData.reference || null,
             };
             const matches = (0, partner_matcher_1.matchTransaction)(transaction, userPartners, globalPartners);
+            processedTransactionIds.push(txDoc.id);
             if (matches.length > 0) {
                 // Filter out matches where user explicitly removed this transaction from the partner
                 const filteredMatches = matches.filter((m) => {
@@ -136,6 +139,17 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
             await batch.commit();
         }
         console.log(`Partner ${partnerData.name}: auto-matched ${autoMatched} transactions, added suggestions to ${suggestionsAdded}`);
+        // Chain category matching after partner matching completes
+        // Categories can use partnerId for 85% confidence matching
+        if (processedTransactionIds.length > 0) {
+            try {
+                const categoryResult = await (0, matchCategories_1.matchCategoriesForTransactions)(userId, processedTransactionIds);
+                console.log(`Category matching chained: ${categoryResult.autoMatched} auto-matched, ${categoryResult.withSuggestions} with suggestions`);
+            }
+            catch (err) {
+                console.error("Failed to chain category matching:", err);
+            }
+        }
     }
     catch (error) {
         console.error(`Error re-matching transactions for partner ${partnerId}:`, error);

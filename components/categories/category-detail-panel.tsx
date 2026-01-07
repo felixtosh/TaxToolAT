@@ -33,7 +33,7 @@ interface CategoryDetailPanelProps {
 }
 
 export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelProps) {
-  const { updateCategory } = useNoReceiptCategories();
+  const { updateCategory, clearRemoval } = useNoReceiptCategories();
   const { partners: allPartners } = usePartners();
   const [manualTransactions, setManualTransactions] = useState<Transaction[]>([]);
   const [autoTransactions, setAutoTransactions] = useState<Transaction[]>([]);
@@ -151,6 +151,10 @@ export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelPr
     await updateCategory(category.id, {
       matchedPartnerIds: updatedPartnerIds,
     });
+  };
+
+  const handleClearManualRemoval = async (transactionId: string) => {
+    await clearRemoval(category.id, transactionId);
   };
 
   return (
@@ -424,26 +428,36 @@ export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelPr
                   const tx = manualRemovalTransactions.find(t => t.id === removal.transactionId);
                   const transactionId = tx?.id || removal.transactionId;
                   return (
-                    <Link
+                    <div
                       key={transactionId}
-                      href={`/transactions?id=${transactionId}`}
                       className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
                     >
-                      <div className="min-w-0 flex-1">
+                      <Link
+                        href={`/transactions?id=${transactionId}`}
+                        className="min-w-0 flex-1"
+                      >
                         <p className="text-sm truncate">{tx?.name || removal.name || removal.partner || "Unknown"}</p>
                         <p className="text-xs text-muted-foreground">
                           {tx?.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
                         </p>
-                      </div>
+                      </Link>
                       <div className="flex items-center gap-2 shrink-0">
                         {tx && (
                           <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
                             {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
                           </span>
                         )}
-                        <X className="h-4 w-4 text-muted-foreground" />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => handleClearManualRemoval(transactionId)}
+                          title="Allow this transaction to be auto-matched again"
+                        >
+                          <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                        </Button>
                       </div>
-                    </Link>
+                    </div>
                   );
                 })}
                 {uniqueRemovals.length > 10 && (

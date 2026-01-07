@@ -13,6 +13,8 @@ import {
   increment,
   arrayUnion,
 } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/lib/firebase/config";
 import {
   UserNoReceiptCategory,
   NoReceiptCategoryId,
@@ -393,6 +395,27 @@ export async function removeCategoryFromTransaction(
       console.error("Failed to unlearn category pattern on manual removal:", error);
     });
   }
+
+  // Trigger re-matching to find a new category for this transaction
+  triggerCategoryMatching([transactionId]).catch((error) => {
+    console.error("Failed to trigger category re-matching:", error);
+  });
+}
+
+/**
+ * Trigger category matching for specific transactions via Cloud Function.
+ * Non-blocking - runs in background.
+ */
+async function triggerCategoryMatching(transactionIds: string[]): Promise<void> {
+  const matchCategories = httpsCallable<
+    { transactionIds: string[] },
+    { processed: number; autoMatched: number; withSuggestions: number }
+  >(functions, "matchCategories");
+
+  const result = await matchCategories({ transactionIds });
+  console.log(
+    `[Category Re-match] Processed ${result.data.processed}, auto-matched ${result.data.autoMatched}, suggestions ${result.data.withSuggestions}`
+  );
 }
 
 // ============ Pattern Learning ============
@@ -597,6 +620,38 @@ export async function removePartnerFromCategory(
   await updateDoc(doc(ctx.db, CATEGORIES_COLLECTION, categoryId), {
     matchedPartnerIds: updatedPartnerIds,
     updatedAt: Timestamp.now(),
+  });
+}
+
+/**
+ * Remove a manual removal entry from a category.
+ * This allows the transaction to be auto-matched to this category again.
+ */
+export async function clearManualRemoval(
+  ctx: OperationsContext,
+  categoryId: string,
+  transactionId: string
+): Promise<void> {
+  const category = await getUserCategory(ctx, categoryId);
+  if (!category) {
+    throw new Error(`Category ${categoryId} not found or access denied`);
+  }
+
+  const existingRemovals = category.manualRemovals || [];
+  const updatedRemovals = existingRemovals.filter(
+    (r) => r.transactionId !== transactionId
+  );
+
+  await updateDoc(doc(ctx.db, CATEGORIES_COLLECTION, categoryId), {
+    manualRemovals: updatedRemovals,
+    updatedAt: Timestamp.now(),
+  });
+
+  console.log(`[Category] Cleared manual removal for tx ${transactionId} from category ${categoryId}`);
+
+  // Trigger re-matching for this transaction since it's now eligible again
+  triggerCategoryMatching([transactionId]).catch((error) => {
+    console.error("Failed to trigger category re-matching after clearing removal:", error);
   });
 }
 

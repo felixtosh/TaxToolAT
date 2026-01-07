@@ -4,6 +4,7 @@ exports.matchPartners = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
 const partner_matcher_1 = require("../utils/partner-matcher");
+const matchCategories_1 = require("./matchCategories");
 const db = (0, firestore_1.getFirestore)();
 /**
  * Callable function to manually trigger partner matching
@@ -89,6 +90,7 @@ exports.matchPartners = (0, https_1.onCall)({
     let processed = 0;
     let autoMatched = 0;
     let withSuggestions = 0;
+    const processedTransactionIds = [];
     let batch = db.batch();
     let batchCount = 0;
     for (const txDoc of transactions) {
@@ -104,6 +106,7 @@ exports.matchPartners = (0, https_1.onCall)({
         };
         const matches = (0, partner_matcher_1.matchTransaction)(transaction, userPartners, globalPartners);
         processed++;
+        processedTransactionIds.push(txDoc.id);
         if (matches.length > 0) {
             // Filter out matches where user explicitly removed this transaction from the partner
             const filteredMatches = matches.filter((m) => {
@@ -172,6 +175,17 @@ exports.matchPartners = (0, https_1.onCall)({
         }
         catch (err) {
             console.error("Failed to create partner matching notification:", err);
+        }
+    }
+    // Chain category matching after partner matching completes
+    // Categories can use partnerId for 85% confidence matching
+    if (processedTransactionIds.length > 0) {
+        try {
+            const categoryResult = await (0, matchCategories_1.matchCategoriesForTransactions)(userId, processedTransactionIds);
+            console.log(`Category matching chained: ${categoryResult.autoMatched} auto-matched, ${categoryResult.withSuggestions} with suggestions`);
+        }
+        catch (err) {
+            console.error("Failed to chain category matching:", err);
         }
     }
     return {
