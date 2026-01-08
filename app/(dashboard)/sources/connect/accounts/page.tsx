@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
@@ -17,7 +17,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ArrowLeft, Building2, CheckCircle, Loader2, Link2, Plus } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatIban, normalizeIban } from "@/lib/import/deduplication";
 import { BankAccount } from "@/hooks/use-bank-connection";
 import { TransactionSource } from "@/types/source";
@@ -33,9 +32,11 @@ interface AccountSelection {
   selectedSourceId: string | null;
   newAccountName: string;
   matchedSourceId: string | null;
+  isAlreadyConnected: boolean;
+  existingSourceName?: string;
 }
 
-export default function SelectAccountsPage() {
+function SelectAccountsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const connectionId = searchParams.get("connectionId");
@@ -68,7 +69,7 @@ export default function SelectAccountsPage() {
 
         const bankAccounts: BankAccount[] = accountsData.accounts || [];
 
-        // Fetch existing unconnected sources
+        // Fetch ALL existing sources to check for duplicates
         const sourcesQuery = query(
           collection(db, "sources"),
           where("userId", "==", MOCK_USER_ID),
@@ -80,7 +81,7 @@ export default function SelectAccountsPage() {
           ...doc.data(),
         })) as TransactionSource[];
 
-        // Filter to only unconnected sources (no apiConfig or type !== "api")
+        // Filter to only unconnected sources (no apiConfig or type !== "api") for linking
         const unconnectedSources = allSources.filter(
           (s) => s.type !== "api" && !s.apiConfig
         );
@@ -92,7 +93,15 @@ export default function SelectAccountsPage() {
         const initialSelections = new Map<string, AccountSelection>();
         bankAccounts.forEach((account) => {
           const normalizedBankIban = normalizeIban(account.iban || "");
-          const matchedSource = unconnectedSources.find(
+
+          // Check if this IBAN already exists in ANY source (for duplicate prevention)
+          const existingSource = allSources.find(
+            (s) => s.iban && normalizeIban(s.iban) === normalizedBankIban
+          );
+          const isAlreadyConnected = !!existingSource;
+
+          // For linking, only check unconnected sources
+          const matchedUnconnectedSource = unconnectedSources.find(
             (s) => s.iban && normalizeIban(s.iban) === normalizedBankIban
           );
 
@@ -100,11 +109,13 @@ export default function SelectAccountsPage() {
             accountId: account.accountId,
             iban: account.iban,
             ownerName: account.ownerName || "Account",
-            selected: true, // Select all by default
-            mode: matchedSource ? "link" : "create",
-            selectedSourceId: matchedSource?.id || null,
+            selected: false, // Opt-in: user must explicitly select accounts to add
+            mode: matchedUnconnectedSource ? "link" : "create",
+            selectedSourceId: matchedUnconnectedSource?.id || null,
             newAccountName: account.ownerName || "New Account",
-            matchedSourceId: matchedSource?.id || null,
+            matchedSourceId: matchedUnconnectedSource?.id || null,
+            isAlreadyConnected,
+            existingSourceName: existingSource?.name,
           });
         });
 
@@ -350,12 +361,16 @@ interface AccountCardProps {
 
 function AccountCard({ account, selection, existingSources, onUpdate }: AccountCardProps) {
   const isMatched = selection.matchedSourceId !== null;
-  const matchedSource = existingSources.find((s) => s.id === selection.matchedSourceId);
+  const isAlreadyConnected = selection.isAlreadyConnected;
 
   return (
     <div
       className={`rounded-lg border p-4 space-y-3 transition-colors ${
-        selection.selected ? "border-primary bg-primary/5" : "opacity-60"
+        isAlreadyConnected
+          ? "opacity-50 bg-muted/30"
+          : selection.selected
+          ? "border-primary bg-primary/5"
+          : "opacity-60"
       }`}
     >
       {/* Header with checkbox */}
@@ -364,23 +379,33 @@ function AccountCard({ account, selection, existingSources, onUpdate }: AccountC
           checked={selection.selected}
           onCheckedChange={(checked: boolean | "indeterminate") => onUpdate({ selected: checked === true })}
           className="mt-1"
+          disabled={isAlreadyConnected}
         />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <Building2 className="h-4 w-4 text-muted-foreground" />
             <p className="font-medium">{account.ownerName || "Account"}</p>
-            {isMatched && (
+            {isAlreadyConnected ? (
+              <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                Already connected
+              </span>
+            ) : isMatched ? (
               <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
                 IBAN Match
               </span>
-            )}
+            ) : null}
           </div>
           <p className="text-sm font-mono text-muted-foreground">{formatIban(account.iban)}</p>
+          {isAlreadyConnected && selection.existingSourceName && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Linked to: {selection.existingSourceName}
+            </p>
+          )}
         </div>
       </div>
 
-      {/* Mode selection */}
-      {selection.selected && (
+      {/* Mode selection - only show for selected non-connected accounts */}
+      {selection.selected && !isAlreadyConnected && (
         <div className="pl-7 space-y-3">
           <Select
             value={selection.mode === "link" ? `link:${selection.selectedSourceId}` : "create"}
@@ -442,5 +467,26 @@ function AccountCard({ account, selection, existingSources, onUpdate }: AccountC
         </div>
       )}
     </div>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="container max-w-2xl mx-auto py-8">
+      <Card>
+        <CardContent className="py-8 text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-muted-foreground" />
+          <p className="text-muted-foreground">Loading...</p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+export default function SelectAccountsPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <SelectAccountsContent />
+    </Suspense>
   );
 }

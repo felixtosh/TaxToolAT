@@ -21,7 +21,7 @@ import {
 } from "@/lib/import/deduplication";
 import { autoMatchColumns, validateMappings } from "@/lib/import/field-matcher";
 import { parseCSV } from "@/lib/import/csv-parser";
-import { createNotification, OperationsContext } from "@/lib/operations";
+import { createNotification, uploadImportCSV, OperationsContext } from "@/lib/operations";
 
 const MOCK_USER_ID = "dev-user-123";
 const BATCH_SIZE = 500; // Firestore batch limit
@@ -45,6 +45,8 @@ export interface ImportState {
     errorDetails: { row: number; message: string; rowData: Record<string, string> }[];
   } | null;
   error: string | null;
+  /** Full CSV content stored for re-mapping later */
+  csvContent: string | null;
 }
 
 export function useImport(source: TransactionSource | null) {
@@ -57,6 +59,7 @@ export function useImport(source: TransactionSource | null) {
     progress: 0,
     results: null,
     error: null,
+    csvContent: null,
   });
 
   // Operations context for notifications
@@ -71,10 +74,14 @@ export function useImport(source: TransactionSource | null) {
   // Returns true when file is ready to proceed to mapping step
   const handleFileAnalyzed = useCallback(
     async (analysis: CSVAnalysis, file: File): Promise<boolean> => {
+      // Read the full CSV content for later storage (re-mapping feature)
+      const csvContent = await file.text();
+
       setState((s) => ({
         ...s,
         file,
         analysis,
+        csvContent,
         error: null,
         isMatching: true,
       }));
@@ -333,6 +340,7 @@ export function useImport(source: TransactionSource | null) {
           partnerMatchConfidence: null,
           partnerSuggestions: [],
           importJobId,
+          csvRowIndex: i, // Row index for re-mapping feature
           userId: MOCK_USER_ID,
           createdAt: now,
           updatedAt: now,
@@ -392,9 +400,40 @@ export function useImport(source: TransactionSource | null) {
       });
     }
 
+    // Upload CSV to storage for re-mapping feature
+    let csvStoragePath: string | undefined;
+    let csvDownloadUrl: string | undefined;
+    if (state.csvContent) {
+      try {
+        const csvUploadResult = await uploadImportCSV(
+          MOCK_USER_ID,
+          importJobId,
+          state.csvContent
+        );
+        csvStoragePath = csvUploadResult.storagePath;
+        csvDownloadUrl = csvUploadResult.downloadUrl;
+      } catch (err) {
+        console.error("Failed to upload CSV for re-mapping:", err);
+        // Non-fatal - continue with import record creation
+      }
+    }
+
     // Save import record to Firestore
     const importDocRef = doc(db, "imports", importJobId);
-    await setDoc(importDocRef, {
+
+    // Build import record data
+    // Use explicit null for queryable fields (Firestore queries need null, not missing fields)
+    // Sanitize mappings to convert undefined to null (Firestore rejects undefined)
+    const sanitizedMappings = state.mappings?.map((m) => ({
+      csvColumn: m.csvColumn,
+      targetField: m.targetField,
+      confidence: m.confidence,
+      userConfirmed: m.userConfirmed,
+      keepAsMetadata: m.keepAsMetadata,
+      format: m.format ?? null, // Convert undefined to null
+    })) ?? [];
+
+    const importRecordData = {
       sourceId: source.id,
       fileName: state.file.name,
       importedCount,
@@ -403,7 +442,15 @@ export function useImport(source: TransactionSource | null) {
       totalRows: rows.length,
       userId: MOCK_USER_ID,
       createdAt: Timestamp.now(),
-    });
+      // CSV storage fields - use null for queryability (e.g., find imports without CSV)
+      csvStoragePath: csvStoragePath ?? null,
+      csvDownloadUrl: csvDownloadUrl ?? null,
+      // Parse options and mappings for re-mapping feature
+      parseOptions: state.analysis?.options ?? null,
+      fieldMappings: sanitizedMappings,
+    };
+
+    await setDoc(importDocRef, importRecordData);
 
     // Create notification for the import
     if (importedCount > 0) {
@@ -434,7 +481,7 @@ export function useImport(source: TransactionSource | null) {
         errorDetails: errors,
       },
     }));
-  }, [source, state.file, state.analysis, state.mappings, ctx]);
+  }, [source, state.file, state.analysis, state.mappings, state.csvContent, ctx]);
 
   const reset = useCallback(() => {
     setState({
@@ -446,6 +493,7 @@ export function useImport(source: TransactionSource | null) {
       progress: 0,
       results: null,
       error: null,
+      csvContent: null,
     });
   }, []);
 

@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { httpsCallable } from "firebase/functions";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
-import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
+import { UserPartner, GlobalPartner, PartnerSuggestion, PartnerMatchResult } from "@/types/partner";
 import { Button } from "@/components/ui/button";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
@@ -22,7 +22,7 @@ function FieldRow({ label, children, className }: { label: string; children: Rea
   return (
     <div className={cn("flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4", className)}>
       <span className="text-sm text-muted-foreground shrink-0 sm:w-32">{label}</span>
-      <span className="text-sm">{children}</span>
+      <div className="text-sm w-0 flex-1">{children}</div>
     </div>
   );
 }
@@ -40,6 +40,8 @@ interface TransactionDetailsProps {
   ) => Promise<void>;
   onRemovePartner: () => Promise<void>;
   onCreatePartner: (data: { name: string; aliases?: string[]; vatId?: string; ibans?: string[]; website?: string; country?: string; notes?: string }) => Promise<string>;
+  /** Pre-computed pattern suggestion from parent (ensures consistency with list view) */
+  patternSuggestion?: PartnerMatchResult | null;
 }
 
 export function TransactionDetails({
@@ -50,6 +52,7 @@ export function TransactionDetails({
   onAssignPartner,
   onRemovePartner,
   onCreatePartner,
+  patternSuggestion,
 }: TransactionDetailsProps) {
   const router = useRouter();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
@@ -60,8 +63,43 @@ export function TransactionDetails({
   const autoAppliedRef = useRef<Set<string>>(new Set());
 
   // Get partner suggestions and assigned partner
-  const suggestions = usePartnerSuggestions(transaction, userPartners, globalPartners);
+  const hookSuggestions = usePartnerSuggestions(transaction, userPartners, globalPartners);
   const assignedPartner = useAssignedPartner(transaction, userPartners, globalPartners);
+
+  // Merge passed-in pattern suggestion with hook suggestions
+  // This ensures consistency with the list view which uses the same pre-computed pattern
+  const suggestions = (() => {
+    if (!patternSuggestion) return hookSuggestions;
+
+    // Find the partner for the pattern suggestion
+    const partner = userPartners.find((p) => p.id === patternSuggestion.partnerId);
+    if (!partner) return hookSuggestions;
+
+    // Check if this partner is already in suggestions
+    const alreadyPresent = hookSuggestions.some((s) => s.partnerId === patternSuggestion.partnerId);
+    if (alreadyPresent) {
+      // Update confidence if pattern suggestion is higher
+      return hookSuggestions.map((s) => {
+        if (s.partnerId === patternSuggestion.partnerId && patternSuggestion.confidence > s.confidence) {
+          return { ...s, confidence: patternSuggestion.confidence };
+        }
+        return s;
+      }).sort((a, b) => b.confidence - a.confidence);
+    }
+
+    // Add pattern suggestion and sort
+    const combined = [
+      {
+        partnerId: patternSuggestion.partnerId,
+        partnerType: patternSuggestion.partnerType,
+        confidence: patternSuggestion.confidence,
+        source: patternSuggestion.source,
+        partner,
+      },
+      ...hookSuggestions,
+    ];
+    return combined.sort((a, b) => b.confidence - a.confidence);
+  })();
 
   // Trigger partner matching when opening a transaction without partner/suggestions
   useEffect(() => {

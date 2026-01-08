@@ -4,6 +4,7 @@ import {
   orderBy,
   where,
   getDocs,
+  getDoc,
   doc,
   deleteDoc,
   writeBatch,
@@ -11,6 +12,7 @@ import {
 import { ImportRecord } from "@/types/import";
 import { OperationsContext } from "./types";
 import { deleteFileConnectionsForTransaction } from "./file-ops";
+import { deleteImportCSV } from "./csv-storage-ops";
 
 const IMPORTS_COLLECTION = "imports";
 const TRANSACTIONS_COLLECTION = "transactions";
@@ -37,12 +39,43 @@ export async function listImports(
 }
 
 /**
- * Delete an import and all its associated transactions
+ * Get a single import record by ID
+ */
+export async function getImportRecord(
+  ctx: OperationsContext,
+  importId: string
+): Promise<ImportRecord | null> {
+  const docRef = doc(ctx.db, IMPORTS_COLLECTION, importId);
+  const snapshot = await getDoc(docRef);
+
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  const data = snapshot.data();
+  if (data.userId !== ctx.userId) {
+    return null;
+  }
+
+  return { id: snapshot.id, ...data } as ImportRecord;
+}
+
+/**
+ * Delete an import and all its associated transactions.
+ * Also deletes the stored CSV file if one exists.
  */
 export async function deleteImport(
   ctx: OperationsContext,
   importId: string
 ): Promise<{ deletedTransactions: number }> {
+  // Get import record first to check for CSV storage path
+  const importRecord = await getImportRecord(ctx, importId);
+
+  // Delete stored CSV file if it exists
+  if (importRecord?.csvStoragePath) {
+    await deleteImportCSV(importRecord.csvStoragePath);
+  }
+
   // Find all transactions with this importJobId
   const txQuery = query(
     collection(ctx.db, TRANSACTIONS_COLLECTION),

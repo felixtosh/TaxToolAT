@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { initializeApp, getApps } from "firebase/app";
 import {
   getFirestore,
+  connectFirestoreEmulator,
   doc,
   getDoc,
   updateDoc,
@@ -26,6 +27,16 @@ const firebaseConfig = {
 const appName = "truelayer-accounts";
 const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
 const db = getFirestore(app);
+
+// Connect to emulator in development
+if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_USE_EMULATORS !== "false") {
+  try {
+    connectFirestoreEmulator(db, "localhost", 8080);
+    console.log("[TrueLayer Accounts] Connected to Firestore emulator");
+  } catch {
+    // Already connected
+  }
+}
 
 const MOCK_USER_ID = "dev-user-123";
 const CONNECTIONS_COLLECTION = "truelayerConnections";
@@ -109,7 +120,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { connectionId, accountId, name, sourceId } = body;
 
+    console.log("[TrueLayer Accounts POST] Request body:", { connectionId, accountId, name, sourceId });
+
     if (!connectionId || !accountId) {
+      console.log("[TrueLayer Accounts POST] Missing required fields");
       return NextResponse.json(
         { error: "connectionId and accountId are required" },
         { status: 400 }
@@ -195,6 +209,7 @@ export async function POST(request: NextRequest) {
 
     const sourceData = {
       name,
+      accountKind: "bank_account" as const,
       iban: iban ? normalizeIban(iban) : "",
       bic: account.account_number?.swift_bic || null,
       bankName: connection.providerName,
@@ -207,7 +222,10 @@ export async function POST(request: NextRequest) {
       updatedAt: now,
     };
 
+    console.log("[TrueLayer Accounts POST] Creating source with data:", JSON.stringify(sourceData, null, 2));
+
     const docRef = await addDoc(collection(db, "sources"), sourceData);
+    console.log("[TrueLayer Accounts POST] Source created with ID:", docRef.id);
 
     // Trigger initial sync in background (don't wait)
     triggerInitialSync(docRef.id, connection.accessToken, accountId, sourceData.iban).catch(
@@ -216,7 +234,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ sourceId: docRef.id, linked: false });
   } catch (error) {
-    console.error("Error creating/linking source:", error);
+    console.error("[TrueLayer Accounts POST] Error creating/linking source:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to create/link source" },
       { status: 500 }

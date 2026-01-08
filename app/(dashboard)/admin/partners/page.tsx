@@ -1,12 +1,20 @@
 "use client";
 
-import { useState, useCallback, Suspense } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
-import { AdminPartnersTable } from "@/components/admin/admin-partners-table";
+import { AdminPartnersTable, CandidateMatch } from "@/components/admin/admin-partners-table";
 import { AddGlobalPartnerDialog } from "@/components/admin/add-global-partner-dialog";
-import { GlobalPartner, GlobalPartnerFormData } from "@/types/partner";
+import { GlobalPartnerDetailPanel } from "@/components/admin/global-partner-detail-panel";
+import { CandidateDetailPanel } from "@/components/admin/candidate-detail-panel";
+import { GlobalPartner, GlobalPartnerFormData, PromotionCandidate } from "@/types/partner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+
+const PANEL_WIDTH_KEY = "globalPartnerDetailPanelWidth";
+const DEFAULT_PANEL_WIDTH = 480;
+const MIN_PANEL_WIDTH = 380;
+const MAX_PANEL_WIDTH = 700;
 
 function AdminPartnersContent() {
   const router = useRouter();
@@ -28,9 +36,72 @@ function AdminPartnersContent() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingPartner, setEditingPartner] = useState<GlobalPartner | null>(null);
+  const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH);
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
-  // Get search value from URL
+  // Selected candidate state (separate from URL-based global partner selection)
+  const [selectedCandidate, setSelectedCandidate] = useState<{
+    candidate: PromotionCandidate;
+    match: CandidateMatch | null;
+  } | null>(null);
+
+  // Get selected partner ID and search value from URL
+  const selectedId = searchParams.get("id");
+  const selectedCandidateId = searchParams.get("candidateId");
   const searchValue = searchParams.get("search") || "";
+
+  // Find selected partner
+  const selectedPartner = useMemo(() => {
+    if (!selectedId || !globalPartners.length) return null;
+    return globalPartners.find((p) => p.id === selectedId) || null;
+  }, [selectedId, globalPartners]);
+
+  // Determine if panel should be shown
+  const showPanel = selectedPartner || selectedCandidate;
+
+  // Load panel width from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem(PANEL_WIDTH_KEY);
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (!isNaN(parsed) && parsed >= MIN_PANEL_WIDTH && parsed <= MAX_PANEL_WIDTH) {
+        setPanelWidth(parsed);
+      }
+    }
+  }, []);
+
+  // Handle resize
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    resizeRef.current = { startX: e.clientX, startWidth: panelWidth };
+  }, [panelWidth]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!resizeRef.current) return;
+      const delta = resizeRef.current.startX - e.clientX;
+      const newWidth = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, resizeRef.current.startWidth + delta));
+      setPanelWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      localStorage.setItem(PANEL_WIDTH_KEY, panelWidth.toString());
+      resizeRef.current = null;
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing, panelWidth]);
 
   // Update search in URL
   const handleSearchChange = useCallback(
@@ -48,6 +119,44 @@ function AdminPartnersContent() {
     },
     [router, searchParams]
   );
+
+  // Select partner (update URL)
+  const handleSelectPartner = useCallback(
+    (partner: GlobalPartner) => {
+      // Clear candidate selection when selecting a partner
+      setSelectedCandidate(null);
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("id", partner.id);
+      params.delete("candidateId");
+      router.push(`/admin/partners?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams]
+  );
+
+  // Select candidate
+  const handleSelectCandidate = useCallback(
+    (candidate: PromotionCandidate, match: CandidateMatch | null) => {
+      // Clear partner selection when selecting a candidate
+      setSelectedCandidate({ candidate, match });
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("id");
+      params.set("candidateId", candidate.id);
+      router.push(`/admin/partners?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams]
+  );
+
+  // Close detail panel (remove ID from URL)
+  const handleCloseDetail = useCallback(() => {
+    setSelectedCandidate(null);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("id");
+    params.delete("candidateId");
+    const newUrl = params.toString()
+      ? `/admin/partners?${params.toString()}`
+      : "/admin/partners";
+    router.push(newUrl, { scroll: false });
+  }, [router, searchParams]);
 
   const handleAdd = () => {
     setEditingPartner(null);
@@ -70,6 +179,10 @@ function AdminPartnersContent() {
   const handleDelete = async (partnerId: string) => {
     if (confirm("Are you sure you want to delete this partner?")) {
       await deletePartner(partnerId);
+      // Close panel if the deleted partner was selected
+      if (selectedId === partnerId) {
+        handleCloseDetail();
+      }
     }
   };
 
@@ -83,24 +196,85 @@ function AdminPartnersContent() {
     }
   };
 
+  // Scroll to selected partner when it changes from URL
+  useEffect(() => {
+    if (selectedId && !loading) {
+      setTimeout(() => {
+        const element = document.querySelector(
+          `[data-partner-id="${selectedId}"]`
+        );
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 100);
+    }
+  }, [selectedId, loading]);
+
   return (
     <div className="h-full overflow-hidden">
-      <AdminPartnersTable
-        globalPartners={globalPartners}
-        candidates={promotionCandidates}
-        loading={loading}
-        onAdd={handleAdd}
-        onEdit={handleEdit}
-        onDelete={handleDelete}
-        onApprove={handleApprove}
-        onReject={handleReject}
-        onGenerateCandidates={generateCandidates}
-        searchValue={searchValue}
-        onSearchChange={handleSearchChange}
-        presetPartnersEnabled={presetPartnersEnabled}
-        presetPartnersLoading={presetPartnersLoading}
-        onTogglePresetPartners={togglePresetPartners}
-      />
+      {/* Main content - adjusts margin when panel is open */}
+      <div
+        className="h-full transition-[margin] duration-200 ease-in-out"
+        style={{ marginRight: showPanel ? panelWidth : 0 }}
+      >
+        <AdminPartnersTable
+          globalPartners={globalPartners}
+          candidates={promotionCandidates}
+          loading={loading}
+          onAdd={handleAdd}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          onRowClick={handleSelectPartner}
+          onCandidateClick={handleSelectCandidate}
+          selectedRowId={selectedId}
+          selectedCandidateId={selectedCandidate?.candidate.id || null}
+          onGenerateCandidates={generateCandidates}
+          searchValue={searchValue}
+          onSearchChange={handleSearchChange}
+          presetPartnersEnabled={presetPartnersEnabled}
+          presetPartnersLoading={presetPartnersLoading}
+          onTogglePresetPartners={togglePresetPartners}
+        />
+      </div>
+
+      {/* Right sidebar - fixed position */}
+      {showPanel && (
+        <div
+          className="fixed right-0 top-14 bottom-0 z-30 bg-background border-l flex"
+          style={{ width: panelWidth }}
+        >
+          {/* Resize handle */}
+          <div
+            className={cn(
+              "w-1 cursor-col-resize hover:bg-primary/20 transition-colors flex-shrink-0",
+              isResizing && "bg-primary/30"
+            )}
+            onMouseDown={handleResizeStart}
+          />
+          {/* Panel content */}
+          <div className="flex-1 overflow-hidden">
+            {selectedPartner ? (
+              <GlobalPartnerDetailPanel
+                partner={selectedPartner}
+                onClose={handleCloseDetail}
+              />
+            ) : selectedCandidate ? (
+              <CandidateDetailPanel
+                candidate={selectedCandidate.candidate}
+                match={selectedCandidate.match}
+                onClose={handleCloseDetail}
+                onApprove={handleApprove}
+                onReject={handleReject}
+              />
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* Prevent text selection while resizing */}
+      {isResizing && (
+        <div className="fixed inset-0 z-50 cursor-col-resize" />
+      )}
 
       <AddGlobalPartnerDialog
         open={isDialogOpen}

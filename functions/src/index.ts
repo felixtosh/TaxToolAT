@@ -41,3 +41,8 @@ export { extractFileData } from "./extraction/extractFileData";
 
 // Export file-transaction matching functions
 export { matchFileTransactions } from "./matching/matchFileTransactions";
+export { matchFilesForPartner } from "./matching/matchFilesForPartner";
+
+// Export AI helper functions
+export { generateFileSearchQuery } from "./ai/generateFileSearchQuery";
+export { lookupCompany } from "./ai/lookupCompany";

@@ -388,7 +388,8 @@ export const triggerGoCardlessSync = onCall<{ sourceId: string }>(
     secrets: [gocardlessSecretId, gocardlessSecretKey],
   },
   async (request) => {
-    const userId = request.auth?.uid || "dev-user-123";
+    // TODO: Use real auth when ready for multi-user
+    const userId = "dev-user-123";
     const { sourceId } = request.data;
 
     if (!sourceId) {

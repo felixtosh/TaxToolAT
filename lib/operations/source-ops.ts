@@ -12,12 +12,14 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { TransactionSource, SourceFormData, SavedFieldMapping } from "@/types/source";
+import { TrueLayerApiConfig } from "@/types/truelayer";
 import { normalizeIban } from "@/lib/import/deduplication";
 import { OperationsContext } from "./types";
 import { deleteImportsBySource } from "./import-ops";
 import { deleteTransactionsBySource } from "./transaction-ops";
 
 const SOURCES_COLLECTION = "sources";
+const TRUELAYER_CONNECTIONS_COLLECTION = "truelayerConnections";
 
 /**
  * List all active sources for the current user
@@ -115,7 +117,8 @@ export async function updateSource(
  * 1. Clears linkedSourceId on any credit cards linked to this bank account
  * 2. Deletes all imports for this source (and their transactions)
  * 3. Deletes any remaining transactions without an import
- * 4. Deletes the source document itself
+ * 4. Cleans up TrueLayer/GoCardless connection if this was an API source
+ * 5. Deletes the source document itself
  */
 export async function deleteSource(
   ctx: OperationsContext,
@@ -148,7 +151,21 @@ export async function deleteSource(
   // 3. Delete any orphaned transactions (e.g., those without importJobId)
   const txResult = await deleteTransactionsBySource(ctx, sourceId);
 
-  // 4. Delete the source document itself
+  // 4. Clean up TrueLayer connection if this was a TrueLayer API source
+  if (existing.type === "api" && existing.apiConfig) {
+    const apiConfig = existing.apiConfig as unknown as TrueLayerApiConfig;
+    if (apiConfig.provider === "truelayer" && apiConfig.connectionId) {
+      try {
+        const connectionRef = doc(ctx.db, TRUELAYER_CONNECTIONS_COLLECTION, apiConfig.connectionId);
+        await deleteDoc(connectionRef);
+      } catch (err) {
+        // Log but don't fail - connection might already be deleted
+        console.warn(`Failed to delete TrueLayer connection ${apiConfig.connectionId}:`, err);
+      }
+    }
+  }
+
+  // 5. Delete the source document itself
   const docRef = doc(ctx.db, SOURCES_COLLECTION, sourceId);
   await deleteDoc(docRef);
 

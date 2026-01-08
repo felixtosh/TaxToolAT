@@ -1,8 +1,21 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { format } from "date-fns";
-import { Search, FileText, Image, Check, Link2 } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { format, subDays, addDays } from "date-fns";
+import {
+  Search,
+  FileText,
+  Image,
+  Check,
+  Link2,
+  Mail,
+  HardDrive,
+  Loader2,
+  X,
+  Calendar,
+  Sparkles,
+  BookmarkCheck,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,24 +26,56 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { TaxFile } from "@/types/file";
-import { useFiles } from "@/hooks/use-files";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
 import { FilePreview } from "./file-preview";
-import { Separator } from "@/components/ui/separator";
+import {
+  useUnifiedFileSearch,
+  UnifiedSearchResult,
+  TransactionInfo,
+} from "@/hooks/use-unified-file-search";
+import { usePartners } from "@/hooks/use-partners";
+import { learnFileSourcePattern } from "@/lib/operations";
+import { db, functions } from "@/lib/firebase/config";
+import { httpsCallable } from "firebase/functions";
+
+const MOCK_USER_ID = "dev-user-123";
 
 interface ConnectFileDialogProps {
   open: boolean;
   onClose: () => void;
-  onSelect: (fileId: string) => Promise<void>;
+  /** Called when a file is selected - receives fileId for local files, or saves Gmail attachment first */
+  onSelect: (
+    fileId: string,
+    sourceInfo?: {
+      sourceType: "local" | "gmail";
+      searchPattern?: string;
+      gmailIntegrationId?: string;
+      gmailMessageId?: string;
+    }
+  ) => Promise<void>;
   /** File IDs that are already connected (to show as disabled) */
   connectedFileIds?: string[];
-  /** Transaction info for display */
+  /** Transaction info for display, search, and pattern learning */
   transactionInfo?: {
     date: Date;
     amount: number;
     currency: string;
+    /** Counterparty name */
     partner?: string;
+    /** Transaction description/booking text */
+    name?: string;
+    /** Bank reference */
+    reference?: string;
+    /** Counterparty IBAN */
+    partnerIban?: string;
+    partnerId?: string;
+    transactionId?: string;
   };
 }
 
@@ -41,38 +86,296 @@ export function ConnectFileDialog({
   connectedFileIds = [],
   transactionInfo,
 }: ConnectFileDialogProps) {
-  const [search, setSearch] = useState("");
-  const [selectedFile, setSelectedFile] = useState<TaxFile | null>(null);
+  const [selectedResult, setSelectedResult] = useState<UnifiedSearchResult | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
+  const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
+  const [isGeneratingQuery, setIsGeneratingQuery] = useState(false);
+  const [querySource, setQuerySource] = useState<"learned" | "ai" | "simple" | null>(null);
+  const hasTriedAutoSearch = useRef(false);
 
-  const { files, loading } = useFiles();
+  // Get partner info for pattern learning
+  const { partners } = usePartners();
+  const partner = useMemo(
+    () => (transactionInfo?.partnerId ? partners.find((p) => p.id === transactionInfo.partnerId) : null),
+    [partners, transactionInfo?.partnerId]
+  );
 
-  // Filter files by search
-  const filteredFiles = useMemo(() => {
-    if (!search) return files;
-    const searchLower = search.toLowerCase();
-    return files.filter(
-      (f) =>
-        f.fileName.toLowerCase().includes(searchLower) ||
-        (f.extractedPartner?.toLowerCase() || "").includes(searchLower)
-    );
-  }, [files, search]);
+  // Build transaction info for the search hook
+  const searchTransactionInfo: TransactionInfo | null = useMemo(() => {
+    if (!transactionInfo) return null;
+    return {
+      id: transactionInfo.transactionId || "",
+      date: transactionInfo.date,
+      amount: transactionInfo.amount,
+      currency: transactionInfo.currency,
+      partner: transactionInfo.partner,
+      partnerId: transactionInfo.partnerId,
+    };
+  }, [transactionInfo]);
+
+  // Unified search hook
+  const {
+    results,
+    loading,
+    error,
+    search,
+    clear,
+    hasSearched,
+    searchQuery,
+    setSearchQuery,
+  } = useUnifiedFileSearch(
+    searchTransactionInfo || {
+      id: "",
+      date: new Date(),
+      amount: 0,
+      currency: "EUR",
+    },
+    partner
+  );
+
+  // Get best learned file source pattern for this partner
+  const bestLearnedPattern = useMemo(() => {
+    if (!partner?.fileSourcePatterns?.length) return null;
+    // Sort by usage count (most used first), then by confidence
+    const sorted = [...partner.fileSourcePatterns].sort((a, b) => {
+      if (b.usageCount !== a.usageCount) return b.usageCount - a.usageCount;
+      return b.confidence - a.confidence;
+    });
+    return sorted[0];
+  }, [partner?.fileSourcePatterns]);
+
+  // Generate simple fallback search (no AI) - returns single keyword
+  const simpleSearch = useMemo(() => {
+    const cleanText = (text: string) => {
+      const cleaned = text
+        .toLowerCase()
+        .replace(/^(pp\*|sq\*|paypal\s*\*|ec\s+|sepa\s+)/i, "")
+        .replace(/\.(com|de|at|ch|eu|net|org|io)(\/.*)?$/i, "")
+        .replace(/\s+(gmbh|ag|inc|llc|ltd|sagt danke|marketplace|lastschrift|gutschrift|ab|bv|nv).*$/i, "")
+        .replace(/\s+\d{4,}.*$/, "")
+        .replace(/\d{6,}\*+\d+/g, "")
+        .replace(/[*]{3,}/g, "")
+        .replace(/[^a-z\s]/g, " ")
+        .trim();
+      // Return first word only
+      const words = cleaned.split(/\s+/).filter((w) => w.length > 2);
+      return words[0] || "";
+    };
+
+    // Try fields in priority order
+    const candidates = [
+      partner?.name,
+      transactionInfo?.partner,
+      transactionInfo?.name,
+      transactionInfo?.reference,
+    ].filter(Boolean);
+
+    for (const text of candidates) {
+      const cleaned = cleanText(text!);
+      if (cleaned && cleaned.length >= 2) {
+        return cleaned;
+      }
+    }
+    return "";
+  }, [partner?.name, transactionInfo?.partner, transactionInfo?.name, transactionInfo?.reference]);
+
+  // Initialize date range from transaction
+  useEffect(() => {
+    if (open && transactionInfo?.date && dateFrom === undefined && dateTo === undefined) {
+      setDateFrom(subDays(transactionInfo.date, 30));
+      setDateTo(addDays(transactionInfo.date, 7));
+    }
+  }, [open, transactionInfo, dateFrom, dateTo]);
 
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
-      setSearch("");
-      setSelectedFile(null);
+      setSelectedResult(null);
       setIsConnecting(false);
+      setQuerySource(null);
+      hasTriedAutoSearch.current = false;
+      clear();
+      setDateFrom(undefined);
+      setDateTo(undefined);
     }
-  }, [open]);
+  }, [open, clear]);
 
+  // Auto-run search when dialog opens
+  // Priority: 1) Learned pattern, 2) AI-generated query, 3) Simple extraction
+  useEffect(() => {
+    if (!open || hasSearched || hasTriedAutoSearch.current) return;
+    if (!transactionInfo) return;
+
+    hasTriedAutoSearch.current = true;
+
+    const runAutoSearch = async () => {
+      let queryToUse = "";
+
+      // 1. Check for learned pattern
+      if (bestLearnedPattern?.pattern) {
+        queryToUse = bestLearnedPattern.pattern;
+        setQuerySource("learned");
+        console.log(`[AutoSearch] Using learned pattern: "${queryToUse}"`);
+      } else {
+        // 2. Try AI-generated query via Cloud Function
+        setIsGeneratingQuery(true);
+        try {
+          const generateQuery = httpsCallable<
+            {
+              transactionName?: string;
+              transactionPartner?: string;
+              transactionReference?: string;
+              partnerIban?: string;
+              partnerName?: string;
+              amount?: number;
+              currency?: string;
+              date?: string;
+            },
+            { query: string; fallback?: boolean }
+          >(functions, "generateFileSearchQuery");
+
+          const result = await generateQuery({
+            transactionName: transactionInfo.name,
+            transactionPartner: transactionInfo.partner,
+            transactionReference: transactionInfo.reference,
+            partnerIban: transactionInfo.partnerIban,
+            partnerName: partner?.name,
+            amount: transactionInfo.amount,
+            currency: transactionInfo.currency,
+            date: format(transactionInfo.date, "yyyy-MM-dd"),
+          });
+
+          if (result.data.query) {
+            queryToUse = result.data.query;
+            setQuerySource(result.data.fallback ? "simple" : "ai");
+            console.log(`[AutoSearch] Using AI query: "${queryToUse}"`);
+          }
+        } catch (err) {
+          console.error("AI query generation failed:", err);
+        } finally {
+          setIsGeneratingQuery(false);
+        }
+
+        // 3. Fallback to simple extraction
+        if (!queryToUse && simpleSearch) {
+          queryToUse = simpleSearch;
+          setQuerySource("simple");
+          console.log(`[AutoSearch] Using simple extraction: "${queryToUse}"`);
+        }
+      }
+
+      // Run the search
+      if (queryToUse) {
+        setSearchQuery(queryToUse);
+        // Small delay to let state update
+        setTimeout(() => search(queryToUse), 50);
+      }
+    };
+
+    runAutoSearch();
+  }, [
+    open,
+    hasSearched,
+    transactionInfo,
+    partner?.name,
+    bestLearnedPattern,
+    simpleSearch,
+    search,
+    setSearchQuery,
+  ]);
+
+  const handleSearch = useCallback(() => {
+    search(searchQuery);
+  }, [search, searchQuery]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        handleSearch();
+      }
+    },
+    [handleSearch]
+  );
+
+  // Handle selecting a result (both local and Gmail)
   const handleSelect = async () => {
-    if (!selectedFile) return;
+    if (!selectedResult) return;
 
     setIsConnecting(true);
     try {
-      await onSelect(selectedFile.id);
+      if (selectedResult.type === "local" && selectedResult.fileId) {
+        // Local file - just connect it
+        await onSelect(selectedResult.fileId, {
+          sourceType: "local",
+          searchPattern: searchQuery || undefined,
+        });
+
+        // Learn pattern if partner assigned (only if partner exists locally)
+        if (partner && searchQuery && transactionInfo?.transactionId) {
+          try {
+            await learnFileSourcePattern(
+              { db, userId: MOCK_USER_ID },
+              partner.id,
+              transactionInfo.transactionId,
+              {
+                sourceType: "local",
+                searchPattern: searchQuery,
+              }
+            );
+          } catch (err) {
+            console.error("Failed to learn file source pattern:", err);
+          }
+        }
+      } else if (selectedResult.type === "gmail") {
+        // Gmail attachment - save it first, then connect
+        const response = await fetch("/api/gmail/attachment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            integrationId: selectedResult.integrationId,
+            messageId: selectedResult.messageId,
+            attachmentId: selectedResult.attachmentId,
+            mimeType: selectedResult.mimeType,
+            filename: selectedResult.filename,
+            gmailMessageSubject: selectedResult.emailSubject,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Failed to save attachment");
+        }
+
+        const data = await response.json();
+
+        // Connect the saved file
+        await onSelect(data.fileId, {
+          sourceType: "gmail",
+          searchPattern: searchQuery || undefined,
+          gmailIntegrationId: selectedResult.integrationId,
+          gmailMessageId: selectedResult.messageId,
+        });
+
+        // Learn pattern if partner assigned (only if partner exists locally)
+        if (partner && searchQuery && transactionInfo?.transactionId) {
+          try {
+            await learnFileSourcePattern(
+              { db, userId: MOCK_USER_ID },
+              partner.id,
+              transactionInfo.transactionId,
+              {
+                sourceType: "gmail",
+                searchPattern: searchQuery,
+                integrationId: selectedResult.integrationId,
+              }
+            );
+          } catch (err) {
+            console.error("Failed to learn file source pattern:", err);
+          }
+        }
+      }
+
       onClose();
     } catch (error) {
       console.error("Failed to connect file:", error);
@@ -89,7 +392,12 @@ export function ConnectFileDialog({
     }).format(amount / 100);
   };
 
-  const isFileConnected = (fileId: string) => connectedFileIds.includes(fileId);
+  const isFileConnected = (result: UnifiedSearchResult) => {
+    if (result.type === "local" && result.fileId) {
+      return connectedFileIds.includes(result.fileId);
+    }
+    return false;
+  };
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -105,50 +413,161 @@ export function ConnectFileDialog({
                   currency: transactionInfo.currency,
                 }).format(transactionInfo.amount / 100)}
               </span>
-              {transactionInfo.partner && ` &middot; ${transactionInfo.partner}`}
+              {transactionInfo.partner && ` · ${transactionInfo.partner}`}
             </p>
           )}
         </DialogHeader>
 
         <div className="flex flex-1 overflow-hidden">
-          {/* Left column: File search and list */}
+          {/* Left column: Search and results */}
           <div className="w-[350px] border-r flex flex-col">
             {/* Search */}
-            <div className="p-4 border-b">
+            <div className="p-4 border-b space-y-3">
+              {/* Query source indicator */}
+              {querySource && (
+                <div className="flex items-center gap-1.5 text-xs">
+                  {querySource === "learned" && (
+                    <Badge variant="secondary" className="gap-1 text-green-600 bg-green-50">
+                      <BookmarkCheck className="h-3 w-3" />
+                      Learned pattern
+                    </Badge>
+                  )}
+                  {querySource === "ai" && (
+                    <Badge variant="secondary" className="gap-1 text-purple-600 bg-purple-50">
+                      <Sparkles className="h-3 w-3" />
+                      AI suggested
+                    </Badge>
+                  )}
+                  {querySource === "simple" && (
+                    <Badge variant="outline" className="gap-1 text-muted-foreground">
+                      Auto-extracted
+                    </Badge>
+                  )}
+                </div>
+              )}
+
+              {/* Search input */}
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search files..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search files and Gmail..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setQuerySource(null); // Clear source when user types
+                  }}
+                  onKeyDown={handleKeyDown}
                   className="pl-9"
                 />
+                {isGeneratingQuery && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  </div>
+                )}
               </div>
+
+              {/* Date range */}
+              <div className="flex gap-2">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="flex-1 justify-start text-xs">
+                      <Calendar className="h-3 w-3 mr-1" />
+                      {dateFrom ? format(dateFrom, "MMM d, yyyy") : "From"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <CalendarComponent
+                      mode="single"
+                      selected={dateFrom}
+                      onSelect={setDateFrom}
+                      defaultMonth={dateFrom || transactionInfo?.date}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+                {dateFrom && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    onClick={() => setDateFrom(undefined)}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                )}
+
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="flex-1 justify-start text-xs">
+                      <Calendar className="h-3 w-3 mr-1" />
+                      {dateTo ? format(dateTo, "MMM d, yyyy") : "To"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <CalendarComponent
+                      mode="single"
+                      selected={dateTo}
+                      onSelect={setDateTo}
+                      defaultMonth={dateTo || transactionInfo?.date}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+                {dateTo && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    onClick={() => setDateTo(undefined)}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+
+              <Button onClick={handleSearch} disabled={loading} className="w-full">
+                {loading ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Search className="h-4 w-4 mr-2" />
+                )}
+                Search
+              </Button>
             </div>
 
-            {/* File list */}
+            {/* Error */}
+            {error && (
+              <div className="px-4 py-2 text-sm text-red-600 bg-red-50 border-b">
+                {error}
+              </div>
+            )}
+
+            {/* Results */}
             <ScrollArea className="flex-1">
-              {loading ? (
-                <div className="p-4 text-sm text-muted-foreground text-center">
-                  Loading files...
+              {!hasSearched ? (
+                <div className="p-8 text-center text-muted-foreground">
+                  <Search className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">Search for files or Gmail attachments</p>
                 </div>
-              ) : filteredFiles.length === 0 ? (
-                <div className="p-4 text-sm text-muted-foreground text-center">
-                  {search ? "No files match your search" : "No files uploaded yet"}
+              ) : results.length === 0 && !loading ? (
+                <div className="p-8 text-center text-muted-foreground">
+                  <FileText className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">No files found</p>
                 </div>
               ) : (
                 <div className="p-2 space-y-1">
-                  {filteredFiles.map((file) => {
-                    const isConnected = isFileConnected(file.id);
-                    const isSelected = selectedFile?.id === file.id;
-                    const isPdf = file.fileType === "application/pdf";
+                  {results.map((result) => {
+                    const isConnected = isFileConnected(result);
+                    const isSelected = selectedResult?.id === result.id;
+                    const isPdf = result.mimeType === "application/pdf";
+                    const isLocal = result.type === "local";
 
                     return (
                       <button
-                        key={file.id}
+                        key={result.id}
                         type="button"
                         disabled={isConnected}
-                        onClick={() => setSelectedFile(file)}
+                        onClick={() => setSelectedResult(result)}
                         className={cn(
                           "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors",
                           isSelected && "bg-primary/10 ring-1 ring-primary",
@@ -156,26 +575,32 @@ export function ConnectFileDialog({
                           isConnected && "opacity-50 cursor-not-allowed"
                         )}
                       >
-                        {/* Thumbnail/icon */}
-                        <div className="flex-shrink-0 w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden">
-                          {file.thumbnailUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={file.thumbnailUrl}
-                              alt=""
-                              className="w-full h-full object-cover"
-                            />
-                          ) : isPdf ? (
+                        {/* Source and type indicator */}
+                        <div className="flex-shrink-0 w-10 h-10 rounded bg-muted flex items-center justify-center relative">
+                          {isPdf ? (
                             <FileText className="h-5 w-5 text-red-500" />
                           ) : (
                             <Image className="h-5 w-5 text-blue-500" />
                           )}
+                          {/* Source badge */}
+                          <div
+                            className={cn(
+                              "absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center",
+                              isLocal ? "bg-slate-600" : "bg-red-500"
+                            )}
+                          >
+                            {isLocal ? (
+                              <HardDrive className="h-2.5 w-2.5 text-white" />
+                            ) : (
+                              <Mail className="h-2.5 w-2.5 text-white" />
+                            )}
+                          </div>
                         </div>
 
                         {/* File info */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium truncate">{file.fileName}</p>
+                            <p className="text-sm font-medium truncate">{result.filename}</p>
                             {isConnected && (
                               <Badge variant="secondary" className="text-xs">
                                 <Link2 className="h-3 w-3 mr-1" />
@@ -184,18 +609,37 @@ export function ConnectFileDialog({
                             )}
                           </div>
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span>{format(file.uploadedAt.toDate(), "MMM d, yyyy")}</span>
-                            {file.extractedAmount && (
+                            {result.date && (
+                              <span>{format(result.date, "MMM d, yyyy")}</span>
+                            )}
+                            {result.amount && (
                               <>
-                                <span>&middot;</span>
-                                <span>{formatAmount(file.extractedAmount, file.extractedCurrency)}</span>
+                                <span>·</span>
+                                <span>{formatAmount(result.amount, result.currency)}</span>
+                              </>
+                            )}
+                            {result.score > 0 && (
+                              <>
+                                <span>·</span>
+                                <Badge variant="outline" className="text-xs py-0 h-4">
+                                  {result.score}%
+                                </Badge>
                               </>
                             )}
                           </div>
-                          {file.extractedPartner && (
+                          {result.partner && (
                             <p className="text-xs text-muted-foreground truncate mt-0.5">
-                              {file.extractedPartner}
+                              {result.partner}
                             </p>
+                          )}
+                          {result.matchReasons.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {result.matchReasons.slice(0, 2).map((reason, i) => (
+                                <Badge key={i} variant="secondary" className="text-xs py-0 h-4 text-green-600">
+                                  {reason}
+                                </Badge>
+                              ))}
+                            </div>
                           )}
                         </div>
 
@@ -211,42 +655,65 @@ export function ConnectFileDialog({
             </ScrollArea>
           </div>
 
-          {/* Right column: File preview */}
+          {/* Right column: Preview */}
           <div className="flex-1 flex flex-col">
-            {selectedFile ? (
+            {selectedResult ? (
               <>
                 {/* Preview */}
                 <div className="flex-1 overflow-hidden">
                   <FilePreview
-                    downloadUrl={selectedFile.downloadUrl}
-                    fileType={selectedFile.fileType}
-                    fileName={selectedFile.fileName}
+                    downloadUrl={selectedResult.previewUrl}
+                    fileType={selectedResult.mimeType}
+                    fileName={selectedResult.filename}
+                    fullSize
                   />
                 </div>
 
                 {/* Selected file info */}
                 <div className="border-t p-4 bg-muted/30">
-                  <h4 className="font-medium text-sm mb-2">Selected File</h4>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge variant={selectedResult.type === "local" ? "secondary" : "destructive"}>
+                      {selectedResult.type === "local" ? (
+                        <>
+                          <HardDrive className="h-3 w-3 mr-1" />
+                          Local File
+                        </>
+                      ) : (
+                        <>
+                          <Mail className="h-3 w-3 mr-1" />
+                          Gmail
+                        </>
+                      )}
+                    </Badge>
+                    <h4 className="font-medium text-sm truncate flex-1">
+                      {selectedResult.filename}
+                    </h4>
+                  </div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div>
-                      <span className="text-muted-foreground">Document Date:</span>{" "}
-                      {selectedFile.extractedDate
-                        ? format(selectedFile.extractedDate.toDate(), "MMM d, yyyy")
+                      <span className="text-muted-foreground">Date:</span>{" "}
+                      {selectedResult.date
+                        ? format(selectedResult.date, "MMM d, yyyy")
                         : "—"}
                     </div>
                     <div>
                       <span className="text-muted-foreground">Amount:</span>{" "}
-                      {formatAmount(selectedFile.extractedAmount, selectedFile.extractedCurrency) || "—"}
+                      {formatAmount(selectedResult.amount, selectedResult.currency) || "—"}
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Partner:</span>{" "}
-                      {selectedFile.extractedPartner || "—"}
+                      <span className="text-muted-foreground">From:</span>{" "}
+                      {selectedResult.partner || "—"}
                     </div>
                     <div>
-                      <span className="text-muted-foreground">VAT:</span>{" "}
-                      {selectedFile.extractedVatPercent != null ? `${selectedFile.extractedVatPercent}%` : "—"}
+                      <span className="text-muted-foreground">Size:</span>{" "}
+                      {Math.round(selectedResult.size / 1024)} KB
                     </div>
                   </div>
+                  {selectedResult.type === "gmail" && selectedResult.emailSubject && (
+                    <p className="text-xs text-muted-foreground mt-2 truncate">
+                      Subject: {selectedResult.emailSubject}
+                    </p>
+                  )}
                 </div>
               </>
             ) : (
@@ -265,11 +732,15 @@ export function ConnectFileDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            onClick={handleSelect}
-            disabled={!selectedFile || isConnecting}
-          >
-            {isConnecting ? "Connecting..." : "Connect File"}
+          <Button onClick={handleSelect} disabled={!selectedResult || isConnecting}>
+            {isConnecting ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Connecting...
+              </>
+            ) : (
+              "Connect File"
+            )}
           </Button>
         </div>
       </DialogContent>

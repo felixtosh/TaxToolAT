@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { onSnapshot, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { TransactionSource, GoCardlessConnectorConfig } from "@/types/source";
+import { TrueLayerApiConfig } from "@/types/truelayer";
 
 interface SyncStatus {
   lastSyncAt: Date | null;
@@ -19,6 +20,7 @@ interface UseSyncStatusReturn {
   syncError: string | null;
   triggerSync: () => Promise<void>;
   isApiSource: boolean;
+  provider: "gocardless" | "truelayer" | null;
 }
 
 /**
@@ -29,12 +31,14 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isApiSource, setIsApiSource] = useState(false);
+  const [provider, setProvider] = useState<"gocardless" | "truelayer" | null>(null);
 
   // Subscribe to source document for real-time updates
   useEffect(() => {
     if (!sourceId) {
       setStatus(null);
       setIsApiSource(false);
+      setProvider(null);
       return;
     }
 
@@ -44,6 +48,7 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
         if (!snapshot.exists()) {
           setStatus(null);
           setIsApiSource(false);
+          setProvider(null);
           return;
         }
 
@@ -52,30 +57,43 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
         if (source.type !== "api" || !source.apiConfig) {
           setIsApiSource(false);
           setStatus(null);
+          setProvider(null);
           return;
         }
 
         setIsApiSource(true);
 
-        if (source.apiConfig.provider !== "gocardless") {
+        const sourceProvider = source.apiConfig.provider as "gocardless" | "truelayer";
+        setProvider(sourceProvider);
+
+        if (sourceProvider === "gocardless") {
+          const config = source.apiConfig as GoCardlessConnectorConfig;
+          const expiresAt = config.agreementExpiresAt?.toDate() || null;
+          const now = new Date();
+          const daysRemaining = expiresAt
+            ? Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+            : null;
+
+          setStatus({
+            lastSyncAt: config.lastSyncAt?.toDate() || null,
+            lastSyncError: config.lastSyncError || null,
+            needsReauth: expiresAt ? expiresAt < now : false,
+            reauthExpiresAt: expiresAt,
+            reauthDaysRemaining: daysRemaining,
+          });
+        } else if (sourceProvider === "truelayer") {
+          const config = source.apiConfig as unknown as TrueLayerApiConfig;
+
+          setStatus({
+            lastSyncAt: config.lastSyncAt?.toDate() || null,
+            lastSyncError: config.lastSyncError || null,
+            needsReauth: false, // TrueLayer doesn't have same expiry concept
+            reauthExpiresAt: null,
+            reauthDaysRemaining: null,
+          });
+        } else {
           setStatus(null);
-          return;
         }
-
-        const config = source.apiConfig as GoCardlessConnectorConfig;
-        const expiresAt = config.agreementExpiresAt?.toDate() || null;
-        const now = new Date();
-        const daysRemaining = expiresAt
-          ? Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
-          : null;
-
-        setStatus({
-          lastSyncAt: config.lastSyncAt?.toDate() || null,
-          lastSyncError: config.lastSyncError || null,
-          needsReauth: expiresAt ? expiresAt < now : false,
-          reauthExpiresAt: expiresAt,
-          reauthDaysRemaining: daysRemaining,
-        });
       },
       (error) => {
         console.error("Error watching source:", error);
@@ -87,13 +105,18 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
 
   // Trigger manual sync
   const triggerSync = useCallback(async () => {
-    if (!sourceId) return;
+    if (!sourceId || !provider) return;
 
     setIsSyncing(true);
     setSyncError(null);
 
     try {
-      const response = await fetch("/api/gocardless/sync", {
+      // Use the right endpoint based on provider
+      const endpoint = provider === "truelayer"
+        ? "/api/truelayer/sync"
+        : "/api/gocardless/sync";
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sourceId }),
@@ -111,7 +134,7 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
     } finally {
       setIsSyncing(false);
     }
-  }, [sourceId]);
+  }, [sourceId, provider]);
 
   return {
     status,
@@ -119,6 +142,7 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
     syncError,
     triggerSync,
     isApiSource,
+    provider,
   };
 }
 

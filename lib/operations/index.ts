@@ -39,3 +39,12 @@ export * from "./gocardless-ops";
 
 // No-Receipt Category operations
 export * from "./category-ops";
+
+// Email Integration operations
+export * from "./email-integration-ops";
+
+// CSV Storage operations (for import re-mapping)
+export * from "./csv-storage-ops";
+
+// Remap operations (for editing import mappings)
+export * from "./remap-ops";

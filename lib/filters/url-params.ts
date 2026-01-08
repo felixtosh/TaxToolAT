@@ -5,9 +5,9 @@ const SEARCH_STORAGE_KEY = "transactionSearch";
 
 /**
  * Serializable version of filters for localStorage
+ * Note: importId is NOT persisted - it's only used for deep links from import history
  */
 interface StoredFilters {
-  importId?: string;
   hasFile?: boolean;
   dateFrom?: string; // ISO string
   dateTo?: string; // ISO string
@@ -23,7 +23,7 @@ export function saveFiltersToStorage(
   search: string
 ): void {
   const stored: StoredFilters = {};
-  if (filters.importId) stored.importId = filters.importId;
+  // Note: importId is intentionally NOT saved - it's a deep link filter only
   if (filters.hasFile !== undefined) stored.hasFile = filters.hasFile;
   if (filters.dateFrom) stored.dateFrom = filters.dateFrom.toISOString();
   if (filters.dateTo) stored.dateTo = filters.dateTo.toISOString();
@@ -49,7 +49,7 @@ export function loadFiltersFromStorage(): {
     const stored = localStorage.getItem(FILTERS_STORAGE_KEY);
     if (stored) {
       const parsed: StoredFilters = JSON.parse(stored);
-      if (parsed.importId) filters.importId = parsed.importId;
+      // Note: importId is NOT loaded from storage - it's a deep link filter only
       if (parsed.hasFile !== undefined) filters.hasFile = parsed.hasFile;
       if (parsed.dateFrom) filters.dateFrom = new Date(parsed.dateFrom);
       if (parsed.dateTo) filters.dateTo = new Date(parsed.dateTo);

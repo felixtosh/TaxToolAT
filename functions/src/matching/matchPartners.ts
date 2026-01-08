@@ -31,8 +31,10 @@ export const matchPartners = onCall<MatchPartnersRequest>(
     memory: "512MiB",
   },
   async (request): Promise<MatchPartnersResponse> => {
-    // Use authenticated user ID or fall back to mock user for development
-    const userId = request.auth?.uid || "dev-user-123";
+    // TODO: Use real auth when ready for multi-user
+    // For now, always use mock user during development
+    // (Auth is only used for Gmail OAuth, not data ownership)
+    const userId = "dev-user-123";
     const { transactionIds, matchAll } = request.data;
 
     console.log(`Manual matching triggered by user ${userId}`, { transactionIds, matchAll });

@@ -134,11 +134,10 @@ export function EditSourceDialog({ open, onClose, onSave, source, sources = [] }
       await onSave({
         name: formData.name,
         accountKind: formData.accountKind,
-        // Use null for Firestore (not undefined) when clearing fields
-        iban: formData.accountKind === "bank_account" ? normalizeIban(formData.iban) : null,
-        cardBrand: formData.accountKind === "credit_card" ? formData.cardBrand : null,
-        cardLast4: formData.accountKind === "credit_card" ? formData.cardLast4 : null,
-        linkedSourceId: formData.linkedSourceId || null,
+        iban: formData.accountKind === "bank_account" ? normalizeIban(formData.iban) : undefined,
+        cardBrand: formData.accountKind === "credit_card" ? formData.cardBrand : undefined,
+        cardLast4: formData.accountKind === "credit_card" ? formData.cardLast4 : undefined,
+        linkedSourceId: formData.linkedSourceId || undefined,
         currency: formData.currency,
       });
       onClose();

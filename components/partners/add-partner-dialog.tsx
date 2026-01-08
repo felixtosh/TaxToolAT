@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { Loader2, Sparkles, Check, AlertCircle, ChevronsUpDown } from "lucide-react";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/lib/firebase/config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -27,6 +29,26 @@ import {
 } from "@/types/partner";
 import { cn } from "@/lib/utils";
 import { COUNTRIES, formatCountry } from "@/lib/data/countries";
+
+// Company lookup function (Firebase callable)
+interface CompanyInfo {
+  name?: string;
+  aliases?: string[];
+  vatId?: string;
+  website?: string;
+  country?: string;
+  address?: {
+    street?: string;
+    city?: string;
+    postalCode?: string;
+    country?: string;
+  };
+}
+
+const lookupCompanyFn = httpsCallable<{ url?: string; name?: string }, CompanyInfo>(
+  functions,
+  "lookupCompany"
+);
 
 // Country select with search
 function CountrySelect({
@@ -199,17 +221,8 @@ export function AddPartnerDialog({
     setLookupStatus("Searching for company info...");
 
     try {
-      const response = await fetch("/api/lookup-company", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: lookupUrl }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Lookup failed");
-      }
-
-      const data = await response.json();
+      const result = await lookupCompanyFn({ url: lookupUrl });
+      const data = result.data;
 
       // Build address string from response
       const addressParts: string[] = [];
@@ -267,17 +280,8 @@ export function AddPartnerDialog({
     setLookupStatus("Searching for company info...");
 
     try {
-      const response = await fetch("/api/lookup-company", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: formData.name }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Lookup failed");
-      }
-
-      const data = await response.json();
+      const result = await lookupCompanyFn({ name: formData.name });
+      const data = result.data;
 
       // Build address string from response
       const addressParts: string[] = [];

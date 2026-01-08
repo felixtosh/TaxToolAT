@@ -9,10 +9,12 @@ import { usePartners } from "@/hooks/use-partners";
 import { formatIban } from "@/lib/import/deduplication";
 import { useState, useEffect } from "react";
 import { AddPartnerDialog } from "./add-partner-dialog";
+import { EmailPatternsSection } from "./email-patterns-section";
 import { collection, query, where, orderBy, limit, getDocs, documentId } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { format } from "date-fns";
 import Link from "next/link";
+import { removeEmailPatternFromPartner } from "@/lib/operations";
 
 const MOCK_USER_ID = "dev-user-123";
 
@@ -98,6 +100,11 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
       await deletePartner(partner.id);
       onClose();
     }
+  };
+
+  const handleRemoveEmailPattern = async (patternIndex: number) => {
+    const ctx = { db, userId: MOCK_USER_ID };
+    await removeEmailPatternFromPartner(ctx, partner.id, patternIndex);
   };
 
   return (
@@ -241,6 +248,12 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
             </div>
           </div>
         )}
+
+        {/* Email Search Patterns */}
+        <EmailPatternsSection
+          partner={partner}
+          onRemovePattern={handleRemoveEmailPattern}
+        />
 
         {/* Connected Transactions */}
         <div>

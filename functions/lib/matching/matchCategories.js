@@ -15,8 +15,8 @@ exports.matchCategories = (0, https_1.onCall)({
     region: "europe-west1",
     memory: "512MiB",
 }, async (request) => {
-    // Use authenticated user ID or fall back to mock user for development
-    const userId = request.auth?.uid || "dev-user-123";
+    // TODO: Use real auth when ready for multi-user
+    const userId = "dev-user-123";
     const { transactionIds, matchAll } = request.data;
     console.log(`Category matching triggered by user ${userId}`, {
         transactionIds,

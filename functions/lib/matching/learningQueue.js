@@ -50,7 +50,8 @@ exports.queuePartnerForLearning = (0, https_1.onCall)({
     memory: "128MiB",
     timeoutSeconds: 10,
 }, async (request) => {
-    const userId = request.auth?.uid || "dev-user-123";
+    // TODO: Use real auth when ready for multi-user
+    const userId = "dev-user-123";
     const { partnerId } = request.data;
     if (!partnerId) {
         throw new https_1.HttpsError("invalid-argument", "partnerId is required");
@@ -155,7 +156,8 @@ exports.triggerLearningNow = (0, https_1.onCall)({
     memory: "512MiB",
     timeoutSeconds: 300,
 }, async (request) => {
-    const userId = request.auth?.uid || "dev-user-123";
+    // TODO: Use real auth when ready for multi-user
+    const userId = "dev-user-123";
     const queueRef = db.collection("users").doc(userId).collection("system").doc("learningQueue");
     const queueDoc = await queueRef.get();
     if (!queueDoc.exists) {

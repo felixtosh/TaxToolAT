@@ -144,7 +144,8 @@ exports.applyPatternsToTransactions = (0, https_1.onCall)({
     memory: "512MiB",
     timeoutSeconds: 540,
 }, async (request) => {
-    const userId = request.auth?.uid || "dev-user-123";
+    // TODO: Use real auth when ready for multi-user
+    const userId = "dev-user-123";
     return await applyAllPatternsToTransactions(userId);
 });
 //# sourceMappingURL=applyPatterns.js.map

@@ -68,6 +68,13 @@ export interface Transaction {
   /** ID of the import job that created this transaction */
   importJobId: string | null;
 
+  /**
+   * Row index in the original CSV (0-indexed, excluding header).
+   * Used to preserve manual edits when re-mapping CSV imports.
+   * Only present for CSV imports, not API syncs.
+   */
+  csvRowIndex?: number;
+
   /** Owner of this transaction */
   userId: string;
 

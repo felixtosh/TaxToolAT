@@ -22,7 +22,22 @@ import {
   FileExtractionData,
 } from "@/types/file";
 import { Transaction } from "@/types/transaction";
+import { FileSourceType } from "@/types/partner";
 import { OperationsContext } from "./types";
+
+/**
+ * Source info for tracking how a file was found when connecting
+ */
+export interface FileConnectionSourceInfo {
+  /** Where the file was found */
+  sourceType: FileSourceType;
+  /** The search pattern/query used */
+  searchPattern?: string;
+  /** For Gmail: which integration (account) */
+  gmailIntegrationId?: string;
+  /** For Gmail: message ID */
+  gmailMessageId?: string;
+}
 
 const FILES_COLLECTION = "files";
 const FILE_CONNECTIONS_COLLECTION = "fileConnections";
@@ -177,6 +192,20 @@ export async function createFile(
     newFile.contentHash = data.contentHash;
   }
 
+  // Source tracking
+  if (data.sourceType) {
+    newFile.sourceType = data.sourceType;
+  }
+  if (data.gmailMessageId) {
+    newFile.gmailMessageId = data.gmailMessageId;
+  }
+  if (data.gmailIntegrationId) {
+    newFile.gmailIntegrationId = data.gmailIntegrationId;
+  }
+  if (data.gmailSubject) {
+    newFile.gmailSubject = data.gmailSubject;
+  }
+
   const docRef = await addDoc(collection(ctx.db, FILES_COLLECTION), newFile);
   return docRef.id;
 }
@@ -253,7 +282,8 @@ export async function connectFileToTransaction(
   fileId: string,
   transactionId: string,
   connectionType: "manual" | "auto_matched" = "manual",
-  matchConfidence?: number
+  matchConfidence?: number,
+  sourceInfo?: FileConnectionSourceInfo
 ): Promise<string> {
   // Verify file ownership
   const file = await getFile(ctx, fileId);
@@ -284,7 +314,8 @@ export async function connectFileToTransaction(
 
   // 1. Create junction document
   const connectionRef = doc(collection(ctx.db, FILE_CONNECTIONS_COLLECTION));
-  const connectionData: Omit<FileConnection, "id"> = {
+  // Build connection data, only including defined fields (Firestore doesn't allow undefined)
+  const connectionData: Record<string, unknown> = {
     fileId,
     transactionId,
     userId: ctx.userId,
@@ -292,6 +323,21 @@ export async function connectFileToTransaction(
     matchConfidence: matchConfidence ?? null,
     createdAt: now,
   };
+
+  // Add source tracking fields only if provided
+  if (sourceInfo?.sourceType) {
+    connectionData.sourceType = sourceInfo.sourceType;
+  }
+  if (sourceInfo?.searchPattern) {
+    connectionData.searchPattern = sourceInfo.searchPattern;
+  }
+  if (sourceInfo?.gmailIntegrationId) {
+    connectionData.gmailIntegrationId = sourceInfo.gmailIntegrationId;
+  }
+  if (sourceInfo?.gmailMessageId) {
+    connectionData.gmailMessageId = sourceInfo.gmailMessageId;
+  }
+
   batch.set(connectionRef, connectionData);
 
   // 2. Update file's transactionIds array

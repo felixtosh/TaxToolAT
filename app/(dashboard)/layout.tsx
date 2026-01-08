@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag } from "lucide-react";
+import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { ChatProvider, ChatSidebar, useChat } from "@/components/chat";
@@ -19,6 +19,7 @@ const navItems = [
   { href: "/sources", label: "Accounts", icon: Building2 },
   { href: "/partners", label: "Partners", icon: Users },
   { href: "/categories", label: "Categories", icon: Tag },
+  { href: "/integrations", label: "Integrations", icon: Link2 },
 ];
 
 function DashboardContent({ children }: { children: React.ReactNode }) {

@@ -15,6 +15,7 @@ import {
   Trash2,
   Loader2,
   Link2,
+  Unlink,
   RefreshCw,
   AlertTriangle,
   Globe,
@@ -36,7 +37,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { GoCardlessConnectorConfig } from "@/types/source";
+import { GoCardlessConnectorConfig, ApiConnectorConfig } from "@/types/source";
+import { TrueLayerApiConfig } from "@/types/truelayer";
 import { formatIban } from "@/lib/import/deduplication";
 
 interface SourceDetailPageProps {
@@ -49,6 +51,7 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
   const { sources, loading, deleteSource, updateSource } = useSources();
   const { imports, loading: importsLoading, deleteImport } = useImports(id);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
 
   const source = sources.find((s) => s.id === id);
@@ -91,22 +94,56 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
     router.push(`/sources/connect?sourceId=${source.id}`);
   };
 
+  const handleDisconnect = async () => {
+    setIsDisconnecting(true);
+    try {
+      // Call API to disconnect and optionally delete transactions
+      const response = await fetch(`/api/sources/${source.id}/disconnect`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (response.ok) {
+        console.log("Disconnected:", data);
+        // The source will update via real-time listener
+      } else {
+        console.error("Disconnect failed:", data.error);
+        alert(`Failed to disconnect: ${data.error}`);
+      }
+    } catch (error) {
+      console.error("Failed to disconnect:", error);
+      alert("Failed to disconnect");
+    } finally {
+      setIsDisconnecting(false);
+    }
+  };
+
   const handleSaveEdit = async (data: Partial<typeof source>) => {
     await updateSource(source.id, data);
   };
 
-  const isApiConnected = source.type === "api" && source.apiConfig?.provider === "gocardless";
-  const apiConfig = source.apiConfig as GoCardlessConnectorConfig | undefined;
+  // Check for any API connection (GoCardless or TrueLayer)
+  const isApiConnected = source.type === "api" &&
+    (source.apiConfig?.provider === "gocardless" || source.apiConfig?.provider === "truelayer");
+  const isGoCardless = source.apiConfig?.provider === "gocardless";
+  const isTrueLayer = source.apiConfig?.provider === "truelayer";
 
-  // Check if re-auth is needed
-  const needsReauth = isApiConnected && apiConfig?.agreementExpiresAt
-    ? apiConfig.agreementExpiresAt.toDate() < new Date()
+  const goCardlessConfig = isGoCardless ? source.apiConfig as unknown as GoCardlessConnectorConfig : undefined;
+  const trueLayerConfig = isTrueLayer ? source.apiConfig as unknown as TrueLayerApiConfig : undefined;
+
+  // Check if re-auth is needed (only GoCardless has expiry)
+  const needsReauth = isGoCardless && goCardlessConfig?.agreementExpiresAt
+    ? goCardlessConfig.agreementExpiresAt.toDate() < new Date()
     : false;
 
-  // Days until expiry
-  const daysUntilExpiry = isApiConnected && apiConfig?.agreementExpiresAt
-    ? Math.max(0, Math.floor((apiConfig.agreementExpiresAt.toDate().getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+  // Days until expiry (only GoCardless)
+  const daysUntilExpiry = isGoCardless && goCardlessConfig?.agreementExpiresAt
+    ? Math.max(0, Math.floor((goCardlessConfig.agreementExpiresAt.toDate().getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
     : null;
+
+  // Get provider name for display
+  const providerName = goCardlessConfig?.institutionName || trueLayerConfig?.providerName || "Bank";
+  const providerLogo = goCardlessConfig?.institutionLogo || trueLayerConfig?.providerLogo;
+  const lastSyncAt = goCardlessConfig?.lastSyncAt || trueLayerConfig?.lastSyncAt;
 
   return (
     <div className="px-6 py-6">
@@ -191,23 +228,65 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
           </AlertDialog>
 
           {isApiConnected ? (
-            <Button
-              variant={needsReauth ? "default" : "outline"}
-              size="sm"
-              onClick={handleConnect}
-            >
-              {needsReauth ? (
-                <>
-                  <AlertTriangle className="h-4 w-4 mr-2" />
-                  Reconnect
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Renew
-                </>
+            <>
+              {/* Disconnect button */}
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    disabled={isDisconnecting}
+                  >
+                    {isDisconnecting ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Unlink className="h-4 w-4 mr-2" />
+                    )}
+                    Disconnect
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Disconnect Bank?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will remove the bank connection and delete all synced transactions
+                      for &quot;{source.name}&quot;. CSV imports will not be affected.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDisconnect}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      Disconnect
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+
+              {/* Renew/Reconnect button (only for GoCardless) */}
+              {isGoCardless && (
+                <Button
+                  variant={needsReauth ? "default" : "outline"}
+                  size="sm"
+                  onClick={handleConnect}
+                >
+                  {needsReauth ? (
+                    <>
+                      <AlertTriangle className="h-4 w-4 mr-2" />
+                      Reconnect
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Renew
+                    </>
+                  )}
+                </Button>
               )}
-            </Button>
+            </>
           ) : (
             <Button variant="outline" size="sm" onClick={handleConnect}>
               <Link2 className="h-4 w-4 mr-2" />
@@ -349,6 +428,7 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
           <ImportHistoryCard
             imports={imports}
             loading={importsLoading}
+            sourceId={source.id}
             onDeleteImport={deleteImport}
           />
 
@@ -384,41 +464,61 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
             <SyncStatusCard sourceId={source.id} onReauth={handleConnect} />
 
             {/* Connection Details */}
-            {apiConfig && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Connection Details</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {apiConfig.institutionLogo && (
-                    <div className="flex items-center gap-3 pb-3 border-b">
-                      <img
-                        src={apiConfig.institutionLogo}
-                        alt={apiConfig.institutionName}
-                        className="h-8 w-8 rounded"
-                      />
-                      <span className="font-medium">{apiConfig.institutionName}</span>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Connection Details</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {providerLogo && (
+                  <div className="flex items-center gap-3 pb-3 border-b">
+                    <img
+                      src={providerLogo}
+                      alt={providerName}
+                      className="h-8 w-8 rounded"
+                    />
+                    <span className="font-medium">{providerName}</span>
+                  </div>
+                )}
+                {!providerLogo && providerName && (
+                  <div className="flex items-center gap-3 pb-3 border-b">
+                    <div className="h-8 w-8 rounded bg-muted flex items-center justify-center">
+                      <Building2 className="h-4 w-4" />
                     </div>
-                  )}
+                    <span className="font-medium">{providerName}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Provider</span>
+                  <span className="font-medium capitalize">
+                    {isTrueLayer ? "TrueLayer" : isGoCardless ? "GoCardless" : "API"}
+                  </span>
+                </div>
+                {isGoCardless && goCardlessConfig?.agreementExpiresAt && (
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Valid Until</span>
                     <span className="font-medium">
-                      {apiConfig.agreementExpiresAt
-                        ? format(apiConfig.agreementExpiresAt.toDate(), "MMM d, yyyy")
-                        : "—"}
+                      {format(goCardlessConfig.agreementExpiresAt.toDate(), "MMM d, yyyy")}
                     </span>
                   </div>
-                  {apiConfig.lastSyncAt && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Last Sync</span>
-                      <span className="font-medium">
-                        {format(apiConfig.lastSyncAt.toDate(), "MMM d, HH:mm")}
-                      </span>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
+                )}
+                {isTrueLayer && trueLayerConfig?.connectedAt && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Connected</span>
+                    <span className="font-medium">
+                      {format(trueLayerConfig.connectedAt.toDate(), "MMM d, yyyy")}
+                    </span>
+                  </div>
+                )}
+                {lastSyncAt && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Last Sync</span>
+                    <span className="font-medium">
+                      {format(lastSyncAt.toDate(), "MMM d, HH:mm")}
+                    </span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
         )}
       </div>

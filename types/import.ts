@@ -275,4 +275,68 @@ export interface ImportRecord {
 
   /** Owner of this import */
   userId: string;
+
+  // === CSV Storage (for re-mapping) ===
+
+  /** Firebase Storage path to the original CSV file */
+  csvStoragePath?: string;
+
+  /** Download URL for the CSV (for quick access) */
+  csvDownloadUrl?: string;
+
+  /** Parse options used for this import (encoding, delimiter, etc.) */
+  parseOptions?: CSVParseOptions;
+
+  /** Field mappings used for this import */
+  fieldMappings?: FieldMapping[];
+}
+
+// === Re-mapping Types ===
+
+/**
+ * A single row in the remap preview, showing what will change
+ */
+export interface RemapPreviewRow {
+  /** Row index in the CSV (0-indexed) */
+  csvRowIndex: number;
+
+  /** The existing transaction (if matched) */
+  existingTransactionId?: string;
+
+  /** Changes that will be applied to this row */
+  changes: RemapFieldChange[];
+
+  /** Fields that will be preserved (e.g., 'partnerId', 'fileIds') */
+  preservedFields: string[];
+}
+
+/**
+ * A single field change in the remap preview
+ */
+export interface RemapFieldChange {
+  /** Field name that changed */
+  field: string;
+
+  /** Previous value (null if new) */
+  oldValue: string | number | null;
+
+  /** New value after remapping */
+  newValue: string | number | null;
+}
+
+/**
+ * Preview of what will happen when remapping is applied
+ */
+export interface RemapPreview {
+  /** Rows that match existing transactions and will be updated */
+  matchedRows: RemapPreviewRow[];
+
+  /** Number of total field changes across all rows */
+  totalChanges: number;
+
+  /** Warnings (e.g., row count mismatch) */
+  warnings: string[];
+
+  /** Transaction IDs that exist but have no matching CSV row */
+  orphanedTransactionIds: string[];
 }

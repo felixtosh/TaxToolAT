@@ -7,7 +7,7 @@ interface PartnerPillProps {
   name: string;
   confidence?: number;
   onRemove?: () => void;
-  onClick?: () => void;
+  onClick?: (e?: React.MouseEvent) => void;
   variant?: "default" | "suggestion";
   partnerType?: "user" | "global";
   disabled?: boolean;
@@ -27,11 +27,11 @@ export function PartnerPill({
   const isInteractive = onRemove || onClick;
   const isSuggestion = variant === "suggestion";
 
-  const handleClick = () => {
+  const handleClick = (e: React.MouseEvent) => {
     if (disabled) return;
     // If there's an onClick, use it; otherwise use onRemove (legacy behavior)
     if (onClick) {
-      onClick();
+      onClick(e);
     } else if (onRemove) {
       onRemove();
     }
@@ -46,7 +46,7 @@ export function PartnerPill({
   return (
     <div
       className={cn(
-        "inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm max-w-[280px]",
+        "inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm max-w-full min-w-0",
         isSuggestion
           ? "bg-info border-info-border text-info-foreground hover:bg-info/80"
           : "bg-background border-input",
@@ -66,7 +66,7 @@ export function PartnerPill({
           <Globe className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
         )
       )}
-      <span className="truncate flex-1">{name}</span>
+      <span className="truncate">{name}</span>
       {confidence !== undefined && (
         <span className={cn(
           "text-xs flex-shrink-0 ml-auto",

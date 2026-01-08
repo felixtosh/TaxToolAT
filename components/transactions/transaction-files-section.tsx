@@ -157,9 +157,9 @@ export function TransactionFilesSection({
 
     const topSuggestion = categorySuggestions[0];
     if (topSuggestion && shouldAutoApplyCategory(topSuggestion.confidence)) {
-      // Auto-assign the category
+      // Auto-assign the category (from suggestion with high confidence)
       console.log(`[Category Auto-Assign] Applying ${topSuggestion.categoryId} with ${topSuggestion.confidence}% confidence`);
-      assignToTransaction(transaction.id, topSuggestion.categoryId, "auto", topSuggestion.confidence);
+      assignToTransaction(transaction.id, topSuggestion.categoryId, "suggestion", topSuggestion.confidence);
     }
   }, [transaction.id, hasCategory, hasFiles, categorySuggestions, assignToTransaction]);
 
@@ -422,6 +422,11 @@ export function TransactionFilesSection({
             amount: transaction.amount,
             currency: transaction.currency,
             partner: transaction.partner || undefined,
+            name: transaction.name || undefined,
+            reference: transaction.reference || undefined,
+            partnerIban: transaction.partnerIban || undefined,
+            partnerId: transaction.partnerId || undefined,
+            transactionId: transaction.id,
           }}
         />
 

@@ -17,22 +17,41 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FileSpreadsheet, Trash2, Loader2, ChevronRight } from "lucide-react";
+import {
+  FileSpreadsheet,
+  Trash2,
+  Loader2,
+  ChevronRight,
+  Settings2,
+} from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ImportRecord } from "@/types/import";
 
 interface ImportHistoryCardProps {
   imports: ImportRecord[];
   loading: boolean;
+  sourceId: string;
   onDeleteImport: (importId: string) => Promise<void>;
 }
 
 export function ImportHistoryCard({
   imports,
   loading,
+  sourceId,
   onDeleteImport,
 }: ImportHistoryCardProps) {
   const router = useRouter();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleEditMapping = (e: React.MouseEvent, importId: string) => {
+    e.stopPropagation();
+    router.push(`/sources/${sourceId}/import/${importId}/edit`);
+  };
 
   const handleDelete = async (importId: string) => {
     setDeletingId(importId);
@@ -111,6 +130,25 @@ export function ImportHistoryCard({
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Edit Mapping Button - only shown if CSV is stored */}
+              {imp.csvStoragePath && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 opacity-0 group-hover:opacity-100"
+                        onClick={(e) => handleEditMapping(e, imp.id)}
+                      >
+                        <Settings2 className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Edit column mapping</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button

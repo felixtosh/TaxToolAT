@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Loader2, RefreshCw } from "lucide-react";
 
-export default function PendingPage() {
+function PendingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requisitionId = searchParams.get("requisitionId");
@@ -101,5 +101,26 @@ export default function PendingPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="container max-w-lg mx-auto py-8">
+      <Card>
+        <CardHeader className="text-center">
+          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-2" />
+          <CardTitle>Loading...</CardTitle>
+        </CardHeader>
+      </Card>
+    </div>
+  );
+}
+
+export default function PendingPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <PendingContent />
+    </Suspense>
   );
 }

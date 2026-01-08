@@ -1,4 +1,5 @@
 import { Timestamp } from "firebase/firestore";
+import { FileSourceType } from "./partner";
 
 /**
  * Match sources for transaction matching - indicates which criteria contributed to a match
@@ -63,6 +64,20 @@ export interface TaxFile {
 
   /** SHA-256 hash of file content for duplicate detection */
   contentHash?: string;
+
+  // === Source Tracking ===
+
+  /** How the file was added to TaxStudio (defaults to "upload" for legacy files) */
+  sourceType?: "upload" | "gmail";
+
+  /** For Gmail imports: Gmail message ID */
+  gmailMessageId?: string;
+
+  /** For Gmail imports: which integration (account) the file came from */
+  gmailIntegrationId?: string;
+
+  /** For Gmail imports: email subject */
+  gmailSubject?: string;
 
   // === AI Extracted Data ===
 
@@ -167,6 +182,20 @@ export interface FileConnection {
   /** AI confidence if auto-matched (0-100) */
   matchConfidence?: number | null;
 
+  // === Source Tracking (how the file was found during connection) ===
+
+  /** Where the file was found when connecting */
+  sourceType?: FileSourceType;
+
+  /** The search pattern/query used to find this file */
+  searchPattern?: string;
+
+  /** For Gmail: which integration (account) was searched */
+  gmailIntegrationId?: string;
+
+  /** For Gmail: message ID containing the attachment */
+  gmailMessageId?: string;
+
   createdAt: Timestamp;
 }
 
@@ -203,6 +232,12 @@ export interface FileCreateData {
   downloadUrl: string;
   thumbnailUrl?: string;
   contentHash?: string;
+
+  // Source tracking
+  sourceType?: "upload" | "gmail";
+  gmailMessageId?: string;
+  gmailIntegrationId?: string;
+  gmailSubject?: string;
 }
 
 /**

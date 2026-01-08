@@ -18,7 +18,7 @@ import { TransactionFilesSection } from "@/components/transactions/transaction-f
 import { TransactionHistory } from "@/components/sidebar/transaction-history";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { UserPartner, GlobalPartner, PartnerFormData } from "@/types/partner";
+import { UserPartner, GlobalPartner, PartnerFormData, PartnerMatchResult } from "@/types/partner";
 
 // Constants for file upload
 const MOCK_USER_ID = "dev-user-123";
@@ -44,6 +44,8 @@ interface TransactionDetailPanelProps {
   onAssignPartner: (transactionId: string, partnerId: string, partnerType: "global" | "user", matchedBy: "manual" | "suggestion", confidence?: number) => Promise<void>;
   onRemovePartner: (transactionId: string) => Promise<void>;
   onCreatePartner: (data: PartnerFormData) => Promise<string>;
+  /** Pre-computed pattern suggestion from parent (ensures consistency with list view) */
+  patternSuggestion?: PartnerMatchResult | null;
 }
 
 export function TransactionDetailPanel({
@@ -60,6 +62,7 @@ export function TransactionDetailPanel({
   onAssignPartner,
   onRemovePartner,
   onCreatePartner,
+  patternSuggestion,
 }: TransactionDetailPanelProps) {
   // Handler for assigning a partner to the transaction
   const handleAssignPartner = useCallback(
@@ -270,6 +273,7 @@ export function TransactionDetailPanel({
             onAssignPartner={handleAssignPartner}
             onRemovePartner={handleRemovePartner}
             onCreatePartner={handleCreatePartner}
+            patternSuggestion={patternSuggestion}
           />
 
           {/* Files Section */}

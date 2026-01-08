@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { initializeApp, getApps } from "firebase/app";
 import {
   getFirestore,
+  connectFirestoreEmulator,
   doc,
   getDoc,
   updateDoc,
@@ -30,6 +31,16 @@ const firebaseConfig = {
 const appName = "truelayer-sync";
 const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
 const db = getFirestore(app);
+
+// Connect to emulator in development
+if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_USE_EMULATORS !== "false") {
+  try {
+    connectFirestoreEmulator(db, "localhost", 8080);
+    console.log("[TrueLayer Sync] Connected to Firestore emulator");
+  } catch {
+    // Already connected
+  }
+}
 
 const MOCK_USER_ID = "dev-user-123";
 const CONNECTIONS_COLLECTION = "truelayerConnections";
@@ -154,8 +165,11 @@ export async function POST(request: NextRequest) {
 
     for (const tx of transactions) {
       // Determine if income or expense
+      // TrueLayer returns amounts in whole currency units (e.g., 42.50)
+      // We store amounts in cents (e.g., 4250)
       const isCredit = tx.transaction_type === "CREDIT";
-      const amount = isCredit ? Math.abs(tx.amount) : -Math.abs(tx.amount);
+      const amountCents = Math.round(Math.abs(tx.amount) * 100);
+      const amount = isCredit ? amountCents : -amountCents;
 
       // Parse date
       const txDate = new Date(tx.timestamp);

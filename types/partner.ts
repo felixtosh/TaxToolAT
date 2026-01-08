@@ -1,4 +1,5 @@
 import { Timestamp } from "firebase/firestore";
+import { EmailSearchPattern } from "./email-integration";
 
 /**
  * Matching algorithm source identifier
@@ -125,6 +126,41 @@ export interface LearnedPattern extends MatchPattern {
 }
 
 /**
+ * File source type for tracking where files come from
+ */
+export type FileSourceType = "local" | "gmail";
+
+/**
+ * Learned pattern for finding files from a specific source.
+ * Used to auto-match files when a partner is assigned to a transaction.
+ */
+export interface FileSourcePattern {
+  /** Where to search for files */
+  sourceType: FileSourceType;
+
+  /** Search pattern - glob for local files, search query for Gmail */
+  pattern: string;
+
+  /** For Gmail: which integration (account) to search */
+  integrationId?: string;
+
+  /** Confidence score (0-100) based on successful uses */
+  confidence: number;
+
+  /** Number of times this pattern successfully found matches */
+  usageCount: number;
+
+  /** Transaction IDs where this pattern was used to find files */
+  sourceTransactionIds: string[];
+
+  /** When pattern was created */
+  createdAt: Timestamp;
+
+  /** Last time pattern was used successfully */
+  lastUsedAt: Timestamp;
+}
+
+/**
  * Record of a transaction that was manually removed from this partner.
  * Used as negative training signal (false positive) for pattern learning.
  */
@@ -194,6 +230,26 @@ export interface UserPartner {
    * Capped at 50 entries.
    */
   manualRemovals?: ManualRemoval[];
+
+  /**
+   * Learned email search patterns for finding invoices from this partner.
+   * Used to auto-suggest Gmail searches when connecting files.
+   * @deprecated Use fileSourcePatterns instead for unified file source tracking
+   */
+  emailSearchPatterns?: EmailSearchPattern[];
+
+  /** When email search patterns were last updated */
+  emailPatternsUpdatedAt?: Timestamp;
+
+  /**
+   * Learned file source patterns for finding files from this partner.
+   * Supports both local files (glob patterns) and Gmail (search queries).
+   * Used to auto-match files when a partner is assigned to a transaction.
+   */
+  fileSourcePatterns?: FileSourcePattern[];
+
+  /** When file source patterns were last updated */
+  fileSourcePatternsUpdatedAt?: Timestamp;
 
   /** Active status (soft delete) */
   isActive: boolean;

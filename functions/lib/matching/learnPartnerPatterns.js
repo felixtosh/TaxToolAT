@@ -321,7 +321,8 @@ exports.learnPartnerPatterns = (0, https_1.onCall)({
     timeoutSeconds: 60,
     secrets: [anthropicApiKey],
 }, async (request) => {
-    const userId = request.auth?.uid || "dev-user-123";
+    // TODO: Use real auth when ready for multi-user
+    const userId = "dev-user-123";
     const { partnerId, transactionId } = request.data;
     if (!partnerId) {
         throw new https_1.HttpsError("invalid-argument", "partnerId is required");
@@ -472,6 +473,18 @@ exports.learnPartnerPatterns = (0, https_1.onCall)({
         // Validate and transform patterns
         if (!aiResult.patterns || !Array.isArray(aiResult.patterns)) {
             console.log("AI returned no patterns");
+            // Still try file matching even if no patterns learned
+            // (amount/date/partner scoring can still work)
+            try {
+                const { matchFilesForPartnerInternal } = await Promise.resolve().then(() => __importStar(require("./matchFilesForPartner")));
+                const fileResult = await matchFilesForPartnerInternal(userId, partnerId);
+                if (fileResult.autoMatched > 0 || fileResult.suggested > 0) {
+                    console.log(`File matching (no patterns) for ${partnerName}: ${fileResult.autoMatched} auto-matched`);
+                }
+            }
+            catch (err) {
+                console.error("Failed to run file matching:", err);
+            }
             return { patternsLearned: 0, patterns: [] };
         }
         const now = firestore_1.Timestamp.now();
@@ -574,6 +587,19 @@ exports.learnPartnerPatterns = (0, https_1.onCall)({
                 catch (err) {
                     console.error("Failed to create pattern learning notification:", err);
                 }
+            }
+            // 10. Chain file matching for partner
+            // Always try file matching when patterns are learned or transactions are matched
+            // This ensures files are auto-connected when a partner is manually assigned
+            try {
+                const { matchFilesForPartnerInternal } = await Promise.resolve().then(() => __importStar(require("./matchFilesForPartner")));
+                const fileResult = await matchFilesForPartnerInternal(userId, partnerId);
+                if (fileResult.autoMatched > 0 || fileResult.suggested > 0) {
+                    console.log(`File matching chained for ${partnerName}: ${fileResult.autoMatched} auto-matched, ${fileResult.suggested} suggested`);
+                }
+            }
+            catch (err) {
+                console.error("Failed to chain file matching:", err);
             }
         }
         return {

@@ -25,6 +25,8 @@ import {
   PartnerFilters,
   PromotionCandidate,
   ManualRemoval,
+  FileSourcePattern,
+  FileSourceType,
 } from "@/types/partner";
 import { normalizeIban } from "@/lib/import/deduplication";
 import { normalizeUrl } from "@/lib/matching/url-normalizer";
@@ -924,4 +926,165 @@ export async function togglePresetPartners(
     const result = await disablePresetPartners(ctx);
     return { enabled: false, count: result.deleted };
   }
+}
+
+// ============ File Source Pattern Learning ============
+
+/**
+ * Input for learning a file source pattern
+ */
+export interface LearnFileSourcePatternInput {
+  /** Where the file was found */
+  sourceType: FileSourceType;
+  /** The search pattern/query used to find the file */
+  searchPattern: string;
+  /** For Gmail: which integration (account) */
+  integrationId?: string;
+}
+
+/**
+ * Learn a file source pattern for a partner.
+ * Called when a user manually connects a file to a transaction that has a partner.
+ *
+ * If a similar pattern already exists:
+ * - Increments usageCount
+ * - Updates lastUsedAt
+ * - Adds transactionId to sourceTransactionIds
+ *
+ * If no similar pattern exists:
+ * - Creates a new FileSourcePattern with initial confidence
+ */
+export async function learnFileSourcePattern(
+  ctx: OperationsContext,
+  partnerId: string,
+  transactionId: string,
+  sourceInfo: LearnFileSourcePatternInput
+): Promise<{ isNew: boolean; patternIndex: number }> {
+  // Get the partner
+  const partner = await getUserPartner(ctx, partnerId);
+  if (!partner) {
+    throw new Error(`Partner ${partnerId} not found or access denied`);
+  }
+
+  const now = Timestamp.now();
+  const existingPatterns = partner.fileSourcePatterns || [];
+
+  // Check if a similar pattern already exists
+  // For now, consider patterns "similar" if they have the same sourceType and exact pattern
+  const existingIndex = existingPatterns.findIndex(
+    (p) =>
+      p.sourceType === sourceInfo.sourceType &&
+      p.pattern.toLowerCase() === sourceInfo.searchPattern.toLowerCase() &&
+      (sourceInfo.sourceType === "local" || p.integrationId === sourceInfo.integrationId)
+  );
+
+  let updatedPatterns: FileSourcePattern[];
+  let isNew: boolean;
+  let patternIndex: number;
+
+  if (existingIndex >= 0) {
+    // Update existing pattern
+    isNew = false;
+    patternIndex = existingIndex;
+
+    updatedPatterns = existingPatterns.map((p, i) => {
+      if (i !== existingIndex) return p;
+
+      // Increment usage and update timestamp
+      const newUsageCount = p.usageCount + 1;
+      // Increase confidence based on usage (cap at 95)
+      const newConfidence = Math.min(95, p.confidence + 5);
+
+      // Add transaction to source list (keep last 20)
+      const newSourceTxIds = [...p.sourceTransactionIds, transactionId].slice(-20);
+
+      return {
+        ...p,
+        usageCount: newUsageCount,
+        confidence: newConfidence,
+        lastUsedAt: now,
+        sourceTransactionIds: newSourceTxIds,
+      };
+    });
+
+    console.log(
+      `[FileSourcePattern] Updated pattern "${sourceInfo.searchPattern}" for partner ${partnerId} (usage: ${existingPatterns[existingIndex].usageCount + 1})`
+    );
+  } else {
+    // Create new pattern
+    isNew = true;
+    patternIndex = existingPatterns.length;
+
+    const newPattern: FileSourcePattern = {
+      sourceType: sourceInfo.sourceType,
+      pattern: sourceInfo.searchPattern,
+      integrationId: sourceInfo.integrationId,
+      confidence: 70, // Start with moderate confidence
+      usageCount: 1,
+      sourceTransactionIds: [transactionId],
+      createdAt: now,
+      lastUsedAt: now,
+    };
+
+    updatedPatterns = [...existingPatterns, newPattern];
+
+    console.log(
+      `[FileSourcePattern] Created new ${sourceInfo.sourceType} pattern "${sourceInfo.searchPattern}" for partner ${partnerId}`
+    );
+  }
+
+  // Update partner document
+  const partnerRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
+  await updateDoc(partnerRef, {
+    fileSourcePatterns: updatedPatterns,
+    fileSourcePatternsUpdatedAt: now,
+    updatedAt: now,
+  });
+
+  return { isNew, patternIndex };
+}
+
+/**
+ * Remove a file source pattern from a partner
+ */
+export async function removeFileSourcePattern(
+  ctx: OperationsContext,
+  partnerId: string,
+  patternIndex: number
+): Promise<void> {
+  const partner = await getUserPartner(ctx, partnerId);
+  if (!partner) {
+    throw new Error(`Partner ${partnerId} not found or access denied`);
+  }
+
+  const existingPatterns = partner.fileSourcePatterns || [];
+  if (patternIndex < 0 || patternIndex >= existingPatterns.length) {
+    throw new Error(`Pattern index ${patternIndex} out of bounds`);
+  }
+
+  const updatedPatterns = existingPatterns.filter((_, i) => i !== patternIndex);
+
+  const partnerRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
+  await updateDoc(partnerRef, {
+    fileSourcePatterns: updatedPatterns,
+    fileSourcePatternsUpdatedAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  });
+
+  console.log(`[FileSourcePattern] Removed pattern at index ${patternIndex} from partner ${partnerId}`);
+}
+
+/**
+ * Get file source patterns for a partner
+ */
+export async function getFileSourcePatterns(
+  ctx: OperationsContext,
+  partnerId: string
+): Promise<FileSourcePattern[]> {
+  const partner = await getUserPartner(ctx, partnerId);
+  if (!partner) {
+    return [];
+  }
+
+  return partner.fileSourcePatterns || [];
 }

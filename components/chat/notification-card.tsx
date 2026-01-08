@@ -34,7 +34,10 @@ const typeConfig: Record<
 export function NotificationCard({
   notification,
 }: NotificationCardProps) {
-  const config = typeConfig[notification.type];
+  const config = typeConfig[notification.type] ?? {
+    icon: Sparkles,
+    color: "text-muted-foreground",
+  };
   const Icon = config.icon;
 
   // Format timestamp

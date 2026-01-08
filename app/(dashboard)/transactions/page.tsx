@@ -21,6 +21,8 @@ import {
 } from "@/lib/filters/url-params";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Transaction } from "@/types/transaction";
+import { PartnerMatchResult } from "@/types/partner";
+import { matchTransactionByPattern } from "@/lib/matching/partner-matcher";
 import { cn } from "@/lib/utils";
 
 const PANEL_WIDTH_KEY = "transactionDetailPanelWidth";
@@ -72,7 +74,7 @@ function TransactionsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const { transactions, loading, updateTransaction } = useTransactions();
+  const { transactions, loading, error, updateTransaction } = useTransactions();
   const { sources } = useSources();
   const { partners, createPartner, assignToTransaction, removeFromTransaction } = usePartners();
   const { globalPartners } = useGlobalPartners();
@@ -162,6 +164,12 @@ function TransactionsContent() {
     if (!selectedTransaction) return undefined;
     return sources.find((s) => s.id === selectedTransaction.sourceId);
   }, [selectedTransaction, sources]);
+
+  // Compute pattern suggestion for selected transaction (same logic as table column)
+  const selectedPatternSuggestion = useMemo(() => {
+    if (!selectedTransaction) return null;
+    return matchTransactionByPattern(selectedTransaction, partners);
+  }, [selectedTransaction, partners]);
 
   // Load panel width from localStorage
   useEffect(() => {
@@ -336,6 +344,23 @@ function TransactionsContent() {
     return <TransactionTableFallback />;
   }
 
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center max-w-md p-6">
+          <p className="text-destructive font-medium mb-2">Failed to load transactions</p>
+          <p className="text-sm text-muted-foreground mb-4">{error.message}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="text-sm text-primary hover:underline"
+          >
+            Refresh page
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-hidden">
       {/* Main content - adjusts margin when panel is open */}
@@ -385,6 +410,7 @@ function TransactionsContent() {
               onAssignPartner={assignToTransaction}
               onRemovePartner={removeFromTransaction}
               onCreatePartner={createPartner}
+              patternSuggestion={selectedPatternSuggestion}
             />
           </div>
         </div>

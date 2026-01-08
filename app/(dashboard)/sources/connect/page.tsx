@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { ArrowLeft, ExternalLink, Loader2, CheckCircle } from "lucide-react";
 import { BankSelector } from "@/components/sources/bank-selector";
 import { useBankConnection } from "@/hooks/use-bank-connection";
 
-export default function ConnectBankPage() {
+function ConnectBankContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const connectionId = searchParams.get("connectionId");
@@ -189,5 +189,25 @@ export default function ConnectBankPage() {
         Connection is valid for 90 days per PSD2 regulations.
       </p>
     </div>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="container max-w-lg mx-auto py-8">
+      <Card>
+        <CardContent className="py-8 text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+export default function ConnectBankPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <ConnectBankContent />
+    </Suspense>
   );
 }

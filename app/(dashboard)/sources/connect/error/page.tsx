@@ -1,11 +1,12 @@
 "use client";
 
+import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { XCircle } from "lucide-react";
+import { Loader2, XCircle } from "lucide-react";
 
-export default function ConnectErrorPage() {
+function ErrorContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const message = searchParams.get("message") || "An error occurred while connecting your bank.";
@@ -36,5 +37,25 @@ export default function ConnectErrorPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="container max-w-lg mx-auto py-8">
+      <Card>
+        <CardContent className="py-8 text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+export default function ConnectErrorPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <ErrorContent />
+    </Suspense>
   );
 }

@@ -208,7 +208,8 @@ exports.matchColumns = (0, https_1.onCall)({
     timeoutSeconds: 60,
     secrets: [anthropicApiKey],
 }, async (request) => {
-    const userId = request.auth?.uid || "dev-user-123";
+    // TODO: Use real auth when ready for multi-user
+    const userId = "dev-user-123";
     const { headers, sampleRows } = request.data;
     // Validate input
     if (!headers || !Array.isArray(headers) || headers.length === 0) {

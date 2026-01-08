@@ -4,17 +4,16 @@ import { TransactionSource, GoCardlessConnectorConfig } from "@/types/source";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Upload, ChevronRight, Link2, RefreshCw, AlertTriangle, CreditCard } from "lucide-react";
+import { Building2, Upload, ChevronRight, CreditCard } from "lucide-react";
 import { formatIban } from "@/lib/import/deduplication";
 
 interface SourceCardProps {
   source: TransactionSource;
   onClick: () => void;
   onImportClick: () => void;
-  onConnectClick: () => void;
 }
 
-export function SourceCard({ source, onClick, onImportClick, onConnectClick }: SourceCardProps) {
+export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) {
   // Check API connection status
   const isApiConnected = source.type === "api" && source.apiConfig?.provider === "gocardless";
   const apiConfig = source.apiConfig as GoCardlessConnectorConfig | undefined;
@@ -71,45 +70,17 @@ export function SourceCard({ source, onClick, onImportClick, onConnectClick }: S
         </p>
 
         <div className="flex items-center justify-between">
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onImportClick();
-              }}
-            >
-              <Upload className="h-4 w-4 mr-2" />
-              Import
-            </Button>
-
-            <Button
-              variant={needsReauth ? "default" : "outline"}
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onConnectClick();
-              }}
-            >
-              {needsReauth ? (
-                <>
-                  <AlertTriangle className="h-4 w-4 mr-2" />
-                  Reconnect
-                </>
-              ) : isApiConnected ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Renew
-                </>
-              ) : (
-                <>
-                  <Link2 className="h-4 w-4 mr-2" />
-                  Connect
-                </>
-              )}
-            </Button>
-          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onImportClick();
+            }}
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Import
+          </Button>
 
           <ChevronRight className="h-4 w-4 text-muted-foreground" />
         </div>

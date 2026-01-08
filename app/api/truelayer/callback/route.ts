@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, collection, addDoc, Timestamp } from "firebase/firestore";
+import { getFirestore, connectFirestoreEmulator, collection, addDoc, Timestamp } from "firebase/firestore";
 import { getTrueLayerClient } from "@/lib/truelayer";
 import { TrueLayerConnection } from "@/types/truelayer";
 
@@ -17,6 +17,16 @@ const firebaseConfig = {
 const appName = "truelayer-callback";
 const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
 const db = getFirestore(app);
+
+// Connect to emulator in development
+if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_USE_EMULATORS !== "false") {
+  try {
+    connectFirestoreEmulator(db, "localhost", 8080);
+    console.log("[TrueLayer Callback] Connected to Firestore emulator");
+  } catch {
+    // Already connected
+  }
+}
 
 const MOCK_USER_ID = "dev-user-123";
 const CONNECTIONS_COLLECTION = "truelayerConnections";
@@ -88,9 +98,9 @@ export async function POST(request: NextRequest) {
       tokenExpiresAt: Timestamp.fromDate(expiresAt),
       accountIds,
       userId: MOCK_USER_ID,
-      linkToSourceId: sourceId || undefined,
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
+      ...(sourceId && { linkToSourceId: sourceId }),
     };
 
     const docRef = await addDoc(collection(db, CONNECTIONS_COLLECTION), connectionDoc);

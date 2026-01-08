@@ -33,10 +33,25 @@ export function PartnerSearchList({
   const [search, setSearch] = useState("");
 
   // Combine and filter partners
+  // Filter out global partners that have a local copy (linked via globalPartnerId)
   const filteredPartners = useMemo(() => {
+    // Build set of globalPartnerIds that have local copies
+    const localizedGlobalIds = new Set(
+      userPartners
+        .filter((p) => p.globalPartnerId)
+        .map((p) => p.globalPartnerId!)
+    );
+
+    // Filter globals - exclude those with local copies
+    const filteredGlobals = globalPartners.filter(
+      (g) => !localizedGlobalIds.has(g.id)
+    );
+
     const combined: CombinedPartner[] = [
+      // User partners first (they take priority)
       ...userPartners.map((p) => ({ ...p, type: "user" as const })),
-      ...globalPartners.map((p) => ({ ...p, type: "global" as const })),
+      // Then globals without local copies
+      ...filteredGlobals.map((p) => ({ ...p, type: "global" as const })),
     ];
 
     if (!search.trim()) {

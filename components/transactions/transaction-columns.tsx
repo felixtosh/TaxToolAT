@@ -3,7 +3,6 @@
 import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import {
-  Paperclip,
   ArrowUpDown,
   FileText,
   Tag,
@@ -14,6 +13,7 @@ import { UserPartner, GlobalPartner, PartnerMatchResult } from "@/types/partner"
 import { UserNoReceiptCategory, CategorySuggestion } from "@/types/no-receipt-category";
 import { getCategoryTemplate } from "@/lib/data/no-receipt-category-templates";
 import { Button } from "@/components/ui/button";
+import { Pill } from "@/components/ui/pill";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
   Tooltip,
@@ -21,36 +21,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-
-// Pill component for file/category display (matches PartnerPill styling exactly)
-function FilePill({
-  label,
-  icon: Icon,
-  variant = "default",
-}: {
-  label: string;
-  icon: React.ElementType;
-  variant?: "default" | "suggestion";
-}) {
-  return (
-    <div
-      className={cn(
-        "inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm max-w-[160px]",
-        variant === "suggestion"
-          ? "bg-info border-info-border text-info-foreground"
-          : "bg-background border-input"
-      )}
-    >
-      <Icon
-        className={cn(
-          "h-3.5 w-3.5 flex-shrink-0",
-          variant === "suggestion" ? "text-info-foreground" : "text-muted-foreground"
-        )}
-      />
-      <span className="truncate flex-1">{label}</span>
-    </div>
-  );
-}
 
 export function getTransactionColumns(
   sources: TransactionSource[],
@@ -162,15 +132,41 @@ export function getTransactionColumns(
           );
         }
 
-        // Show pattern suggestion if available
-        const suggestion = patternSuggestions?.get(txId);
-        if (suggestion) {
+        // Find best suggestion from all sources (pattern match + server-stored)
+        const patternSuggestion = patternSuggestions?.get(txId);
+        const serverSuggestions = row.original.partnerSuggestions || [];
+
+        // Get top server suggestion with partner lookup
+        let topServerSuggestion: { name: string; confidence: number } | null = null;
+        for (const s of serverSuggestions) {
+          const partner = s.partnerType === "global"
+            ? globalPartnerMap.get(s.partnerId)
+            : userPartnerMap.get(s.partnerId);
+          if (partner) {
+            topServerSuggestion = { name: partner.name, confidence: s.confidence };
+            break; // First one is highest confidence (already sorted server-side)
+          }
+        }
+
+        // Pick the highest confidence suggestion
+        let bestSuggestion: { name: string; confidence: number } | null = null;
+        if (patternSuggestion && topServerSuggestion) {
+          bestSuggestion = patternSuggestion.confidence >= topServerSuggestion.confidence
+            ? { name: patternSuggestion.partnerName, confidence: patternSuggestion.confidence }
+            : topServerSuggestion;
+        } else if (patternSuggestion) {
+          bestSuggestion = { name: patternSuggestion.partnerName, confidence: patternSuggestion.confidence };
+        } else if (topServerSuggestion) {
+          bestSuggestion = topServerSuggestion;
+        }
+
+        if (bestSuggestion) {
           return (
             <Tooltip>
               <TooltipTrigger asChild>
                 <PartnerPill
-                  name={suggestion.partnerName}
-                  confidence={suggestion.confidence}
+                  name={bestSuggestion.name}
+                  confidence={bestSuggestion.confidence}
                   variant="suggestion"
                 />
               </TooltipTrigger>
@@ -202,10 +198,10 @@ export function getTransactionColumns(
               style: "currency",
               currency: fileAmount.currency || "EUR",
             }).format(fileAmount.amount / 100);
-            return <FilePill label={formatted} icon={FileText} />;
+            return <Pill label={formatted} icon={FileText} />;
           }
           const label = fileCount === 1 ? "1 file" : `${fileCount} files`;
-          return <FilePill label={label} icon={FileText} />;
+          return <Pill label={label} icon={FileText} />;
         }
 
         if (hasNoReceiptCategory) {
@@ -215,7 +211,7 @@ export function getTransactionColumns(
             <Tooltip>
               <TooltipTrigger asChild>
                 <div>
-                  <FilePill label={label} icon={Tag} />
+                  <Pill label={label} icon={Tag} />
                 </div>
               </TooltipTrigger>
               <TooltipContent>
@@ -234,7 +230,7 @@ export function getTransactionColumns(
             <Tooltip>
               <TooltipTrigger asChild>
                 <div>
-                  <FilePill label={label} icon={Tag} variant="suggestion" />
+                  <Pill label={label} icon={Tag} variant="suggestion" />
                 </div>
               </TooltipTrigger>
               <TooltipContent>
@@ -268,7 +264,7 @@ export function getTransactionColumns(
         return (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="text-sm truncate">{source.name}</span>
+              <span className="text-sm truncate block">{source.name}</span>
             </TooltipTrigger>
             <TooltipContent>
               <p className="font-medium">{source.name}</p>
