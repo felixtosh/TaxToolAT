@@ -18,7 +18,8 @@ import { TransactionFilesSection } from "@/components/transactions/transaction-f
 import { TransactionHistory } from "@/components/sidebar/transaction-history";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { UserPartner, GlobalPartner, PartnerFormData, PartnerMatchResult } from "@/types/partner";
+import { UserPartner, GlobalPartner, PartnerFormData } from "@/types/partner";
+import { usePrecisionSearch } from "@/hooks/use-precision-search";
 
 // Constants for file upload
 const MOCK_USER_ID = "dev-user-123";
@@ -44,8 +45,8 @@ interface TransactionDetailPanelProps {
   onAssignPartner: (transactionId: string, partnerId: string, partnerType: "global" | "user", matchedBy: "manual" | "suggestion", confidence?: number) => Promise<void>;
   onRemovePartner: (transactionId: string) => Promise<void>;
   onCreatePartner: (data: PartnerFormData) => Promise<string>;
-  /** Pre-computed pattern suggestion from parent (ensures consistency with list view) */
-  patternSuggestion?: PartnerMatchResult | null;
+  /** Open the connect file overlay (managed at page level) */
+  onOpenConnectFile?: () => void;
 }
 
 export function TransactionDetailPanel({
@@ -62,7 +63,7 @@ export function TransactionDetailPanel({
   onAssignPartner,
   onRemovePartner,
   onCreatePartner,
-  patternSuggestion,
+  onOpenConnectFile,
 }: TransactionDetailPanelProps) {
   // Handler for assigning a partner to the transaction
   const handleAssignPartner = useCallback(
@@ -96,6 +97,14 @@ export function TransactionDetailPanel({
 
   // Edit history expanded state
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+
+  // Precision search hook
+  const {
+    isSearching,
+    strategyLabel,
+    error: searchError,
+    triggerSearch,
+  } = usePrecisionSearch({ transactionId: transaction.id });
 
   // Operations context for file operations
   const ctx: OperationsContext = useMemo(
@@ -273,18 +282,31 @@ export function TransactionDetailPanel({
             onAssignPartner={handleAssignPartner}
             onRemovePartner={handleRemovePartner}
             onCreatePartner={handleCreatePartner}
-            patternSuggestion={patternSuggestion}
           />
 
           {/* Files Section */}
           <div className="border-t pt-3 mt-3 -mx-4 px-4">
-            <TransactionFilesSection transaction={transaction} />
+            <TransactionFilesSection
+              transaction={transaction}
+              isSearching={isSearching}
+              searchLabel={strategyLabel}
+              onTriggerSearch={triggerSearch}
+              onOpenConnectFile={onOpenConnectFile}
+            />
           </div>
         </div>
       </ScrollArea>
 
-      {/* Sticky footer with Edit History button */}
-      <div className="border-t px-4 py-2 bg-background">
+      {/* Sticky footer with action buttons */}
+      <div className="border-t px-4 py-2 bg-background space-y-1">
+        {/* Search error message */}
+        {searchError && (
+          <div className="text-xs text-destructive px-2">
+            {searchError}
+          </div>
+        )}
+
+        {/* Edit History button */}
         <Button
           variant="ghost"
           size="sm"

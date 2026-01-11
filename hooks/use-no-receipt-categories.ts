@@ -20,12 +20,11 @@ import {
   hasUserCategories,
   updateUserCategory,
   clearManualRemoval,
+  triggerCategoryMatchingForAll,
 } from "@/lib/operations";
 import { CategoryLearnedPattern } from "@/types/no-receipt-category";
-import {
-  matchTransactionToCategories,
-  getCategorySuggestions,
-} from "@/lib/matching/category-matcher";
+// Category suggestions now come from transaction.categorySuggestions (computed on backend)
+// No client-side matching functions needed
 
 const CATEGORIES_COLLECTION = "noReceiptCategories";
 const MOCK_USER_ID = "dev-user-123";
@@ -172,14 +171,14 @@ export function useNoReceiptCategories() {
   );
 
   /**
-   * Get category suggestions for a transaction
+   * Get category suggestions for a transaction (from stored backend results)
    */
   const getSuggestionsForTransaction = useCallback(
     (transaction: Transaction): CategorySuggestion[] => {
-      if (categories.length === 0) return [];
-      return getCategorySuggestions(transaction, categories);
+      // Return stored suggestions from transaction (computed by backend)
+      return transaction.categorySuggestions || [];
     },
-    [categories]
+    []
   );
 
   /**
@@ -213,6 +212,14 @@ export function useNoReceiptCategories() {
     [ctx]
   );
 
+  /**
+   * Trigger category matching for all unmatched transactions.
+   * Populates categorySuggestions on transactions via Cloud Function.
+   */
+  const matchAllTransactions = useCallback(async () => {
+    return triggerCategoryMatchingForAll();
+  }, []);
+
   return {
     categories,
     loading: loading || initializing,
@@ -227,28 +234,24 @@ export function useNoReceiptCategories() {
     retrigger,
     updateCategory,
     clearRemoval,
+    matchAllTransactions,
   };
 }
 
 /**
  * Hook to get category suggestions for a specific transaction.
- * Combines stored suggestions with real-time client-side matching.
+ * Returns stored suggestions from backend (no client-side computation).
  */
 export function useCategorySuggestions(
   transaction: Transaction | null,
-  categories: UserNoReceiptCategory[]
+  _categories: UserNoReceiptCategory[]
 ): CategorySuggestion[] {
   return useMemo(() => {
-    if (!transaction || categories.length === 0) {
+    if (!transaction) {
       return [];
     }
 
-    // If transaction already has suggestions stored, prefer those
-    if (transaction.categorySuggestions && transaction.categorySuggestions.length > 0) {
-      return transaction.categorySuggestions;
-    }
-
-    // Otherwise compute client-side
-    return matchTransactionToCategories(transaction, categories);
-  }, [transaction, categories]);
+    // Suggestions are pre-computed by backend and stored on transaction
+    return transaction.categorySuggestions || [];
+  }, [transaction]);
 }

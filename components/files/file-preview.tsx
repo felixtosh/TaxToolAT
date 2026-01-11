@@ -12,6 +12,8 @@ interface FilePreviewProps {
   onClick?: () => void;
   /** Full size mode - fills container instead of using aspect ratio */
   fullSize?: boolean;
+  /** Active state - shows visual feedback when viewer is open */
+  active?: boolean;
 }
 
 /**
@@ -24,6 +26,7 @@ export function FilePreview({
   className,
   onClick,
   fullSize = false,
+  active = false,
 }: FilePreviewProps) {
   const isPdf = fileType === "application/pdf";
   const isImage = fileType.startsWith("image/");
@@ -79,11 +82,24 @@ export function FilePreview({
     );
   }
 
+  // Get file extension for badge
+  const getFileExtension = () => {
+    if (isPdf) return "PDF";
+    if (fileType.startsWith("image/")) {
+      const ext = fileType.split("/")[1]?.toUpperCase();
+      return ext === "JPEG" ? "JPG" : ext;
+    }
+    return fileType.split("/")[1]?.toUpperCase() || "FILE";
+  };
+
   // Thumbnail mode (original behavior)
   return (
     <div
       className={cn(
-        "relative bg-muted/30 rounded-md overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all",
+        "relative bg-muted/30 rounded-md overflow-hidden cursor-pointer transition-all",
+        active
+          ? "ring-2 ring-primary shadow-md"
+          : "hover:ring-2 hover:ring-primary/50",
         className
       )}
       onClick={onClick}
@@ -110,6 +126,10 @@ export function FilePreview({
           <FileText className="h-8 w-8" />
         </div>
       )}
+      {/* File type badge */}
+      <div className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[10px] font-medium bg-background/90 backdrop-blur-sm rounded border border-border/50 text-muted-foreground">
+        {getFileExtension()}
+      </div>
     </div>
   );
 }

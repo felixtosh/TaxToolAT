@@ -914,6 +914,7 @@ export async function disablePresetPartners(
 
 /**
  * Toggle preset partners on/off
+ * When enabling, also creates default user data if not already configured
  */
 export async function togglePresetPartners(
   ctx: OperationsContext,
@@ -921,6 +922,11 @@ export async function togglePresetPartners(
 ): Promise<{ enabled: boolean; count: number }> {
   if (enable) {
     const result = await enablePresetPartners(ctx);
+
+    // Also create default user data when enabling presets
+    const { createDefaultUserData } = await import("./user-data-ops");
+    await createDefaultUserData(ctx);
+
     return { enabled: true, count: result.created };
   } else {
     const result = await disablePresetPartners(ctx);
@@ -1087,4 +1093,123 @@ export async function getFileSourcePatterns(
   }
 
   return partner.fileSourcePatterns || [];
+}
+
+// ============ Email Domain Learning ============
+
+/**
+ * Add an email domain to a partner's known domains.
+ * Called when a file from a Gmail sender is matched to a transaction with this partner.
+ *
+ * This enables future auto-matching: files from known email domains
+ * get a confidence boost when matching to transactions with this partner.
+ *
+ * @param partnerId - The partner to add the domain to
+ * @param domain - The email domain (e.g., "amazon.de")
+ */
+export async function addEmailDomainToPartner(
+  ctx: OperationsContext,
+  partnerId: string,
+  domain: string
+): Promise<void> {
+  const partner = await getUserPartner(ctx, partnerId);
+  if (!partner) {
+    throw new Error(`Partner ${partnerId} not found or access denied`);
+  }
+
+  // Normalize domain
+  const normalizedDomain = domain.toLowerCase().trim();
+
+  // Check if already exists
+  const existingDomains = partner.emailDomains || [];
+  if (existingDomains.includes(normalizedDomain)) {
+    return; // Already exists, nothing to do
+  }
+
+  // Add domain
+  const updatedDomains = [...existingDomains, normalizedDomain];
+
+  const partnerRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
+  await updateDoc(partnerRef, {
+    emailDomains: updatedDomains,
+    emailDomainsUpdatedAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  });
+
+  console.log(`[EmailDomain] Added domain "${normalizedDomain}" to partner ${partnerId}`);
+}
+
+/**
+ * Remove an email domain from a partner
+ */
+export async function removeEmailDomainFromPartner(
+  ctx: OperationsContext,
+  partnerId: string,
+  domain: string
+): Promise<void> {
+  const partner = await getUserPartner(ctx, partnerId);
+  if (!partner) {
+    throw new Error(`Partner ${partnerId} not found or access denied`);
+  }
+
+  const normalizedDomain = domain.toLowerCase().trim();
+  const existingDomains = partner.emailDomains || [];
+  const updatedDomains = existingDomains.filter((d) => d !== normalizedDomain);
+
+  if (updatedDomains.length === existingDomains.length) {
+    return; // Domain wasn't in the list
+  }
+
+  const partnerRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
+  await updateDoc(partnerRef, {
+    emailDomains: updatedDomains,
+    emailDomainsUpdatedAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  });
+
+  console.log(`[EmailDomain] Removed domain "${normalizedDomain}" from partner ${partnerId}`);
+}
+
+/**
+ * Find partners by email domain.
+ * Returns all partners that have this domain in their emailDomains array.
+ *
+ * Used for:
+ * 1. Boosting confidence when matching files from known sender domains
+ * 2. Auto-suggesting partners when viewing an email attachment
+ */
+export async function findPartnersByEmailDomain(
+  ctx: OperationsContext,
+  domain: string
+): Promise<UserPartner[]> {
+  const normalizedDomain = domain.toLowerCase().trim();
+
+  const q = query(
+    collection(ctx.db, PARTNERS_COLLECTION),
+    where("userId", "==", ctx.userId),
+    where("isActive", "==", true),
+    where("emailDomains", "array-contains", normalizedDomain)
+  );
+
+  const snapshot = await getDocs(q);
+
+  return snapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  })) as UserPartner[];
+}
+
+/**
+ * Get all email domains for a partner
+ */
+export async function getEmailDomainsForPartner(
+  ctx: OperationsContext,
+  partnerId: string
+): Promise<string[]> {
+  const partner = await getUserPartner(ctx, partnerId);
+  if (!partner) {
+    return [];
+  }
+
+  return partner.emailDomains || [];
 }

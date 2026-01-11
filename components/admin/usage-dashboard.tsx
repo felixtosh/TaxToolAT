@@ -22,6 +22,9 @@ import {
   Building,
   Brain,
   Columns,
+  FileSearch,
+  FileCheck,
+  Search,
 } from "lucide-react";
 import { UsageChart } from "./usage-chart";
 import { AIFunction } from "@/types/ai-usage";
@@ -30,15 +33,21 @@ import { cn } from "@/lib/utils";
 const FUNCTION_ICONS: Record<AIFunction, typeof Activity> = {
   chat: MessageSquare,
   companyLookup: Building,
+  companyLookupSearch: Search,
   patternLearning: Brain,
   columnMatching: Columns,
+  extraction: FileSearch,
+  classification: FileCheck,
 };
 
 const FUNCTION_COLORS: Record<AIFunction, string> = {
   chat: "bg-blue-500",
   companyLookup: "bg-purple-500",
+  companyLookupSearch: "bg-violet-500",
   patternLearning: "bg-green-500",
   columnMatching: "bg-orange-500",
+  extraction: "bg-cyan-500",
+  classification: "bg-teal-500",
 };
 
 function formatCost(cost: number): string {
@@ -59,9 +68,15 @@ function formatTokens(tokens: number): string {
 }
 
 function formatModelName(model: string): string {
+  // Claude models
   if (model.includes("sonnet")) return "Sonnet 4";
   if (model.includes("haiku")) return "Haiku 3.5";
   if (model.includes("opus")) return "Opus";
+  // Gemini models
+  if (model.includes("gemini-2.0-flash-lite")) return "Gemini Flash Lite";
+  if (model.includes("gemini-2.0-flash")) return "Gemini Flash";
+  if (model.includes("gemini-2.5-flash")) return "Gemini 2.5 Flash";
+  if (model.includes("gemini")) return "Gemini";
   return model.split("-").slice(0, 2).join(" ");
 }
 
@@ -69,8 +84,11 @@ function formatFunctionName(fn: AIFunction): string {
   const names: Record<AIFunction, string> = {
     chat: "Chat",
     companyLookup: "Company Lookup",
+    companyLookupSearch: "Company Search",
     patternLearning: "Pattern Learning",
     columnMatching: "Column Matching",
+    extraction: "File Extraction",
+    classification: "Classification",
   };
   return names[fn] || fn;
 }

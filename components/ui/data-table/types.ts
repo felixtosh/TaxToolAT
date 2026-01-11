@@ -1,4 +1,4 @@
-import { ColumnDef, Row } from "@tanstack/react-table";
+import { ColumnDef, Row, SortingState } from "@tanstack/react-table";
 import { ReactNode } from "react";
 
 /**
@@ -15,6 +15,13 @@ export interface DataTableSection<TData> {
   headerClassName?: string;
   /** Optional className for data rows in this section */
   rowClassName?: string;
+}
+
+/** Modifier keys passed with row click events for multi-select handling */
+export interface RowClickModifiers {
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
 }
 
 export interface ResizableDataTableProps<TData extends { id: string }> {
@@ -34,6 +41,18 @@ export interface ResizableDataTableProps<TData extends { id: string }> {
   sectionHeaderHeight?: number;
   overscan?: number;
   emptyMessage?: string;
+  /** Auto-scroll to selected row when it changes (default: true). Skips scroll if row is already visible. */
+  autoScrollToSelected?: boolean;
+  /** Initial sorting state */
+  initialSorting?: SortingState;
+  /** Callback when sorting changes - receives sorting state and isSorting flag */
+  onSortingChange?: (sorting: SortingState, isSorting: boolean) => void;
+  /** Enable multi-select mode with CMD/Ctrl+click and Shift+click (default: false) */
+  enableMultiSelect?: boolean;
+  /** Set of currently selected row IDs (for multi-select mode) */
+  selectedRowIds?: Set<string>;
+  /** Callback when selection changes in multi-select mode */
+  onSelectionChange?: (selectedIds: Set<string>) => void;
 }
 
 export interface DataTableHandle {
@@ -43,7 +62,9 @@ export interface DataTableHandle {
 export interface VirtualRowProps<TData extends { id: string }> {
   row: Row<TData>;
   isSelected: boolean;
-  onClick: (row: TData) => void;
+  /** True if this is the primary/anchor selection (stronger highlight) */
+  isPrimarySelected?: boolean;
+  onClick: (row: TData, modifiers: RowClickModifiers) => void;
   virtualStart: number;
   virtualSize: number;
   columnSizes: number[];

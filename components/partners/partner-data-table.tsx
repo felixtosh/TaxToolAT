@@ -15,6 +15,8 @@ interface PartnerDataTableProps {
   selectedRowId?: string | null;
   onEdit?: (partner: UserPartner) => void;
   onDelete?: (partnerId: string) => void;
+  /** Partner IDs marked as "my company" */
+  markedAsMe?: string[];
 }
 
 export interface PartnerDataTableHandle {
@@ -31,12 +33,12 @@ const DEFAULT_PARTNER_COLUMN_SIZES: Record<string, number> = {
 };
 
 function PartnerDataTableInner(
-  { data, onRowClick, selectedRowId, onEdit, onDelete }: PartnerDataTableProps,
+  { data, onRowClick, selectedRowId, onEdit, onDelete, markedAsMe }: PartnerDataTableProps,
   ref: React.ForwardedRef<PartnerDataTableHandle>
 ) {
   const columns = React.useMemo(
-    () => getPartnerColumns({ onEdit, onDelete }),
-    [onEdit, onDelete]
+    () => getPartnerColumns({ onEdit, onDelete, markedAsMe }),
+    [onEdit, onDelete, markedAsMe]
   );
 
   // Get data attributes for row

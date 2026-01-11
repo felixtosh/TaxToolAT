@@ -15,6 +15,7 @@ import {
   Calendar,
   Sparkles,
   BookmarkCheck,
+  Paperclip,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +33,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { FilePreview } from "./file-preview";
 import {
@@ -43,6 +45,8 @@ import { usePartners } from "@/hooks/use-partners";
 import { learnFileSourcePattern } from "@/lib/operations";
 import { db, functions } from "@/lib/firebase/config";
 import { httpsCallable } from "firebase/functions";
+import { GmailAttachmentsTab } from "./connect-transaction-tabs/gmail-attachments-tab";
+import { EmailInvoiceTab } from "./connect-transaction-tabs/email-invoice-tab";
 
 const MOCK_USER_ID = "dev-user-123";
 
@@ -131,7 +135,12 @@ export function ConnectFileDialog({
       amount: 0,
       currency: "EUR",
     },
-    partner
+    partner,
+    {
+      localOnly: true, // Files tab only searches local files
+      dateFrom,
+      dateTo,
+    }
   );
 
   // Get best learned file source pattern for this partner
@@ -179,14 +188,6 @@ export function ConnectFileDialog({
     }
     return "";
   }, [partner?.name, transactionInfo?.partner, transactionInfo?.name, transactionInfo?.reference]);
-
-  // Initialize date range from transaction
-  useEffect(() => {
-    if (open && transactionInfo?.date && dateFrom === undefined && dateTo === undefined) {
-      setDateFrom(subDays(transactionInfo.date, 30));
-      setDateTo(addDays(transactionInfo.date, 7));
-    }
-  }, [open, transactionInfo, dateFrom, dateTo]);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -418,9 +419,29 @@ export function ConnectFileDialog({
           )}
         </DialogHeader>
 
-        <div className="flex flex-1 overflow-hidden">
-          {/* Left column: Search and results */}
-          <div className="w-[350px] border-r flex flex-col">
+        <Tabs defaultValue="files" className="flex flex-col flex-1 min-h-0">
+          <div className="border-b shrink-0">
+            <TabsList className="h-10 w-full grid grid-cols-3 rounded-none">
+              <TabsTrigger value="files" className="gap-2">
+                <HardDrive className="h-4 w-4" />
+                Files
+              </TabsTrigger>
+              <TabsTrigger value="gmail-attachments" className="gap-2">
+                <Paperclip className="h-4 w-4" />
+                Gmail Attachments
+              </TabsTrigger>
+              <TabsTrigger value="email-to-pdf" className="gap-2">
+                <Mail className="h-4 w-4" />
+                Email to PDF
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          {/* Files Tab - Local file search */}
+          <TabsContent value="files" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden data-[state=active]:flex data-[state=active]:flex-col" forceMount>
+            <div className="flex flex-1 min-h-0">
+              {/* Left column: Search and results */}
+              <div className="w-[350px] shrink-0 border-r flex flex-col min-h-0">
             {/* Search */}
             <div className="p-4 border-b space-y-3">
               {/* Query source indicator */}
@@ -450,7 +471,7 @@ export function ConnectFileDialog({
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search files and Gmail..."
+                  placeholder="Search uploaded files..."
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
@@ -655,8 +676,8 @@ export function ConnectFileDialog({
             </ScrollArea>
           </div>
 
-          {/* Right column: Preview */}
-          <div className="flex-1 flex flex-col">
+              {/* Right column: Preview */}
+              <div className="flex-1 flex flex-col min-h-0 min-w-0">
             {selectedResult ? (
               <>
                 {/* Preview */}
@@ -724,25 +745,65 @@ export function ConnectFileDialog({
                 </div>
               </div>
             )}
-          </div>
-        </div>
+              </div>
+            </div>
 
-        {/* Footer */}
-        <div className="border-t p-4 flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={handleSelect} disabled={!selectedResult || isConnecting}>
-            {isConnecting ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Connecting...
-              </>
-            ) : (
-              "Connect File"
-            )}
-          </Button>
-        </div>
+            {/* Footer for Files tab */}
+            <div className="border-t p-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button onClick={handleSelect} disabled={!selectedResult || isConnecting}>
+                {isConnecting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Connecting...
+                  </>
+                ) : (
+                  "Connect File"
+                )}
+              </Button>
+            </div>
+          </TabsContent>
+
+          {/* Gmail Attachments Tab */}
+          <TabsContent value="gmail-attachments" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden data-[state=active]:flex data-[state=active]:flex-col" forceMount>
+            <div className="flex-1 min-h-0">
+              <GmailAttachmentsTab
+                transactionInfo={transactionInfo ? {
+                  name: transactionInfo.name || transactionInfo.partner || "",
+                  partner: transactionInfo.partner,
+                  amount: transactionInfo.amount,
+                  date: transactionInfo.date,
+                  partnerId: transactionInfo.partnerId,
+                } : undefined}
+                onFileCreated={async (fileId) => {
+                  await onSelect(fileId, { sourceType: "gmail" });
+                  onClose();
+                }}
+              />
+            </div>
+          </TabsContent>
+
+          {/* Email to PDF Tab */}
+          <TabsContent value="email-to-pdf" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden data-[state=active]:flex data-[state=active]:flex-col" forceMount>
+            <div className="flex-1 min-h-0">
+              <EmailInvoiceTab
+                transactionInfo={transactionInfo ? {
+                  name: transactionInfo.name || transactionInfo.partner || "",
+                  partner: transactionInfo.partner,
+                  amount: transactionInfo.amount,
+                  date: transactionInfo.date,
+                  partnerId: transactionInfo.partnerId,
+                } : undefined}
+                onFileCreated={async (fileId) => {
+                  await onSelect(fileId, { sourceType: "gmail" });
+                  onClose();
+                }}
+              />
+            </div>
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   );

@@ -21,34 +21,101 @@ export const db = getFirestore(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app, "europe-west1");
 
-// Connect to emulators in development
-let emulatorsConnected = false;
+// Emulator configuration
+const EMULATOR_CONFIG = {
+  firestore: { host: "localhost", port: 8080 },
+  storage: { host: "localhost", port: 9199 },
+  functions: { host: "localhost", port: 5001 },
+};
 
+let emulatorsConnected = false;
+let emulatorCheckDone = false;
+
+/**
+ * Check if emulators are running by attempting to connect
+ */
+async function checkEmulatorsRunning(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+
+  try {
+    const response = await fetch(`http://${EMULATOR_CONFIG.firestore.host}:${EMULATOR_CONFIG.firestore.port}/`, {
+      method: "GET",
+      mode: "no-cors",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Connect to Firebase emulators in development mode
+ */
 export function connectEmulators() {
   if (emulatorsConnected) return;
   if (typeof window === "undefined") return;
   if (process.env.NODE_ENV !== "development") return;
 
   try {
-    connectFirestoreEmulator(db, "localhost", 8080);
-    connectStorageEmulator(storage, "localhost", 9199);
-    connectFunctionsEmulator(functions, "localhost", 5001);
+    connectFirestoreEmulator(db, EMULATOR_CONFIG.firestore.host, EMULATOR_CONFIG.firestore.port);
+    connectStorageEmulator(storage, EMULATOR_CONFIG.storage.host, EMULATOR_CONFIG.storage.port);
+    connectFunctionsEmulator(functions, EMULATOR_CONFIG.functions.host, EMULATOR_CONFIG.functions.port);
     emulatorsConnected = true;
-    console.log("Connected to Firebase emulators");
+    console.log(
+      "%c[Firebase] Connected to emulators (Firestore:8080, Storage:9199, Functions:5001)",
+      "color: #4CAF50; font-weight: bold"
+    );
   } catch (e) {
     // Emulators already connected
   }
 }
 
+/**
+ * Verify emulators are running and warn if not
+ */
+export async function verifyEmulatorConnection(): Promise<void> {
+  if (emulatorCheckDone) return;
+  if (typeof window === "undefined") return;
+  if (process.env.NODE_ENV !== "development") return;
+
+  emulatorCheckDone = true;
+
+  const isRunning = await checkEmulatorsRunning();
+
+  if (!isRunning) {
+    console.error(
+      "%c[Firebase] EMULATORS NOT RUNNING!\n" +
+      "You are in development mode but emulators are not detected.\n" +
+      "Run: firebase emulators:start\n" +
+      "Or set NEXT_PUBLIC_USE_EMULATORS=false to use production (not recommended)",
+      "color: #f44336; font-weight: bold; font-size: 14px"
+    );
+
+    // Show alert in browser
+    if (typeof window !== "undefined" && !sessionStorage.getItem("emulator-warning-shown")) {
+      sessionStorage.setItem("emulator-warning-shown", "true");
+      setTimeout(() => {
+        alert(
+          "Firebase Emulators Not Running!\n\n" +
+          "Start emulators with:\n" +
+          "firebase emulators:start"
+        );
+      }, 1000);
+    }
+  }
+}
+
 // Auto-connect to emulators in development (default behavior)
-// To use production services in dev, set NEXT_PUBLIC_USE_EMULATORS=false in .env.local
-// To use emulators, run: firebase emulators:start
+// IMPORTANT: Always use emulators in development to avoid production data issues
+// To use production services in dev (NOT RECOMMENDED), set NEXT_PUBLIC_USE_EMULATORS=false
 if (
   typeof window !== "undefined" &&
   process.env.NODE_ENV === "development" &&
   process.env.NEXT_PUBLIC_USE_EMULATORS !== "false"
 ) {
   connectEmulators();
+  // Verify after a short delay to allow page to load
+  setTimeout(() => verifyEmulatorConnection(), 2000);
 }
 
 export default app;

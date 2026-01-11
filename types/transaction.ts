@@ -60,6 +60,13 @@ export interface Transaction {
   /** Array of connected file IDs (many-to-many relationship). Optional for backward compatibility. */
   fileIds?: string[];
 
+  /**
+   * Which automation strategy connected the most recent file to this transaction.
+   * Used for tracking and debugging precision search results.
+   * Set by precision search when files are auto-connected.
+   */
+  fileAutomationSource?: import("./precision-search").SearchStrategy | null;
+
   /** Whether transaction has file + description */
   isComplete: boolean;
 
@@ -122,6 +129,14 @@ export interface Transaction {
 
   /** Receipt lost entry (only for "receipt-lost" category) */
   receiptLostEntry?: import("./no-receipt-category").ReceiptLostEntry | null;
+
+  // === AI Search Queries (cached) ===
+
+  /** AI-generated search queries for finding receipts */
+  aiSearchQueries?: string[] | null;
+
+  /** Partner ID when queries were generated (to invalidate on partner change) */
+  aiSearchQueriesForPartnerId?: string | null;
 
   createdAt: Timestamp;
   updatedAt: Timestamp;

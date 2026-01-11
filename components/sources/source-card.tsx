@@ -29,15 +29,17 @@ export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) 
     : null;
 
   const getStatusBadge = () => {
-    if (needsReauth) {
-      return <Badge variant="destructive" className="text-xs">Reconnect</Badge>;
-    }
-    if (isApiConnected) {
-      if (daysUntilExpiry !== null && daysUntilExpiry <= 7) {
+    // API-connected sources (Open Banking)
+    if (source.type === "api") {
+      if (needsReauth) {
+        return <Badge variant="destructive" className="text-xs">Reconnect</Badge>;
+      }
+      if (isApiConnected && daysUntilExpiry !== null && daysUntilExpiry <= 7) {
         return <Badge variant="outline" className="text-xs border-yellow-500 text-yellow-600">Expires soon</Badge>;
       }
       return <Badge variant="outline" className="text-xs border-green-500 text-green-600">Connected</Badge>;
     }
+    // CSV import sources
     return <Badge variant="secondary" className="text-xs">CSV</Badge>;
   };
 

@@ -20,10 +20,6 @@ export {
 } from "./fuzzy-match";
 
 export {
-  matchTransaction,
-  matchTransactionsBatch,
-  matchTransactionByPattern,
-  matchAllTransactionsByPattern,
   globMatch,
   shouldAutoApply,
   getConfidenceTier,
@@ -48,3 +44,16 @@ export {
 } from "./transaction-matcher";
 
 export type { TransactionMatchScore } from "./transaction-matcher";
+
+/**
+ * Automation definitions (for registry and UI)
+ */
+export {
+  PARTNER_MATCH_CONFIG,
+  CATEGORY_MATCH_CONFIG,
+  PARTNER_MATCHING_AUTOMATIONS,
+  FILE_MATCHING_AUTOMATIONS,
+  FIND_PARTNER_PIPELINE,
+  FIND_FILE_PIPELINE,
+  ALL_PIPELINES,
+} from "./automation-defs";

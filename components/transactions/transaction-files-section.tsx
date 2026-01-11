@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useMemo, useCallback, useEffect } from "react";
 import { format } from "date-fns";
 import {
   Loader2,
@@ -10,20 +10,28 @@ import {
   Plus,
   Sparkles,
   Check,
+  Search,
+  History,
 } from "lucide-react";
 import { Transaction } from "@/types/transaction";
 import { TaxFile } from "@/types/file";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { ConnectFileDialog } from "@/components/files/connect-file-dialog";
 import { NoReceiptCategoryPopover } from "./no-receipt-category-popover";
 import { ReceiptLostDialog } from "./receipt-lost-dialog";
 import { useTransactionFiles, useFiles } from "@/hooks/use-files";
 import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
-import { matchTransactionToCategories, shouldAutoApplyCategory } from "@/lib/matching/category-matcher";
+import { usePrecisionSearch } from "@/hooks/use-precision-search";
+import {
+  AutomationHistoryDialog,
+  type LastRunOutcome,
+  type AutomationOutcome,
+} from "@/components/automations/automation-history-dialog";
+// Category suggestions now come from transaction.categorySuggestions (computed on backend)
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { useState } from "react";
 
 // Consistent field row component (matches transaction-details.tsx)
 function FieldRow({
@@ -52,6 +60,14 @@ function FieldRow({
 
 interface TransactionFilesSectionProps {
   transaction: Transaction;
+  /** Whether a precision search is in progress */
+  isSearching?: boolean;
+  /** Current search strategy label (e.g., "Searching emails...") */
+  searchLabel?: string;
+  /** Trigger a precision search */
+  onTriggerSearch?: () => void;
+  /** Open the connect file overlay (lifted to page level) */
+  onOpenConnectFile?: () => void;
 }
 
 function formatAmount(
@@ -115,10 +131,16 @@ function FileRow({ file, onDisconnect, disconnecting }: FileRowProps) {
 
 export function TransactionFilesSection({
   transaction,
+  isSearching = false,
+  searchLabel,
+  onTriggerSearch,
+  onOpenConnectFile,
 }: TransactionFilesSectionProps) {
-  const [isFileDialogOpen, setIsFileDialogOpen] = useState(false);
   const [isReceiptLostDialogOpen, setIsReceiptLostDialogOpen] = useState(false);
+  const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [runningStepId, setRunningStepId] = useState<string | null>(null);
+  const [lastRunOutcome, setLastRunOutcome] = useState<LastRunOutcome | null>(null);
 
   const { files, loading: filesLoading, connectFile, disconnectFile } =
     useTransactionFiles(transaction.id);
@@ -132,6 +154,36 @@ export function TransactionFilesSection({
     getCategoryById,
   } = useNoReceiptCategories();
 
+  // Precision search for manual automation triggering
+  const {
+    triggerSearch: triggerPrecisionSearch,
+    isSearching: isPrecisionSearching,
+    strategyLabel: precisionSearchLabel,
+  } = usePrecisionSearch({
+    transactionId: transaction.id,
+    onComplete: (filesConnected: number) => {
+      const stepId = runningStepId || "file-transaction-matching";
+      const outcome: AutomationOutcome = filesConnected > 0 ? "match" : "no_results";
+      const details = filesConnected > 0
+        ? `${filesConnected} file${filesConnected !== 1 ? "s" : ""} connected`
+        : "Search completed - no matching files found";
+
+      setLastRunOutcome({
+        stepId,
+        outcome,
+        details,
+        timestamp: new Date(),
+      });
+      setRunningStepId(null);
+    },
+  });
+
+  // Clear last run outcome when transaction changes
+  useEffect(() => {
+    setLastRunOutcome(null);
+    setRunningStepId(null);
+  }, [transaction.id]);
+
   // Check if transaction has a no-receipt category assigned
   const hasCategory = !!transaction.noReceiptCategoryId;
   const assignedCategory = hasCategory
@@ -141,27 +193,17 @@ export function TransactionFilesSection({
   // Check if transaction has files
   const hasFiles = files.length > 0;
 
-  // Compute category suggestions when no category assigned and no files
+  // Use stored category suggestions from backend (no client-side computation)
   const categorySuggestions = useMemo(() => {
-    if (hasCategory || hasFiles || categories.length === 0) {
+    if (hasCategory || hasFiles) {
       return [];
     }
-    return matchTransactionToCategories(transaction, categories).slice(0, 3);
-  }, [transaction, categories, hasCategory, hasFiles]);
+    // Suggestions are pre-computed by backend and stored on transaction
+    return (transaction.categorySuggestions || []).slice(0, 3);
+  }, [transaction.categorySuggestions, hasCategory, hasFiles]);
 
-  // Auto-assign category when confidence > 89% and no files attached
-  useEffect(() => {
-    if (hasCategory || hasFiles || categorySuggestions.length === 0) {
-      return;
-    }
-
-    const topSuggestion = categorySuggestions[0];
-    if (topSuggestion && shouldAutoApplyCategory(topSuggestion.confidence)) {
-      // Auto-assign the category (from suggestion with high confidence)
-      console.log(`[Category Auto-Assign] Applying ${topSuggestion.categoryId} with ${topSuggestion.confidence}% confidence`);
-      assignToTransaction(transaction.id, topSuggestion.categoryId, "suggestion", topSuggestion.confidence);
-    }
-  }, [transaction.id, hasCategory, hasFiles, categorySuggestions, assignToTransaction]);
+  // Note: Auto-assignment is now handled by backend in matchCategories Cloud Function
+  // No client-side auto-assignment needed
 
   // Compute file suggestions - files that have this transaction in their transactionSuggestions
   const fileSuggestions = useMemo(() => {
@@ -204,6 +246,8 @@ export function TransactionFilesSection({
     setDisconnecting(fileId);
     try {
       await disconnectFile(fileId);
+    } catch (error) {
+      console.error("Failed to disconnect file:", error);
     } finally {
       setDisconnecting(null);
     }
@@ -240,13 +284,71 @@ export function TransactionFilesSection({
     await removeFromTransaction(transaction.id);
   };
 
+  // Handle manual automation step trigger
+  const handleTriggerStep = useCallback(async (stepId: string) => {
+    setRunningStepId(stepId);
+
+    // Most file-finding automations run through precision search
+    if (
+      stepId === "file-transaction-matching" ||
+      stepId === "file-gmail-search" ||
+      stepId === "category-partner-match" ||
+      stepId === "category-pattern-match"
+    ) {
+      // Trigger precision search which runs the full pipeline
+      await triggerPrecisionSearch();
+    } else {
+      // Unknown step - just reset the running state
+      setRunningStepId(null);
+    }
+  }, [triggerPrecisionSearch]);
+
   const loading = filesLoading || categoriesLoading;
 
   return (
     <TooltipProvider>
       <div className="space-y-3">
-        {/* Section Header */}
-        <h3 className="text-sm font-medium">File</h3>
+        {/* Section Header with Search and History Buttons */}
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium">File</h3>
+          <div className="flex items-center gap-1">
+            {/* Automation history button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => setIsHistoryDialogOpen(true)}
+              title="Automation history"
+            >
+              <History className="h-3.5 w-3.5" />
+            </Button>
+            {/* Show search button for incomplete transactions without files */}
+            {!transaction.isComplete && !hasFiles && onTriggerSearch && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                onClick={onTriggerSearch}
+                disabled={isSearching}
+                title="Search for receipt"
+              >
+                {isSearching ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Search className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Searching indicator */}
+        {isSearching && searchLabel && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-1">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span>{searchLabel}</span>
+          </div>
+        )}
 
         {/* Receipt Section */}
         <div className={cn("space-y-2", hasCategory && "opacity-50 pointer-events-none")}>
@@ -261,9 +363,9 @@ export function TransactionFilesSection({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setIsFileDialogOpen(true)}
+                  onClick={onOpenConnectFile}
                   className="h-7 px-3"
-                  disabled={hasCategory}
+                  disabled={hasCategory || !onOpenConnectFile}
                 >
                   <Plus className="h-3 w-3 mr-1" />
                   Add
@@ -285,9 +387,9 @@ export function TransactionFilesSection({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setIsFileDialogOpen(true)}
+                onClick={onOpenConnectFile}
                 className="h-7 px-3"
-                disabled={hasCategory}
+                disabled={hasCategory || !onOpenConnectFile}
               >
                 <Plus className="h-3 w-3 mr-1" />
                 Connect
@@ -411,31 +513,23 @@ export function TransactionFilesSection({
           </FieldRow>
         )}
 
-        {/* Connect file dialog */}
-        <ConnectFileDialog
-          open={isFileDialogOpen}
-          onClose={() => setIsFileDialogOpen(false)}
-          onSelect={handleConnectFile}
-          connectedFileIds={files.map((f) => f.id)}
-          transactionInfo={{
-            date: transaction.date.toDate(),
-            amount: transaction.amount,
-            currency: transaction.currency,
-            partner: transaction.partner || undefined,
-            name: transaction.name || undefined,
-            reference: transaction.reference || undefined,
-            partnerIban: transaction.partnerIban || undefined,
-            partnerId: transaction.partnerId || undefined,
-            transactionId: transaction.id,
-          }}
-        />
-
         {/* Receipt lost dialog */}
         <ReceiptLostDialog
           open={isReceiptLostDialogOpen}
           onClose={() => setIsReceiptLostDialogOpen(false)}
           onConfirm={handleReceiptLostSubmit}
           transaction={transaction}
+        />
+
+        {/* Automation history dialog */}
+        <AutomationHistoryDialog
+          open={isHistoryDialogOpen}
+          onClose={() => setIsHistoryDialogOpen(false)}
+          transaction={transaction}
+          pipelineId="find-file"
+          onTriggerStep={handleTriggerStep}
+          isRunning={runningStepId || (isPrecisionSearching ? "file-transaction-matching" : null)}
+          lastRunOutcome={lastRunOutcome}
         />
       </div>
     </TooltipProvider>

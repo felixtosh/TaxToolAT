@@ -20,6 +20,7 @@ const TOKENS_COLLECTION = "emailTokens";
  *   hasAttachments?: boolean;
  *   limit?: number;
  *   pageToken?: string;
+ *   expandThreads?: boolean; // If true, fetch all messages in matching threads
  * }
  */
 export async function POST(request: NextRequest) {
@@ -34,6 +35,7 @@ export async function POST(request: NextRequest) {
       hasAttachments = true,
       limit = 20,
       pageToken,
+      expandThreads = false,
     } = body;
 
     if (!integrationId) {
@@ -109,6 +111,7 @@ export async function POST(request: NextRequest) {
       hasAttachments,
       limit,
       pageToken,
+      expandThreads,
     });
 
     // Update last accessed time

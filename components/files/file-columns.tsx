@@ -2,13 +2,31 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
-import { ArrowUpDown, Link2 } from "lucide-react";
+import { Link2, Upload, Mail, Loader2 } from "lucide-react";
 import { TaxFile } from "@/types/file";
 import { UserPartner, GlobalPartner } from "@/types/partner";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { SortableHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import { cn } from "@/lib/utils";
+
+// Map currency symbols to ISO codes
+const CURRENCY_SYMBOL_MAP: Record<string, string> = {
+  "€": "EUR",
+  "$": "USD",
+  "£": "GBP",
+  "¥": "JPY",
+  "CHF": "CHF",
+  "Fr.": "CHF",
+};
+
+function normalizeCurrency(currency: string | null | undefined): string {
+  if (!currency) return "EUR";
+  // Already an ISO code
+  if (/^[A-Z]{3}$/.test(currency)) return currency;
+  // Try to map symbol
+  return CURRENCY_SYMBOL_MAP[currency] || "EUR";
+}
 
 export function getFileColumns(
   userPartners: UserPartner[] = [],
@@ -19,17 +37,68 @@ export function getFileColumns(
 
   return [
     {
+      accessorKey: "uploadedAt",
+      size: 100,
+      header: ({ column }) => (
+        <SortableHeader column={column}>Upload Date</SortableHeader>
+      ),
+      cell: ({ row }) => {
+        const uploadedAt = row.getValue("uploadedAt") as { toDate: () => Date };
+        const dateObj = uploadedAt.toDate();
+        const timeStr = format(dateObj, "HH:mm");
+        const showTime = timeStr !== "00:00";
+
+        return (
+          <div>
+            <p className="text-sm whitespace-nowrap">
+              {format(dateObj, "MMM d, yyyy")}
+            </p>
+            {showTime && (
+              <p className="text-xs text-muted-foreground">
+                {timeStr}
+              </p>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "fileName",
+      header: "Filename",
+      cell: ({ row }) => {
+        const fileName = row.getValue("fileName") as string;
+        const { classificationComplete, extractionComplete, isNotInvoice } = row.original;
+
+        // Determine processing status
+        let statusText: string | null = null;
+        if (!classificationComplete) {
+          statusText = "Analyzing...";
+        } else if (!extractionComplete && !isNotInvoice) {
+          statusText = "Parsing...";
+        } else if (isNotInvoice) {
+          statusText = "Not an invoice";
+        }
+
+        return (
+          <div className="min-w-0">
+            <p className="text-sm truncate">{fileName}</p>
+            {statusText && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                {(statusText === "Analyzing..." || statusText === "Parsing...") && (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                )}
+                {statusText}
+              </p>
+            )}
+          </div>
+        );
+      },
+    },
+    {
       accessorKey: "extractedDate",
       size: 100,
       header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="h-8 px-2 -ml-2"
-        >
-          Inv. Date
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
+        <SortableHeader column={column}>Inv. Date</SortableHeader>
       ),
       cell: ({ row }) => {
         const extractedDate = row.original.extractedDate;
@@ -48,7 +117,7 @@ export function getFileColumns(
               {format(dateObj, "MMM d, yyyy")}
             </p>
             {showTime && (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {timeStr}
               </p>
             )}
@@ -59,94 +128,39 @@ export function getFileColumns(
     {
       accessorKey: "extractedAmount",
       header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="h-8 px-2 -ml-2"
-        >
-          Amount
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
+        <SortableHeader column={column}>Amount</SortableHeader>
       ),
       cell: ({ row }) => {
         const amount = row.getValue("extractedAmount") as number | null | undefined;
-        const currency = row.original.extractedCurrency || "EUR";
+        const currency = normalizeCurrency(row.original.extractedCurrency);
+        const vatPercent = row.original.extractedVatPercent;
+        const invoiceDirection = row.original.invoiceDirection;
 
         if (amount == null) {
           return <span className="text-sm text-muted-foreground">—</span>;
         }
 
+        // Apply sign based on direction (incoming = expense/negative, outgoing = income/positive)
+        const signedAmount = invoiceDirection === "incoming" ? -(amount / 100) : amount / 100;
         const formatted = new Intl.NumberFormat("de-DE", {
           style: "currency",
           currency,
-        }).format(amount / 100);
-
-        return (
-          <span
-            className={cn(
-              "text-sm tabular-nums whitespace-nowrap",
-              amount < 0 ? "text-red-600" : "text-foreground"
-            )}
-          >
-            {formatted}
-          </span>
-        );
-      },
-    },
-    {
-      accessorKey: "extractedVatPercent",
-      size: 70,
-      header: "VAT%",
-      cell: ({ row }) => {
-        const vatPercent = row.getValue("extractedVatPercent") as number | null | undefined;
-
-        if (vatPercent == null) {
-          return <span className="text-sm text-muted-foreground">—</span>;
-        }
-
-        return <span className="text-sm">{vatPercent}%</span>;
-      },
-    },
-    {
-      accessorKey: "fileName",
-      header: "Filename",
-      cell: ({ row }) => {
-        const fileName = row.getValue("fileName") as string;
-
-        return (
-          <div className="min-w-0">
-            <p className="text-sm truncate">{fileName}</p>
-          </div>
-        );
-      },
-    },
-    {
-      accessorKey: "uploadedAt",
-      size: 100,
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="h-8 px-2 -ml-2"
-        >
-          Upload Date
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      ),
-      cell: ({ row }) => {
-        const uploadedAt = row.getValue("uploadedAt") as { toDate: () => Date };
-        const dateObj = uploadedAt.toDate();
-        const timeStr = format(dateObj, "HH:mm");
-        const showTime = timeStr !== "00:00";
+        }).format(signedAmount);
 
         return (
           <div>
-            <p className="text-sm whitespace-nowrap">
-              {format(dateObj, "MMM d, yyyy")}
+            <p
+              className={cn(
+                "text-sm tabular-nums whitespace-nowrap",
+                invoiceDirection === "outgoing" && "text-emerald-600",
+                invoiceDirection === "incoming" && "text-red-600"
+              )}
+            >
+              {formatted}
             </p>
-            {showTime && (
-              <p className="text-sm text-muted-foreground">
-                {timeStr}
+            {vatPercent != null && (
+              <p className="text-xs text-muted-foreground">
+                {vatPercent}% VAT
               </p>
             )}
           </div>
@@ -157,7 +171,15 @@ export function getFileColumns(
       id: "assignedPartner",
       header: "Partner",
       cell: ({ row }) => {
-        const { partnerId, partnerType, partnerMatchConfidence } = row.original;
+        const {
+          partnerId,
+          partnerType,
+          partnerMatchConfidence,
+          partnerMatchedBy,
+          extractionComplete,
+          partnerMatchComplete,
+          isNotInvoice,
+        } = row.original;
 
         // Show assigned partner if exists
         if (partnerId) {
@@ -169,10 +191,21 @@ export function getFileColumns(
               <PartnerPill
                 name={partner?.name || partnerId.slice(0, 8) + "..."}
                 confidence={partnerMatchConfidence ?? undefined}
+                matchedBy={partnerMatchedBy}
                 partnerType={partnerType ?? undefined}
                 className="max-w-full"
               />
             </div>
+          );
+        }
+
+        // Show "Matching..." when extraction is done but partner match is in progress
+        if (extractionComplete && !partnerMatchComplete && !isNotInvoice) {
+          return (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Matching...
+            </span>
           );
         }
 
@@ -184,17 +217,58 @@ export function getFileColumns(
       size: 100,
       header: "Transactions",
       cell: ({ row }) => {
-        const count = row.original.transactionIds.length;
+        const {
+          transactionIds,
+          partnerMatchComplete,
+          transactionMatchComplete,
+          isNotInvoice,
+        } = row.original;
+        const count = transactionIds.length;
 
-        if (count === 0) {
-          return <span className="text-sm text-muted-foreground">—</span>;
+        // Show connected count if any
+        if (count > 0) {
+          return (
+            <Badge variant="secondary" className="gap-1">
+              <Link2 className="h-3 w-3" />
+              {count}
+            </Badge>
+          );
+        }
+
+        // Show "Matching..." when partner match is done but transaction match is in progress
+        if (partnerMatchComplete && !transactionMatchComplete && !isNotInvoice) {
+          return (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Matching...
+            </span>
+          );
+        }
+
+        return <span className="text-sm text-muted-foreground">—</span>;
+      },
+    },
+    {
+      accessorKey: "sourceType",
+      size: 80,
+      header: "Source",
+      cell: ({ row }) => {
+        const sourceType = row.original.sourceType;
+
+        if (sourceType === "gmail") {
+          return (
+            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Mail className="h-3.5 w-3.5" />
+              <span>Gmail</span>
+            </div>
+          );
         }
 
         return (
-          <Badge variant="secondary" className="gap-1">
-            <Link2 className="h-3 w-3" />
-            {count}
-          </Badge>
+          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Upload className="h-3.5 w-3.5" />
+            <span>Upload</span>
+          </div>
         );
       },
     },

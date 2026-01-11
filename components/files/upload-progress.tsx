@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { Progress } from "@/components/ui/progress";
-import { CheckCircle2, XCircle, Loader2, FileText, X } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, FileText, X, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -12,6 +13,8 @@ export interface FileUploadStatus {
   status: "uploading" | "complete" | "error";
   error?: string;
   fileId?: string; // Firestore document ID after successful upload
+  duplicateFileId?: string; // ID of existing file if this was a duplicate
+  duplicateFileName?: string; // Name of existing file if this was a duplicate
 }
 
 interface UploadProgressProps {
@@ -23,17 +26,39 @@ interface UploadProgressProps {
 export function UploadProgress({ uploads, onDismiss, className }: UploadProgressProps) {
   const totalFiles = uploads.length;
   const completedFiles = uploads.filter((u) => u.status === "complete").length;
-  const errorFiles = uploads.filter((u) => u.status === "error").length;
+  const duplicateFiles = uploads.filter((u) => u.status === "error" && u.duplicateFileId);
+  const otherErrorFiles = uploads.filter((u) => u.status === "error" && !u.duplicateFileId);
   const uploadingFiles = uploads.filter((u) => u.status === "uploading");
 
-  // Calculate overall progress
+  // Calculate overall progress (duplicates count as processed)
   const overallProgress =
     totalFiles > 0
       ? Math.round(uploads.reduce((sum, u) => sum + u.progress, 0) / totalFiles)
       : 0;
 
-  const isComplete = completedFiles + errorFiles === totalFiles;
-  const allSuccessful = isComplete && errorFiles === 0;
+  const isComplete = completedFiles + duplicateFiles.length + otherErrorFiles.length === totalFiles;
+  const allSuccessful = isComplete && duplicateFiles.length === 0 && otherErrorFiles.length === 0;
+
+  // Build status message
+  const getStatusMessage = () => {
+    if (!isComplete) {
+      return `Uploading ${totalFiles} file${totalFiles !== 1 ? "s" : ""}...`;
+    }
+    if (allSuccessful) {
+      return `${completedFiles} file${completedFiles !== 1 ? "s" : ""} uploaded`;
+    }
+    const parts: string[] = [];
+    if (completedFiles > 0) {
+      parts.push(`${completedFiles} uploaded`);
+    }
+    if (duplicateFiles.length > 0) {
+      parts.push(`${duplicateFiles.length} duplicate${duplicateFiles.length !== 1 ? "s" : ""}`);
+    }
+    if (otherErrorFiles.length > 0) {
+      parts.push(`${otherErrorFiles.length} failed`);
+    }
+    return parts.join(", ");
+  };
 
   return (
     <div className={cn("bg-background/95 backdrop-blur border-t px-4 py-3 shadow-lg", className)}>
@@ -43,8 +68,10 @@ export function UploadProgress({ uploads, onDismiss, className }: UploadProgress
           {isComplete ? (
             allSuccessful ? (
               <CheckCircle2 className="h-5 w-5 text-green-600" />
-            ) : (
+            ) : otherErrorFiles.length > 0 ? (
               <XCircle className="h-5 w-5 text-destructive" />
+            ) : (
+              <Copy className="h-5 w-5 text-muted-foreground" />
             )
           ) : (
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
@@ -55,11 +82,7 @@ export function UploadProgress({ uploads, onDismiss, className }: UploadProgress
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between mb-1">
             <span className="text-sm font-medium truncate">
-              {isComplete
-                ? allSuccessful
-                  ? `${completedFiles} file${completedFiles !== 1 ? "s" : ""} uploaded`
-                  : `${completedFiles} uploaded, ${errorFiles} failed`
-                : `Uploading ${totalFiles} file${totalFiles !== 1 ? "s" : ""}...`}
+              {getStatusMessage()}
             </span>
             <span className="text-sm text-muted-foreground ml-2">
               {overallProgress}%
@@ -80,19 +103,40 @@ export function UploadProgress({ uploads, onDismiss, className }: UploadProgress
             </div>
           )}
 
-          {/* Show errors if any */}
-          {errorFiles > 0 && isComplete && (
+          {/* Show duplicates if any */}
+          {duplicateFiles.length > 0 && isComplete && (
+            <div className="mt-1.5 text-xs text-muted-foreground">
+              {duplicateFiles.slice(0, 3).map((u) => (
+                <div key={u.id} className="flex items-center gap-1 truncate">
+                  <Copy className="h-3 w-3 flex-shrink-0" />
+                  <span className="truncate">{u.fileName}</span>
+                  <span className="text-muted-foreground/70">→</span>
+                  <Link
+                    href={`/files?id=${u.duplicateFileId}`}
+                    className="text-primary hover:underline truncate"
+                  >
+                    {u.duplicateFileName}
+                  </Link>
+                </div>
+              ))}
+              {duplicateFiles.length > 3 && (
+                <div className="text-muted-foreground/70">
+                  ...and {duplicateFiles.length - 3} more duplicate{duplicateFiles.length - 3 !== 1 ? "s" : ""}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Show other errors if any */}
+          {otherErrorFiles.length > 0 && isComplete && (
             <div className="mt-1.5 text-xs text-destructive">
-              {uploads
-                .filter((u) => u.status === "error")
-                .slice(0, 3)
-                .map((u) => (
-                  <div key={u.id} className="truncate">
-                    {u.fileName}: {u.error || "Upload failed"}
-                  </div>
-                ))}
-              {errorFiles > 3 && (
-                <div>...and {errorFiles - 3} more errors</div>
+              {otherErrorFiles.slice(0, 3).map((u) => (
+                <div key={u.id} className="truncate">
+                  {u.fileName}: {u.error || "Upload failed"}
+                </div>
+              ))}
+              {otherErrorFiles.length > 3 && (
+                <div>...and {otherErrorFiles.length - 3} more error{otherErrorFiles.length - 3 !== 1 ? "s" : ""}</div>
               )}
             </div>
           )}

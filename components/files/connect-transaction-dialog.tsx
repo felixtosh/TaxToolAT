@@ -127,19 +127,97 @@ export function ConnectTransactionDialog({
     return map;
   }, [computedSuggestions]);
 
+  // Parse amount from search string
+  // Supports: "123.45", "123,45", "-123.45", "€123", "123€", "123 EUR"
+  const parseSearchAmount = (searchStr: string): number | null => {
+    if (!searchStr) return null;
+
+    // Remove currency symbols and common words
+    let cleaned = searchStr
+      .replace(/[€$£]/g, "")
+      .replace(/\s*(EUR|USD|GBP|CHF)\s*/gi, "")
+      .trim();
+
+    // Handle European format (comma as decimal separator)
+    // If there's a comma followed by exactly 2 digits at the end, treat as decimal
+    if (/,\d{2}$/.test(cleaned)) {
+      cleaned = cleaned.replace(/\./g, "").replace(",", ".");
+    } else {
+      // Remove thousand separators (commas or dots not followed by 2 digits)
+      cleaned = cleaned.replace(/,/g, "");
+    }
+
+    const parsed = parseFloat(cleaned);
+    if (isNaN(parsed)) return null;
+
+    // Convert to cents
+    return Math.round(parsed * 100);
+  };
+
+  // Check if an amount matches the search amount (with tolerance)
+  const amountMatches = (transactionAmount: number, searchAmount: number): boolean => {
+    const absTransaction = Math.abs(transactionAmount);
+    const absSearch = Math.abs(searchAmount);
+
+    // Exact match
+    if (absTransaction === absSearch) return true;
+
+    // Within 5% tolerance (for rounding differences)
+    const tolerance = absSearch * 0.05;
+    return Math.abs(absTransaction - absSearch) <= Math.max(tolerance, 100); // At least 1€ tolerance
+  };
+
   // Filter and sort transactions - suggestions first, then by search
   const filteredTransactions = useMemo(() => {
     let filtered = transactions;
 
     // Apply search filter
     if (search) {
-      const searchLower = search.toLowerCase();
-      filtered = filtered.filter(
-        (t) =>
+      const searchLower = search.toLowerCase().trim();
+      const searchAmount = parseSearchAmount(search);
+
+      filtered = filtered.filter((t) => {
+        // Text matches
+        const textMatch =
           t.name.toLowerCase().includes(searchLower) ||
           (t.partner?.toLowerCase() || "").includes(searchLower) ||
-          (t.reference?.toLowerCase() || "").includes(searchLower)
-      );
+          (t.reference?.toLowerCase() || "").includes(searchLower);
+
+        // Amount match
+        const amountMatch = searchAmount !== null && amountMatches(t.amount, searchAmount);
+
+        return textMatch || amountMatch;
+      });
+
+      // If searching by amount, sort by amount match quality first
+      if (searchAmount !== null) {
+        filtered = filtered.sort((a, b) => {
+          const aAmountMatch = amountMatches(a.amount, searchAmount);
+          const bAmountMatch = amountMatches(b.amount, searchAmount);
+
+          // Exact/close amount matches first
+          if (aAmountMatch && !bAmountMatch) return -1;
+          if (bAmountMatch && !aAmountMatch) return 1;
+
+          // Among amount matches, prefer exact matches
+          if (aAmountMatch && bAmountMatch) {
+            const aDiff = Math.abs(Math.abs(a.amount) - Math.abs(searchAmount));
+            const bDiff = Math.abs(Math.abs(b.amount) - Math.abs(searchAmount));
+            if (aDiff !== bDiff) return aDiff - bDiff;
+          }
+
+          // Fall back to suggestion sorting
+          const aSuggestion = suggestionMap.get(a.id);
+          const bSuggestion = suggestionMap.get(b.id);
+          if (aSuggestion && bSuggestion) return bSuggestion.confidence - aSuggestion.confidence;
+          if (aSuggestion) return -1;
+          if (bSuggestion) return 1;
+
+          return b.date.toMillis() - a.date.toMillis();
+        });
+
+        return filtered;
+      }
     }
 
     // Sort: suggested transactions first (by confidence), then by date
@@ -248,7 +326,7 @@ export function ConnectTransactionDialog({
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search transactions..."
+                  placeholder="Search by name or amount (e.g. 123,45)"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="pl-9"

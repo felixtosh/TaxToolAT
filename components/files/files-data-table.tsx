@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { forwardRef } from "react";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, SortingState } from "@tanstack/react-table";
 import { TaxFile } from "@/types/file";
 import {
   ResizableDataTable,
@@ -14,6 +14,10 @@ interface FilesDataTableProps {
   data: TaxFile[];
   onRowClick?: (row: TaxFile) => void;
   selectedRowId?: string | null;
+  // Multi-select props
+  enableMultiSelect?: boolean;
+  selectedRowIds?: Set<string>;
+  onSelectionChange?: (selectedIds: Set<string>) => void;
 }
 
 export interface FilesDataTableHandle {
@@ -26,22 +30,49 @@ const DEFAULT_FILE_COLUMN_SIZES: Record<string, number> = {
   extractedAmount: 90,
   extractedVatPercent: 55,
   fileName: 190,
+  sourceType: 80,
   uploadedAt: 115,
   assignedPartner: 140,
   connections: 100,
 };
 
+// Default sorting - matches Firestore query orderBy("uploadedAt", "desc")
+const DEFAULT_SORTING: SortingState = [{ id: "uploadedAt", desc: true }];
+
 function FilesDataTableInner(
-  { columns, data, onRowClick, selectedRowId }: FilesDataTableProps,
+  {
+    columns,
+    data,
+    onRowClick,
+    selectedRowId,
+    enableMultiSelect,
+    selectedRowIds,
+    onSelectionChange,
+  }: FilesDataTableProps,
   ref: React.ForwardedRef<FilesDataTableHandle>
 ) {
-  // Get row className based on connections
+  // Get row className based on status
   const getRowClassName = React.useCallback(
     (row: TaxFile, isSelected: boolean) => {
+      // Deleted files - strikethrough and faded (keep even when selected)
+      if (row.deletedAt) {
+        return "opacity-50 line-through";
+      }
+
+      // Not invoice files - greyed out but preserve selection state
+      if (row.isNotInvoice && !isSelected) {
+        return "opacity-60 bg-gray-50/50 dark:bg-gray-900/30";
+      }
+      if (row.isNotInvoice && isSelected) {
+        return "opacity-75"; // Slightly faded but keep selected bg
+      }
+
+      // Connected files - green highlight
       const hasConnections = row.transactionIds.length > 0;
       if (hasConnections && !isSelected) {
         return "bg-green-50/70 hover:bg-green-100/70 dark:bg-green-950/20 dark:hover:bg-green-950/30";
       }
+
       return "";
     },
     []
@@ -60,9 +91,13 @@ function FilesDataTableInner(
       onRowClick={onRowClick}
       selectedRowId={selectedRowId}
       defaultColumnSizes={DEFAULT_FILE_COLUMN_SIZES}
+      initialSorting={DEFAULT_SORTING}
       getRowClassName={getRowClassName}
       getRowDataAttributes={getRowDataAttributes}
       emptyMessage="No files found."
+      enableMultiSelect={enableMultiSelect}
+      selectedRowIds={selectedRowIds}
+      onSelectionChange={onSelectionChange}
     />
   );
 }

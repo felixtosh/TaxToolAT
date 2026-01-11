@@ -19,6 +19,10 @@ import {
   updateFile,
   updateFileExtraction,
   deleteFile,
+  softDeleteFile,
+  restoreFile,
+  markFileAsNotInvoice,
+  unmarkFileAsNotInvoice,
   connectFileToTransaction,
   disconnectFileFromTransaction,
   getFilesForTransaction,
@@ -61,6 +65,11 @@ export function useFiles(filters?: FileFilters) {
           ...doc.data(),
         })) as TaxFile[];
 
+        // Filter out soft-deleted files by default
+        if (!filters?.includeDeleted) {
+          data = data.filter((f) => !f.deletedAt);
+        }
+
         // Apply client-side filters
         if (filters?.search) {
           const searchLower = filters.search.toLowerCase();
@@ -83,6 +92,13 @@ export function useFiles(filters?: FileFilters) {
           data = data.filter((f) => f.extractionComplete === filters.extractionComplete);
         }
 
+        // Filter by isNotInvoice status
+        if (filters?.isNotInvoice !== undefined) {
+          data = data.filter((f) =>
+            filters.isNotInvoice ? f.isNotInvoice === true : f.isNotInvoice !== true
+          );
+        }
+
         setFiles(data);
         setLoading(false);
       },
@@ -94,7 +110,7 @@ export function useFiles(filters?: FileFilters) {
     );
 
     return () => unsubscribe();
-  }, [filters?.search, filters?.hasConnections, filters?.extractionComplete]);
+  }, [filters?.search, filters?.hasConnections, filters?.extractionComplete, filters?.includeDeleted, filters?.isNotInvoice]);
 
   const create = useCallback(
     async (data: FileCreateData): Promise<string> => {
@@ -118,8 +134,32 @@ export function useFiles(filters?: FileFilters) {
   );
 
   const remove = useCallback(
-    async (fileId: string): Promise<{ deletedConnections: number }> => {
+    async (fileId: string, soft = false): Promise<{ deletedConnections: number }> => {
+      if (soft) {
+        return softDeleteFile(ctx, fileId);
+      }
       return deleteFile(ctx, fileId);
+    },
+    [ctx]
+  );
+
+  const restore = useCallback(
+    async (fileId: string): Promise<void> => {
+      return restoreFile(ctx, fileId);
+    },
+    [ctx]
+  );
+
+  const markAsNotInvoice = useCallback(
+    async (fileId: string, reason?: string): Promise<void> => {
+      return markFileAsNotInvoice(ctx, fileId, reason);
+    },
+    [ctx]
+  );
+
+  const unmarkAsNotInvoice = useCallback(
+    async (fileId: string): Promise<void> => {
+      return unmarkFileAsNotInvoice(ctx, fileId);
     },
     [ctx]
   );
@@ -184,6 +224,9 @@ export function useFiles(filters?: FileFilters) {
     update,
     updateExtraction,
     remove,
+    restore,
+    markAsNotInvoice,
+    unmarkAsNotInvoice,
     getFileById,
     connectToTransaction,
     disconnectFromTransaction,

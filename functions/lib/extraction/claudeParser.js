@@ -91,8 +91,13 @@ Example response:
         vatId: parsed.vatId || null,
         iban: parsed.iban || null,
         address: parsed.address || null,
+        website: null, // Claude parser doesn't extract website (legacy)
         confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
         fieldSpans: parsed.fieldSpans || {},
+        // Legacy Claude parser doesn't extract entities - set to null
+        // The extractionCore will handle these as null and fall back to legacy partner field
+        issuer: null,
+        recipient: null,
     };
 }
 //# sourceMappingURL=claudeParser.js.map

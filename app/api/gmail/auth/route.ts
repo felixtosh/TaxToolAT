@@ -4,6 +4,11 @@ import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
 import {
   createEmailIntegration,
   getEmailIntegrationByEmail,
+  getDisconnectedIntegrationByEmail,
+  reconnectEmailIntegration,
+  restoreFilesForIntegration,
+  clearIntegrationReauthFlag,
+  addOwnEmail,
 } from "@/lib/operations";
 
 const db = getServerDb();
@@ -37,21 +42,59 @@ export async function POST(request: NextRequest) {
 
     const ctx = { db, userId: MOCK_USER_ID };
 
-    // Check if this email is already connected
+    // 1. Check if this email is already connected (active)
     const existing = await getEmailIntegrationByEmail(ctx, email);
     if (existing) {
       // Update the existing integration with new tokens
       await updateTokens(existing.id, accessToken, new Date(expiresAt));
 
+      // Clear the reauth flag after successful token refresh
+      await clearIntegrationReauthFlag(ctx, existing.id, new Date(expiresAt));
+
       return NextResponse.json({
         success: true,
         integrationId: existing.id,
         isExisting: true,
+        isReconnected: false,
         message: "Integration tokens updated",
       });
     }
 
-    // Create new integration
+    // 2. Check if there's a disconnected integration for this email (reconnection)
+    const disconnected = await getDisconnectedIntegrationByEmail(ctx, email);
+    if (disconnected) {
+      // Update tokens for the reconnection
+      await updateTokens(disconnected.id, accessToken, new Date(expiresAt));
+
+      // Reconnect the integration (clears disconnectedAt, sets isActive = true)
+      await reconnectEmailIntegration(ctx, disconnected.id, new Date(expiresAt));
+
+      // Restore soft-deleted files
+      const restoreResult = await restoreFilesForIntegration(ctx, disconnected.id);
+      console.log(
+        `[Reconnect] Restored ${restoreResult.restored} files for ${email}`
+      );
+
+      // Ensure email is in user's own emails list
+      if (email) {
+        await addOwnEmail(ctx, email);
+      }
+
+      // Note: The Cloud Function trigger on integration update will handle
+      // starting a new sync if needed. The processedMessageIds are preserved
+      // on the integration for deduplication.
+
+      return NextResponse.json({
+        success: true,
+        integrationId: disconnected.id,
+        isExisting: true,
+        isReconnected: true,
+        filesRestored: restoreResult.restored,
+        message: "Gmail integration reconnected successfully",
+      });
+    }
+
+    // 3. Create new integration
     const integrationId = await createEmailIntegration(ctx, {
       provider: "gmail",
       email,
@@ -65,10 +108,16 @@ export async function POST(request: NextRequest) {
     // Store tokens in secure server-side collection
     await storeTokens(integrationId, accessToken, "", new Date(expiresAt));
 
+    // Auto-add email to user's own emails list
+    if (email) {
+      await addOwnEmail(ctx, email);
+    }
+
     return NextResponse.json({
       success: true,
       integrationId,
       isExisting: false,
+      isReconnected: false,
       message: "Gmail integration created successfully",
     });
   } catch (error) {

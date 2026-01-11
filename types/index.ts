@@ -3,3 +3,6 @@ export * from "./receipt";
 export * from "./category";
 export * from "./source";
 export * from "./import";
+export * from "./user-data";
+export * from "./precision-search";
+export * from "./automation";

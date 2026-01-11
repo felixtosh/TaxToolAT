@@ -50,6 +50,17 @@ const lookupCompanyFn = httpsCallable<{ url?: string; name?: string }, CompanyIn
   "lookupCompany"
 );
 
+// VAT ID lookup function (VIES)
+interface VatLookupResult extends CompanyInfo {
+  viesValid?: boolean;
+  viesError?: string;
+}
+
+const lookupByVatIdFn = httpsCallable<{ vatId: string }, VatLookupResult>(
+  functions,
+  "lookupByVatId"
+);
+
 // Country select with search
 function CountrySelect({
   value,
@@ -175,6 +186,7 @@ export function AddPartnerDialog({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLookingUpUrl, setIsLookingUpUrl] = useState(false);
   const [isLookingUpName, setIsLookingUpName] = useState(false);
+  const [isLookingUpVat, setIsLookingUpVat] = useState(false);
   const [lookupStatus, setLookupStatus] = useState<string | null>(null);
   const [lookupResult, setLookupResult] = useState<{
     found: string[];
@@ -326,6 +338,61 @@ export function AddPartnerDialog({
       setLookupResult({ found: [], notFound: ["Lookup failed"] });
     } finally {
       setIsLookingUpName(false);
+    }
+  };
+
+  // Lookup by VAT ID (EU VIES service)
+  const handleVatLookup = async () => {
+    if (!formData.vatId.trim()) return;
+
+    setIsLookingUpVat(true);
+    setLookupResult(null);
+    setLookupStatus("Verifying VAT ID with EU VIES...");
+
+    try {
+      const result = await lookupByVatIdFn({ vatId: formData.vatId });
+      const data = result.data;
+
+      // Build address string from response
+      const addressParts: string[] = [];
+      if (data.address?.street) addressParts.push(data.address.street);
+      if (data.address?.postalCode || data.address?.city) {
+        addressParts.push(`${data.address.postalCode || ""} ${data.address.city || ""}`.trim());
+      }
+      const addressString = addressParts.join("\n");
+
+      // Prefill form with lookup results
+      setFormData((prev) => ({
+        ...prev,
+        name: data.name || prev.name,
+        vatId: data.vatId || prev.vatId, // Use normalized format
+        address: addressString || prev.address,
+        country: data.country || prev.country,
+      }));
+
+      // Build result summary
+      const found: string[] = [];
+      const notFound: string[] = [];
+
+      if (data.viesValid) found.push("VAT Valid");
+      else if (data.viesError) notFound.push(data.viesError);
+      else notFound.push("VAT Invalid");
+
+      if (data.name) found.push("Name");
+      else if (data.viesValid) notFound.push("Name (not provided by VIES)");
+
+      if (data.address?.street) found.push("Address");
+
+      if (data.country) found.push("Country");
+
+      setLookupResult({ found, notFound });
+      setLookupStatus(null);
+    } catch (error) {
+      console.error("VAT lookup failed:", error);
+      setLookupStatus(null);
+      setLookupResult({ found: [], notFound: ["VAT lookup failed"] });
+    } finally {
+      setIsLookingUpVat(false);
     }
   };
 
@@ -575,13 +642,52 @@ export function AddPartnerDialog({
                 {/* VAT ID */}
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">VAT ID</label>
-                  <Input
-                    placeholder="ATU12345678"
-                    value={formData.vatId}
-                    onChange={(e) =>
-                      setFormData((f) => ({ ...f, vatId: e.target.value }))
-                    }
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="ATU12345678"
+                      value={formData.vatId}
+                      onChange={(e) =>
+                        setFormData((f) => ({ ...f, vatId: e.target.value }))
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && formData.vatId.trim()) {
+                          e.preventDefault();
+                          handleVatLookup();
+                        }
+                      }}
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleVatLookup}
+                      disabled={isLookingUpVat || !formData.vatId.trim()}
+                      className="px-3"
+                      title="Verify VAT ID with EU VIES"
+                    >
+                      {isLookingUpVat ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+
+                  {/* Status while loading VAT */}
+                  {isLookingUpVat && lookupStatus && (
+                    <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1.5">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {lookupStatus}
+                    </p>
+                  )}
+
+                  {/* Helper text */}
+                  {!isLookingUpVat && !lookupResult && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      EU VAT ID format: ATU12345678, DE123456789
+                    </p>
+                  )}
                 </div>
 
                 {/* IBANs */}

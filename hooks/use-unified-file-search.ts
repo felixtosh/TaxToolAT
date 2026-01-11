@@ -46,6 +46,8 @@ export interface UnifiedSearchResult {
   size: number;
   /** Whether this is likely a receipt */
   isLikelyReceipt: boolean;
+  /** Fields that matched the search query */
+  matchedFields?: string[];
 
   // For local files:
   fileId?: string;
@@ -233,13 +235,27 @@ function attachmentToResult(
   };
 }
 
+export interface UnifiedFileSearchOptions {
+  /** If true, only search local files (skip Gmail) */
+  localOnly?: boolean;
+  /** Optional date range filter - only applied if set */
+  dateFrom?: Date;
+  /** Optional date range filter - only applied if set */
+  dateTo?: Date;
+}
+
 /**
  * Hook for unified file search across local files and Gmail
+ * @param transactionInfo - Transaction to match against
+ * @param partner - Optional partner for scoring
+ * @param options - Search options
  */
 export function useUnifiedFileSearch(
   transactionInfo: TransactionInfo,
-  partner?: UserPartner | null
+  partner?: UserPartner | null,
+  options?: UnifiedFileSearchOptions
 ): UseUnifiedFileSearchResult {
+  const { localOnly, dateFrom, dateTo } = options || {};
   const { files, loading: filesLoading } = useFiles();
   const { integrations, loading: integrationsLoading, hasGmailIntegration } = useEmailIntegrations();
 
@@ -254,42 +270,96 @@ export function useUnifiedFileSearch(
     [integrations]
   );
 
-  // Filter local files by search query and date range
-  const filteredLocalFiles = useMemo(() => {
+  // Search a file against query and return matched fields
+  const searchFile = useCallback((file: TaxFile, queryLower: string): string[] => {
+    const matchedFields: string[] = [];
+
+    // Filename
+    if (file.fileName.toLowerCase().includes(queryLower)) {
+      matchedFields.push("filename");
+    }
+
+    // Extracted partner
+    if (file.extractedPartner?.toLowerCase().includes(queryLower)) {
+      matchedFields.push("partner");
+    }
+
+    // Gmail subject
+    if (file.gmailSubject?.toLowerCase().includes(queryLower)) {
+      matchedFields.push("email subject");
+    }
+
+    // Gmail sender
+    if (
+      file.gmailSenderEmail?.toLowerCase().includes(queryLower) ||
+      file.gmailSenderName?.toLowerCase().includes(queryLower)
+    ) {
+      matchedFields.push("email sender");
+    }
+
+    // Extracted VAT ID
+    if (file.extractedVatId?.toLowerCase().includes(queryLower)) {
+      matchedFields.push("VAT ID");
+    }
+
+    // Extracted IBAN
+    if (file.extractedIban?.toLowerCase().includes(queryLower)) {
+      matchedFields.push("IBAN");
+    }
+
+    // Extracted website
+    if (file.extractedWebsite?.toLowerCase().includes(queryLower)) {
+      matchedFields.push("website");
+    }
+
+    // OCR text (only if query is 4+ chars to avoid too many matches)
+    if (queryLower.length >= 4 && file.extractedText?.toLowerCase().includes(queryLower)) {
+      if (matchedFields.length === 0) {
+        matchedFields.push("document text");
+      }
+    }
+
+    return matchedFields;
+  }, []);
+
+  // Filter local files by search query and date range, returning with matched fields
+  const filteredLocalFilesWithMatches = useMemo(() => {
     if (!hasSearched) return [];
 
-    // Filter to unconnected files only
-    let filtered = files.filter((f) => f.transactionIds.length === 0);
+    // Filter to unconnected files only, exclude "not invoice" files
+    let filtered = files.filter((f) =>
+      f.transactionIds.length === 0 && !f.isNotInvoice
+    );
 
-    // Filter by date range (30 days before to 7 days after transaction)
-    if (transactionInfo.date) {
-      const dateFrom = subDays(transactionInfo.date, 30);
-      const dateTo = addDays(transactionInfo.date, 7);
-
+    // Filter by date range ONLY if explicitly set by user
+    if (dateFrom || dateTo) {
       filtered = filtered.filter((f) => {
-        if (!f.extractedDate) return true; // Include files without dates
+        if (!f.extractedDate) return true;
         const fileDate = f.extractedDate.toDate();
-        return fileDate >= dateFrom && fileDate <= dateTo;
+        if (dateFrom && fileDate < dateFrom) return false;
+        if (dateTo && fileDate > dateTo) return false;
+        return true;
       });
     }
 
-    // Filter by search query
-    if (searchQuery) {
-      const queryLower = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (f) =>
-          f.fileName.toLowerCase().includes(queryLower) ||
-          (f.extractedPartner?.toLowerCase() || "").includes(queryLower)
-      );
-    }
-
     // Only include PDFs and images
-    return filtered.filter(
+    filtered = filtered.filter(
       (f) =>
         f.fileType === "application/pdf" ||
         f.fileType.startsWith("image/")
     );
-  }, [files, searchQuery, transactionInfo.date, hasSearched]);
+
+    // Filter by search query and track matched fields
+    if (searchQuery) {
+      const queryLower = searchQuery.toLowerCase();
+      return filtered
+        .map((f) => ({ file: f, matchedFields: searchFile(f, queryLower) }))
+        .filter((item) => item.matchedFields.length > 0);
+    }
+
+    // No search query - return all with empty matched fields
+    return filtered.map((f) => ({ file: f, matchedFields: [] as string[] }));
+  }, [files, searchQuery, hasSearched, dateFrom, dateTo, searchFile]);
 
   // Combine and score results
   const results = useMemo(() => {
@@ -297,33 +367,35 @@ export function useUnifiedFileSearch(
 
     const allResults: UnifiedSearchResult[] = [];
 
-    // Add local files
-    for (const file of filteredLocalFiles) {
+    // Add local files with matched fields
+    for (const { file, matchedFields } of filteredLocalFilesWithMatches) {
       const baseResult = fileToResult(file);
       const { score, matchReasons } = scoreResult(baseResult, transactionInfo, partner);
-      allResults.push({ ...baseResult, score, matchReasons });
+      allResults.push({ ...baseResult, score, matchReasons, matchedFields });
     }
 
-    // Add Gmail attachments
-    for (const message of gmailResults) {
-      for (const attachment of message.attachments) {
-        // Only include PDFs and images
-        if (
-          attachment.mimeType !== "application/pdf" &&
-          !attachment.mimeType.startsWith("image/")
-        ) {
-          continue;
-        }
+    // Add Gmail attachments (unless localOnly)
+    if (!localOnly) {
+      for (const message of gmailResults) {
+        for (const attachment of message.attachments) {
+          // Only include PDFs and images
+          if (
+            attachment.mimeType !== "application/pdf" &&
+            !attachment.mimeType.startsWith("image/")
+          ) {
+            continue;
+          }
 
-        const baseResult = attachmentToResult(attachment, message, message.integrationId);
-        const { score, matchReasons } = scoreResult(baseResult, transactionInfo, partner);
-        allResults.push({ ...baseResult, score, matchReasons });
+          const baseResult = attachmentToResult(attachment, message, message.integrationId);
+          const { score, matchReasons } = scoreResult(baseResult, transactionInfo, partner);
+          allResults.push({ ...baseResult, score, matchReasons });
+        }
       }
     }
 
     // Sort by score descending
     return allResults.sort((a, b) => b.score - a.score);
-  }, [filteredLocalFiles, gmailResults, transactionInfo, partner, hasSearched]);
+  }, [filteredLocalFilesWithMatches, gmailResults, transactionInfo, partner, hasSearched, localOnly]);
 
   // Search function
   const search = useCallback(
@@ -334,7 +406,7 @@ export function useUnifiedFileSearch(
 
       // Local files are filtered reactively via useMemo
       // Gmail needs an API call
-      if (!hasGmailIntegration || gmailIntegrations.length === 0) {
+      if (localOnly || !hasGmailIntegration || gmailIntegrations.length === 0) {
         return;
       }
 
@@ -393,7 +465,7 @@ export function useUnifiedFileSearch(
         setSearchLoading(false);
       }
     },
-    [gmailIntegrations, hasGmailIntegration, transactionInfo.date]
+    [gmailIntegrations, hasGmailIntegration, transactionInfo.date, localOnly]
   );
 
   // Clear results

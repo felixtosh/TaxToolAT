@@ -43,8 +43,17 @@ export * from "./category-ops";
 // Email Integration operations
 export * from "./email-integration-ops";
 
+// Gmail Sync operations
+export * from "./gmail-sync-ops";
+
 // CSV Storage operations (for import re-mapping)
 export * from "./csv-storage-ops";
 
 // Remap operations (for editing import mappings)
 export * from "./remap-ops";
+
+// User data operations (for extraction and classification)
+export * from "./user-data-ops";
+
+// Precision search operations (for automated receipt matching)
+export * from "./precision-search-ops";

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { forwardRef } from "react";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, SortingState } from "@tanstack/react-table";
 import { Transaction } from "@/types/transaction";
 import {
   ResizableDataTable,
@@ -27,6 +27,9 @@ const DEFAULT_TRANSACTION_COLUMN_SIZES: Record<string, number> = {
   file: 140,
   sourceId: 120,
 };
+
+// Default sorting - matches Firestore query orderBy("date", "desc")
+const DEFAULT_SORTING: SortingState = [{ id: "date", desc: true }];
 
 function DataTableInner<TData extends { id: string }>(
   { columns, data, onRowClick, selectedRowId }: DataTableProps<TData>,
@@ -61,6 +64,7 @@ function DataTableInner<TData extends { id: string }>(
       onRowClick={onRowClick}
       selectedRowId={selectedRowId}
       defaultColumnSizes={DEFAULT_TRANSACTION_COLUMN_SIZES}
+      initialSorting={DEFAULT_SORTING}
       getRowClassName={getRowClassName}
       getRowDataAttributes={getRowDataAttributes}
       emptyMessage="No transactions found."

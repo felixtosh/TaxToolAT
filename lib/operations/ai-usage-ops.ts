@@ -132,8 +132,11 @@ export async function getAIUsageSummary(
     byFunction: {
       chat: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
       companyLookup: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
+      companyLookupSearch: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
       patternLearning: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
       columnMatching: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
+      extraction: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
+      classification: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
     },
     byModel: {},
   };

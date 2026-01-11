@@ -3,17 +3,17 @@
 import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import {
-  ArrowUpDown,
   FileText,
   Tag,
 } from "lucide-react";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
-import { UserPartner, GlobalPartner, PartnerMatchResult } from "@/types/partner";
+import { UserPartner, GlobalPartner } from "@/types/partner";
 import { UserNoReceiptCategory, CategorySuggestion } from "@/types/no-receipt-category";
+import { PipelineId } from "@/types/automation";
 import { getCategoryTemplate } from "@/lib/data/no-receipt-category-templates";
-import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
+import { SortableHeader, AutomationHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
   Tooltip,
@@ -22,14 +22,24 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
+export interface TransactionColumnOptions {
+  sources: TransactionSource[];
+  userPartners?: UserPartner[];
+  globalPartners?: GlobalPartner[];
+  categories?: UserNoReceiptCategory[];
+  categorySuggestions?: Map<string, CategorySuggestion>;
+  fileAmountsMap?: Map<string, { amount: number; currency: string }>;
+  onAutomationClick?: (pipelineId: PipelineId) => void;
+}
+
 export function getTransactionColumns(
   sources: TransactionSource[],
   userPartners: UserPartner[] = [],
   globalPartners: GlobalPartner[] = [],
-  patternSuggestions?: Map<string, PartnerMatchResult>,
   categories: UserNoReceiptCategory[] = [],
   categorySuggestions?: Map<string, CategorySuggestion>,
-  fileAmountsMap?: Map<string, { amount: number; currency: string }>
+  fileAmountsMap?: Map<string, { amount: number; currency: string }>,
+  onAutomationClick?: (pipelineId: PipelineId) => void
 ): ColumnDef<Transaction>[] {
   const sourceMap = new Map(sources.map((s) => [s.id, s]));
   const userPartnerMap = new Map(userPartners.map((p) => [p.id, p]));
@@ -41,14 +51,7 @@ export function getTransactionColumns(
       accessorKey: "date",
       size: 100,
       header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="h-8 px-2 -ml-2"
-        >
-          Date
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
+        <SortableHeader column={column}>Date</SortableHeader>
       ),
       cell: ({ row }) => {
         const date = row.getValue("date") as { toDate: () => Date };
@@ -72,14 +75,7 @@ export function getTransactionColumns(
     {
       accessorKey: "amount",
       header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="h-8 px-2 -ml-2"
-        >
-          Amount
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
+        <SortableHeader column={column}>Amount</SortableHeader>
       ),
       cell: ({ row }) => {
         const amount = row.getValue("amount") as number;
@@ -115,7 +111,16 @@ export function getTransactionColumns(
     },
     {
       id: "assignedPartner",
-      header: "Partner",
+      header: () =>
+        onAutomationClick ? (
+          <AutomationHeader
+            label="Partner"
+            pipelineId="find-partner"
+            onAutomationClick={onAutomationClick}
+          />
+        ) : (
+          "Partner"
+        ),
       cell: ({ row }) => {
         const { partnerId, partnerType, partnerMatchConfidence, id: txId } = row.original;
 
@@ -128,45 +133,31 @@ export function getTransactionColumns(
             <PartnerPill
               name={partner?.name || partnerId.slice(0, 8) + "..."}
               confidence={partnerMatchConfidence ?? undefined}
+              matchedBy={row.original.partnerMatchedBy}
             />
           );
         }
 
-        // Find best suggestion from all sources (pattern match + server-stored)
-        const patternSuggestion = patternSuggestions?.get(txId);
-        const serverSuggestions = row.original.partnerSuggestions || [];
-
         // Get top server suggestion with partner lookup
-        let topServerSuggestion: { name: string; confidence: number } | null = null;
+        const serverSuggestions = row.original.partnerSuggestions || [];
+        let topSuggestion: { name: string; confidence: number } | null = null;
         for (const s of serverSuggestions) {
           const partner = s.partnerType === "global"
             ? globalPartnerMap.get(s.partnerId)
             : userPartnerMap.get(s.partnerId);
           if (partner) {
-            topServerSuggestion = { name: partner.name, confidence: s.confidence };
+            topSuggestion = { name: partner.name, confidence: s.confidence };
             break; // First one is highest confidence (already sorted server-side)
           }
         }
 
-        // Pick the highest confidence suggestion
-        let bestSuggestion: { name: string; confidence: number } | null = null;
-        if (patternSuggestion && topServerSuggestion) {
-          bestSuggestion = patternSuggestion.confidence >= topServerSuggestion.confidence
-            ? { name: patternSuggestion.partnerName, confidence: patternSuggestion.confidence }
-            : topServerSuggestion;
-        } else if (patternSuggestion) {
-          bestSuggestion = { name: patternSuggestion.partnerName, confidence: patternSuggestion.confidence };
-        } else if (topServerSuggestion) {
-          bestSuggestion = topServerSuggestion;
-        }
-
-        if (bestSuggestion) {
+        if (topSuggestion) {
           return (
             <Tooltip>
               <TooltipTrigger asChild>
                 <PartnerPill
-                  name={bestSuggestion.name}
-                  confidence={bestSuggestion.confidence}
+                  name={topSuggestion.name}
+                  confidence={topSuggestion.confidence}
                   variant="suggestion"
                 />
               </TooltipTrigger>
@@ -182,7 +173,16 @@ export function getTransactionColumns(
     },
     {
       id: "file",
-      header: "File",
+      header: () =>
+        onAutomationClick ? (
+          <AutomationHeader
+            label="File"
+            pipelineId="find-file"
+            onAutomationClick={onAutomationClick}
+          />
+        ) : (
+          "File"
+        ),
       cell: ({ row }) => {
         const fileCount = row.original.fileIds?.length || 0;
         const hasFile = fileCount > 0;

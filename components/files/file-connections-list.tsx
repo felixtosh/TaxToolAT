@@ -118,6 +118,8 @@ export function FileConnectionsList({
     setDisconnecting(transactionId);
     try {
       await onDisconnect(transactionId);
+    } catch (error) {
+      console.error("Failed to disconnect transaction:", error);
     } finally {
       setDisconnecting(null);
     }

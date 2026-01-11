@@ -7,15 +7,15 @@ import { useRouter } from "next/navigation";
 import { httpsCallable } from "firebase/functions";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
-import { UserPartner, GlobalPartner, PartnerSuggestion, PartnerMatchResult } from "@/types/partner";
+import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
 import { Button } from "@/components/ui/button";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import { usePartnerSuggestions, useAssignedPartner } from "@/hooks/use-partner-suggestions";
-import { Plus, ExternalLink, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, ExternalLink, Loader2 } from "lucide-react";
+import { ShowMoreButton } from "@/components/ui/show-more-button";
 import { cn } from "@/lib/utils";
 import { functions } from "@/lib/firebase/config";
-import { shouldAutoApply } from "@/lib/matching/partner-matcher";
 
 // Consistent field row component
 function FieldRow({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
@@ -40,8 +40,6 @@ interface TransactionDetailsProps {
   ) => Promise<void>;
   onRemovePartner: () => Promise<void>;
   onCreatePartner: (data: { name: string; aliases?: string[]; vatId?: string; ibans?: string[]; website?: string; country?: string; notes?: string }) => Promise<string>;
-  /** Pre-computed pattern suggestion from parent (ensures consistency with list view) */
-  patternSuggestion?: PartnerMatchResult | null;
 }
 
 export function TransactionDetails({
@@ -52,7 +50,6 @@ export function TransactionDetails({
   onAssignPartner,
   onRemovePartner,
   onCreatePartner,
-  patternSuggestion,
 }: TransactionDetailsProps) {
   const router = useRouter();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
@@ -60,46 +57,10 @@ export function TransactionDetails({
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
   const matchedTransactionIds = useRef<Set<string>>(new Set());
-  const autoAppliedRef = useRef<Set<string>>(new Set());
 
-  // Get partner suggestions and assigned partner
-  const hookSuggestions = usePartnerSuggestions(transaction, userPartners, globalPartners);
+  // Get partner suggestions and assigned partner (all from server-side data)
+  const suggestions = usePartnerSuggestions(transaction, userPartners, globalPartners);
   const assignedPartner = useAssignedPartner(transaction, userPartners, globalPartners);
-
-  // Merge passed-in pattern suggestion with hook suggestions
-  // This ensures consistency with the list view which uses the same pre-computed pattern
-  const suggestions = (() => {
-    if (!patternSuggestion) return hookSuggestions;
-
-    // Find the partner for the pattern suggestion
-    const partner = userPartners.find((p) => p.id === patternSuggestion.partnerId);
-    if (!partner) return hookSuggestions;
-
-    // Check if this partner is already in suggestions
-    const alreadyPresent = hookSuggestions.some((s) => s.partnerId === patternSuggestion.partnerId);
-    if (alreadyPresent) {
-      // Update confidence if pattern suggestion is higher
-      return hookSuggestions.map((s) => {
-        if (s.partnerId === patternSuggestion.partnerId && patternSuggestion.confidence > s.confidence) {
-          return { ...s, confidence: patternSuggestion.confidence };
-        }
-        return s;
-      }).sort((a, b) => b.confidence - a.confidence);
-    }
-
-    // Add pattern suggestion and sort
-    const combined = [
-      {
-        partnerId: patternSuggestion.partnerId,
-        partnerType: patternSuggestion.partnerType,
-        confidence: patternSuggestion.confidence,
-        source: patternSuggestion.source,
-        partner,
-      },
-      ...hookSuggestions,
-    ];
-    return combined.sort((a, b) => b.confidence - a.confidence);
-  })();
 
   // Trigger partner matching when opening a transaction without partner/suggestions
   useEffect(() => {
@@ -123,33 +84,6 @@ export function TransactionDetails({
     }
   }, [transaction.id, assignedPartner, suggestions.length]);
 
-  // Auto-apply high-confidence suggestions (>= 89%)
-  // NOTE: This uses "auto" matchedBy because this is automatic, not user-initiated.
-  // Only user clicks should use "suggestion" or "manual".
-  useEffect(() => {
-    if (assignedPartner || isAssigningPartner) return;
-    if (autoAppliedRef.current.has(transaction.id)) return;
-
-    const highConfidenceSuggestion = suggestions.find(
-      (s) => shouldAutoApply(s.confidence)
-    );
-
-    if (highConfidenceSuggestion) {
-      autoAppliedRef.current.add(transaction.id);
-      // Use "auto" because this is automatic application, not user clicking a suggestion
-      // This ensures auto-applied matches don't influence pattern learning
-      onAssignPartner(
-        highConfidenceSuggestion.partnerId,
-        highConfidenceSuggestion.partnerType,
-        "auto",
-        highConfidenceSuggestion.confidence
-      ).catch((error) => {
-        console.error("Failed to auto-apply partner:", error);
-        autoAppliedRef.current.delete(transaction.id);
-      });
-    }
-  }, [transaction.id, assignedPartner, suggestions, isAssigningPartner, onAssignPartner]);
-
   const handleSelectSuggestion = async (suggestion: PartnerSuggestion) => {
     setIsAssigningPartner(true);
     try {
@@ -167,15 +101,11 @@ export function TransactionDetails({
   const handleRemovePartner = async () => {
     setIsAssigningPartner(true);
     try {
-      // CRITICAL: Add to both refs BEFORE removal to prevent race conditions
-      // 1. autoAppliedRef prevents client-side auto-apply effect from re-assigning
-      // 2. matchedTransactionIds prevents triggering matchPartners on the server
-      autoAppliedRef.current.add(transaction.id);
+      // Prevent triggering matchPartners on the server after removal
       matchedTransactionIds.current.add(transaction.id);
       await onRemovePartner();
     } catch (error) {
-      // If removal failed, allow matching/auto-apply again
-      autoAppliedRef.current.delete(transaction.id);
+      // If removal failed, allow matching again
       matchedTransactionIds.current.delete(transaction.id);
       throw error;
     } finally {
@@ -258,23 +188,10 @@ export function TransactionDetails({
 
       {/* Show More / Metadata Toggle */}
       <FieldRow label="">
-        <button
-          type="button"
-          onClick={() => setShowMetadata(!showMetadata)}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          {showMetadata ? (
-            <>
-              Show less
-              <ChevronUp className="h-3 w-3" />
-            </>
-          ) : (
-            <>
-              Show more
-              <ChevronDown className="h-3 w-3" />
-            </>
-          )}
-        </button>
+        <ShowMoreButton
+          expanded={showMetadata}
+          onToggle={() => setShowMetadata(!showMetadata)}
+        />
       </FieldRow>
 
       {/* Metadata Section (collapsible) */}
@@ -313,6 +230,7 @@ export function TransactionDetails({
             <PartnerPill
               name={assignedPartner.name}
               confidence={transaction.partnerMatchConfidence ?? undefined}
+              matchedBy={transaction.partnerMatchedBy}
               partnerType={transaction.partnerType ?? undefined}
               onClick={handleNavigateToPartner}
               onRemove={handleRemovePartner}

@@ -1,11 +1,13 @@
 "use client";
 
-import { X, Building2, Globe } from "lucide-react";
+import { X, Building2, Globe, UserCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface PartnerPillProps {
   name: string;
   confidence?: number;
+  /** How the partner was matched - shows "Manual" badge instead of confidence when manual */
+  matchedBy?: "manual" | "auto" | "suggestion" | null;
   onRemove?: () => void;
   onClick?: (e?: React.MouseEvent) => void;
   variant?: "default" | "suggestion";
@@ -17,6 +19,7 @@ interface PartnerPillProps {
 export function PartnerPill({
   name,
   confidence,
+  matchedBy,
   onRemove,
   onClick,
   variant = "default",
@@ -67,7 +70,11 @@ export function PartnerPill({
         )
       )}
       <span className="truncate">{name}</span>
-      {confidence !== undefined && (
+      {matchedBy === "manual" ? (
+        <span className="inline-flex items-center gap-0.5 text-xs flex-shrink-0 ml-auto text-green-600">
+          <UserCheck className="h-3 w-3" />
+        </span>
+      ) : confidence !== undefined && (
         <span className={cn(
           "text-xs flex-shrink-0 ml-auto",
           isSuggestion ? "text-info-foreground/70" : "text-muted-foreground"

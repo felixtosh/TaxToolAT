@@ -76,8 +76,11 @@ export function formatFunctionName(fn: AIFunction): string {
   const names: Record<AIFunction, string> = {
     chat: "Chat",
     companyLookup: "Company Lookup",
+    companyLookupSearch: "Company Lookup (Search)",
     patternLearning: "Pattern Learning",
     columnMatching: "Column Matching",
+    extraction: "Extraction",
+    classification: "Classification",
   };
   return names[fn] || fn;
 }

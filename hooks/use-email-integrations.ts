@@ -10,7 +10,6 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { EmailIntegration } from "@/types/email-integration";
-import { connectGmailAccount, GmailOAuthResult } from "@/lib/firebase/auth-gmail";
 
 const MOCK_USER_ID = "dev-user-123";
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
@@ -28,6 +27,10 @@ export interface UseEmailIntegrationsResult {
   disconnect: (integrationId: string) => Promise<void>;
   /** Refresh an integration (reconnect OAuth) */
   refresh: (integrationId: string) => Promise<void>;
+  /** Pause sync for an integration */
+  pauseSync: (integrationId: string) => Promise<void>;
+  /** Resume sync for an integration */
+  resumeSync: (integrationId: string) => Promise<void>;
   /** Check if any Gmail integration is connected */
   hasGmailIntegration: boolean;
 }
@@ -67,31 +70,13 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
     return () => unsubscribe();
   }, []);
 
-  // Connect Gmail account
+  // Connect Gmail account - redirects to OAuth flow
   const connectGmail = useCallback(async () => {
     try {
       setError(null);
-
-      // Initiate OAuth flow
-      const result: GmailOAuthResult = await connectGmailAccount();
-
-      // Send to API to store integration
-      const response = await fetch("/api/gmail/auth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accessToken: result.accessToken,
-          email: result.email,
-          displayName: result.displayName,
-          googleUserId: result.googleUserId,
-          expiresAt: result.expiresAt.toISOString(),
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to save integration");
-      }
+      // Redirect to OAuth authorization endpoint
+      // The callback will handle token exchange and redirect back to /integrations
+      window.location.href = "/api/gmail/authorize";
     } catch (err) {
       console.error("Failed to connect Gmail:", err);
       const message = err instanceof Error ? err.message : "Failed to connect Gmail";
@@ -131,11 +116,57 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
         throw new Error("Integration not found");
       }
 
-      // Re-run OAuth flow (will update existing integration)
-      await connectGmail();
+      // Redirect to OAuth flow - callback will update existing integration
+      window.location.href = "/api/gmail/authorize";
     },
-    [integrations, connectGmail]
+    [integrations]
   );
+
+  // Pause sync for an integration
+  const pauseSync = useCallback(async (integrationId: string) => {
+    try {
+      setError(null);
+
+      const response = await fetch("/api/gmail/pause", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ integrationId }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to pause sync");
+      }
+    } catch (err) {
+      console.error("Failed to pause sync:", err);
+      const message = err instanceof Error ? err.message : "Failed to pause sync";
+      setError(message);
+      throw err;
+    }
+  }, []);
+
+  // Resume sync for an integration
+  const resumeSync = useCallback(async (integrationId: string) => {
+    try {
+      setError(null);
+
+      const response = await fetch("/api/gmail/resume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ integrationId }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to resume sync");
+      }
+    } catch (err) {
+      console.error("Failed to resume sync:", err);
+      const message = err instanceof Error ? err.message : "Failed to resume sync";
+      setError(message);
+      throw err;
+    }
+  }, []);
 
   // Check if any Gmail integration exists
   const hasGmailIntegration = useMemo(
@@ -150,6 +181,8 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
     connectGmail,
     disconnect,
     refresh,
+    pauseSync,
+    resumeSync,
     hasGmailIntegration,
   };
 }

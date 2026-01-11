@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2 } from "lucide-react";
+import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { ChatProvider, ChatSidebar, useChat } from "@/components/chat";
@@ -70,6 +70,12 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <Link href="/admin/user-data" className="flex items-center gap-2">
+                    <User className="h-4 w-4" />
+                    User Data
+                  </Link>
+                </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link href="/admin/partners" className="flex items-center gap-2">
                     <Globe className="h-4 w-4" />

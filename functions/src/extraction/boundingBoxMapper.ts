@@ -1,8 +1,8 @@
 import { OCRBlock } from "./visionApi";
-import { ExtractedData } from "./claudeParser";
+import { ExtractedData } from "../types/extraction";
 
 export interface ExtractedFieldLocation {
-  field: "date" | "amount" | "currency" | "vatPercent" | "partner";
+  field: "date" | "amount" | "currency" | "vatPercent" | "partner" | "vatId" | "iban" | "address";
   value: string;
   confidence: number;
   boundingBox?: {
@@ -28,8 +28,10 @@ export function mapFieldsToBoundingBoxes(
   ];
 
   for (const fieldName of fieldNames) {
-    const searchText = extracted.fieldSpans[fieldName];
-    if (!searchText) continue;
+    const rawValue = extracted.fieldSpans[fieldName];
+    if (rawValue == null) continue;
+    // Coerce to string (fieldSpans might contain numbers for amount/vatPercent)
+    const searchText = typeof rawValue === "string" ? rawValue : String(rawValue);
 
     // Find block containing this text (case-insensitive, whitespace-normalized)
     const normalizedSearch = normalizeText(searchText);
@@ -85,7 +87,11 @@ export function mapFieldsToBoundingBoxes(
 /**
  * Normalize text for comparison (lowercase, collapse whitespace)
  */
-function normalizeText(text: string): string {
+function normalizeText(text: unknown): string {
+  if (typeof text !== "string") {
+    // Handle numbers, null, undefined, etc.
+    return text == null ? "" : String(text).toLowerCase().replace(/\s+/g, " ").trim();
+  }
   return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
 

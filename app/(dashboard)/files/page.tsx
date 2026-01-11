@@ -6,10 +6,12 @@ import { useDropzone } from "react-dropzone";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { Upload } from "lucide-react";
 import { storage, db } from "@/lib/firebase/config";
-import { createFile, checkFileDuplicate, OperationsContext } from "@/lib/operations";
+import { createFile, checkFileDuplicate, retryFileExtraction, OperationsContext } from "@/lib/operations";
 import { FileTable } from "@/components/files/file-table";
 import { FileDetailPanel } from "@/components/files/file-detail-panel";
+import { FileBulkActionsPanel } from "@/components/files/file-bulk-actions-panel";
 import { FileUploadZone } from "@/components/files/file-upload-zone";
+import { FileViewerOverlay } from "@/components/files/file-viewer-overlay";
 import { UploadProgress, FileUploadStatus } from "@/components/files/upload-progress";
 import { FilesDataTableHandle } from "@/components/files/files-data-table";
 import { useFiles } from "@/hooks/use-files";
@@ -41,8 +43,6 @@ const PANEL_WIDTH_KEY = "fileDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 600; // Larger for file preview
 const MIN_PANEL_WIDTH = 480;
 const MAX_PANEL_WIDTH = 900;
-const SCROLL_RENDER_DELAY = 150;
-
 function FileTableFallback() {
   return (
     <div className="h-full flex flex-col overflow-hidden bg-card">
@@ -93,17 +93,21 @@ function FilesContent() {
   const filters: FileFilters = useMemo(() => {
     const hasConnections = searchParams.get("connected");
     const extractionComplete = searchParams.get("extracted");
+    const includeDeleted = searchParams.get("deleted");
+    const isNotInvoice = searchParams.get("notInvoice");
 
     return {
       hasConnections: hasConnections === "true" ? true : hasConnections === "false" ? false : undefined,
       extractionComplete: extractionComplete === "true" ? true : extractionComplete === "false" ? false : undefined,
+      includeDeleted: includeDeleted === "true" ? true : undefined,
+      isNotInvoice: isNotInvoice === "true" ? true : undefined,
     };
   }, [searchParams]);
 
   // Get search value from URL
   const searchValue = searchParams.get("search") || "";
 
-  const { files, loading, remove } = useFiles({
+  const { files, loading, remove, restore, markAsNotInvoice, unmarkAsNotInvoice } = useFiles({
     search: searchValue,
     ...filters,
   });
@@ -124,6 +128,40 @@ function FilesContent() {
   const [uploads, setUploads] = useState<FileUploadStatus[]>([]);
   const [showUploadProgress, setShowUploadProgress] = useState(false);
 
+  // Multi-select state:
+  // - Primary selection: URL ?id=X (the anchor, shows detail panel)
+  // - Additional selections: React state (CMD/Shift added, lighter highlight)
+  const [additionalSelectedIds, setAdditionalSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+
+  // Primary selected ID comes from URL
+  const primarySelectedId = searchParams.get("id");
+
+  // Combined selection = primary + additional (for bulk operations)
+  const allSelectedIds = useMemo(() => {
+    const all = new Set(additionalSelectedIds);
+    if (primarySelectedId) {
+      all.add(primarySelectedId);
+    }
+    return all;
+  }, [primarySelectedId, additionalSelectedIds]);
+
+  // Derive selected files from all IDs
+  const selectedFiles = useMemo(() => {
+    return files.filter((f) => allSelectedIds.has(f.id));
+  }, [files, allSelectedIds]);
+
+  // Show bulk panel when there are additional selections (primary + at least one more)
+  const showBulkPanel = additionalSelectedIds.size > 0;
+
+  // File viewer state
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [highlightText, setHighlightText] = useState<string | null>(null);
+
+  // Track file ID being parsed after user override (skips classification)
+  const [parsingFileId, setParsingFileId] = useState<string | null>(null);
+
   // Calculate SHA-256 hash of file content
   const calculateFileHash = useCallback(async (file: File): Promise<string> => {
     const buffer = await file.arrayBuffer();
@@ -140,10 +178,23 @@ function FilesContent() {
         // Calculate hash first for duplicate detection
         const contentHash = await calculateFileHash(file);
 
-        // Check for duplicate
+        // Check for duplicate - handle gracefully without throwing
         const existingFile = await checkFileDuplicate(ctx, contentHash);
         if (existingFile) {
-          throw new Error(`Duplicate: "${existingFile.fileName}" already exists`);
+          setUploads((prev) =>
+            prev.map((u) =>
+              u.id === uploadId
+                ? {
+                    ...u,
+                    status: "error" as const,
+                    progress: 100, // Mark as processed
+                    duplicateFileId: existingFile.id,
+                    duplicateFileName: existingFile.fileName,
+                  }
+                : u
+            )
+          );
+          return null;
         }
 
         // Create storage path
@@ -264,23 +315,23 @@ function FilesContent() {
     noKeyboard: true,
   });
 
-  // Get selected file ID from URL
-  const selectedId = searchParams.get("id");
-
-  // Find selected file
+  // Find selected file (primary selection from URL)
   const selectedFile = useMemo(() => {
-    if (!selectedId || !files.length) return null;
-    return files.find((f) => f.id === selectedId) || null;
-  }, [selectedId, files]);
+    if (!primarySelectedId || !files.length) return null;
+    return files.find((f) => f.id === primarySelectedId) || null;
+  }, [primarySelectedId, files]);
 
   // Find current index for navigation
   const currentIndex = useMemo(() => {
-    if (!selectedId) return -1;
-    return files.findIndex((f) => f.id === selectedId);
-  }, [selectedId, files]);
+    if (!primarySelectedId) return -1;
+    return files.findIndex((f) => f.id === primarySelectedId);
+  }, [primarySelectedId, files]);
 
   const hasPrevious = currentIndex > 0;
   const hasNext = currentIndex >= 0 && currentIndex < files.length - 1;
+
+  // Note: We intentionally do NOT close the viewer when navigating between files
+  // The viewer should stay open so users can browse through files quickly
 
   // Load panel width from localStorage
   useEffect(() => {
@@ -292,6 +343,25 @@ function FilesContent() {
       }
     }
   }, []);
+
+  // Track previous extractionComplete to detect transitions
+  const prevExtractionCompleteRef = useRef<boolean | undefined>(undefined);
+
+  // Clear parsingFileId only when extraction TRANSITIONS from false to true
+  // This prevents clearing it immediately when user clicks "Invoice" (before cloud function resets it)
+  useEffect(() => {
+    const prevComplete = prevExtractionCompleteRef.current;
+    const currComplete = selectedFile?.extractionComplete;
+
+    if (parsingFileId && selectedFile?.id === parsingFileId) {
+      // Only clear when we see the transition from incomplete to complete
+      if (prevComplete === false && currComplete === true) {
+        setParsingFileId(null);
+      }
+    }
+
+    prevExtractionCompleteRef.current = currComplete;
+  }, [parsingFileId, selectedFile?.id, selectedFile?.extractionComplete]);
 
   // Handle resize
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -362,6 +432,18 @@ function FilesContent() {
         params.delete("extracted");
       }
 
+      if (newFilters.includeDeleted === true) {
+        params.set("deleted", "true");
+      } else {
+        params.delete("deleted");
+      }
+
+      if (newFilters.isNotInvoice === true) {
+        params.set("notInvoice", "true");
+      } else {
+        params.delete("notInvoice");
+      }
+
       const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
       router.replace(newUrl, { scroll: false });
     },
@@ -398,10 +480,40 @@ function FilesContent() {
 
   const handleDelete = useCallback(async () => {
     if (!selectedFile) return;
-    if (!confirm(`Delete "${selectedFile.fileName}"? This will also remove all connections.`)) return;
-    await remove(selectedFile.id);
+    const isGmailFile = selectedFile.sourceType === "gmail";
+    const message = isGmailFile
+      ? `Delete "${selectedFile.fileName}"? It will be hidden but won't be re-imported from Gmail.`
+      : `Permanently delete "${selectedFile.fileName}"? This will also remove all connections.`;
+    if (!confirm(message)) return;
+    // Use soft delete for Gmail files to prevent re-import
+    await remove(selectedFile.id, isGmailFile);
     handleCloseDetail();
   }, [selectedFile, remove, handleCloseDetail]);
+
+  const handleRestore = useCallback(async () => {
+    if (!selectedFile) return;
+    await restore(selectedFile.id);
+  }, [selectedFile, restore]);
+
+  const handleMarkAsNotInvoice = useCallback(async () => {
+    if (!selectedFile) return;
+    await markAsNotInvoice(selectedFile.id);
+  }, [selectedFile, markAsNotInvoice]);
+
+  const handleUnmarkAsNotInvoice = useCallback(async () => {
+    if (!selectedFile) return;
+    // Set parsing state FIRST before any Firestore updates (prevents race condition)
+    setParsingFileId(selectedFile.id);
+    // Unmark as not-invoice and trigger re-extraction (user says it IS an invoice)
+    await unmarkAsNotInvoice(selectedFile.id);
+    // Force re-extraction since user overrode the AI classification
+    try {
+      await retryFileExtraction(ctx, selectedFile.id);
+    } catch (error) {
+      console.error("Failed to re-extract after marking as invoice:", error);
+      setParsingFileId(null);
+    }
+  }, [selectedFile, unmarkAsNotInvoice, ctx]);
 
 
   const handleUploadComplete = useCallback(
@@ -415,26 +527,102 @@ function FilesContent() {
     [router, searchParams]
   );
 
-  // Track previous selectedId to avoid unnecessary scrolls
-  const prevSelectedIdRef = useRef<string | null>(null);
+  // Multi-select: handle selection changes from table
+  // This receives: { primaryId, additionalIds } from the table
+  const handleSelectionChange = useCallback(
+    (newSelectedIds: Set<string>) => {
+      // The table sends us the full set of selected IDs
+      // We need to figure out what changed
 
-  // Scroll to selected file when it changes
-  useEffect(() => {
-    if (loading || !selectedId || !files.length) return;
-    if (selectedId === prevSelectedIdRef.current) return;
+      // If exactly one ID and it's different from current primary, it's a new primary click
+      if (newSelectedIds.size === 1) {
+        const [id] = newSelectedIds;
+        // Clear additional selections, update primary via URL
+        setAdditionalSelectedIds(new Set());
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("id", id);
+        router.push(`/files?${params.toString()}`, { scroll: false });
+      } else if (newSelectedIds.size === 0) {
+        // Clear everything
+        setAdditionalSelectedIds(new Set());
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete("id");
+        const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
+        router.push(newUrl, { scroll: false });
+      } else {
+        // Multiple selected - update additional selections (keep primary as-is)
+        const newAdditional = new Set(newSelectedIds);
+        if (primarySelectedId) {
+          newAdditional.delete(primarySelectedId); // Primary is in URL, not in additional
+        }
+        setAdditionalSelectedIds(newAdditional);
+      }
+    },
+    [router, searchParams, primarySelectedId]
+  );
 
-    prevSelectedIdRef.current = selectedId;
+  // Multi-select: clear additional selections only (keep primary)
+  const handleClearSelection = useCallback(() => {
+    setAdditionalSelectedIds(new Set());
+  }, []);
 
-    const index = files.findIndex((f) => f.id === selectedId);
-    if (index === -1) return;
+  // Multi-select: bulk delete
+  const handleBulkDelete = useCallback(async () => {
+    if (allSelectedIds.size === 0) return;
+    if (!confirm(`Delete ${allSelectedIds.size} files? This cannot be undone.`)) return;
 
-    tableRef.current?.scrollToIndex(index);
+    setIsBulkDeleting(true);
+    try {
+      const fileIds = Array.from(allSelectedIds);
+      for (const fileId of fileIds) {
+        const file = files.find((f) => f.id === fileId);
+        const isGmailFile = file?.sourceType === "gmail";
+        await remove(fileId, isGmailFile);
+      }
+      // Clear additional selections and primary
+      setAdditionalSelectedIds(new Set());
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("id");
+      const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
+      router.push(newUrl, { scroll: false });
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  }, [allSelectedIds, files, remove, router, searchParams]);
 
-    setTimeout(() => {
-      const element = document.querySelector(`[data-file-id="${selectedId}"]`);
-      element?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, SCROLL_RENDER_DELAY);
-  }, [selectedId, loading, files]);
+  // Multi-select: bulk mark as not invoice
+  const handleBulkMarkAsNotInvoice = useCallback(async () => {
+    if (allSelectedIds.size === 0) return;
+
+    setIsBulkUpdating(true);
+    try {
+      for (const fileId of allSelectedIds) {
+        await markAsNotInvoice(fileId);
+      }
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  }, [allSelectedIds, markAsNotInvoice]);
+
+  // Multi-select: bulk mark as invoice (unmark as not invoice)
+  const handleBulkMarkAsInvoice = useCallback(async () => {
+    if (allSelectedIds.size === 0) return;
+
+    setIsBulkUpdating(true);
+    try {
+      for (const fileId of allSelectedIds) {
+        await unmarkAsNotInvoice(fileId);
+        // Trigger re-extraction since user says it IS an invoice
+        try {
+          await retryFileExtraction(ctx, fileId);
+        } catch (error) {
+          console.error(`Failed to re-extract file ${fileId}:`, error);
+        }
+      }
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  }, [allSelectedIds, unmarkAsNotInvoice, ctx]);
 
   if (loading) {
     return <FileTableFallback />;
@@ -477,21 +665,39 @@ function FilesContent() {
       {/* Main content */}
       <div
         className="h-full flex flex-col transition-[margin] duration-200 ease-in-out"
-        style={{ marginRight: selectedFile ? panelWidth : 0 }}
+        style={{ marginRight: (selectedFile || showBulkPanel) ? panelWidth : 0 }}
       >
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden relative">
           <FileTable
             ref={tableRef}
             files={files}
             onSelectFile={handleSelectFile}
-            selectedFileId={selectedId}
+            selectedFileId={primarySelectedId}
             searchValue={searchValue}
             onSearchChange={handleSearchChange}
             filters={filters}
             onFiltersChange={handleFiltersChange}
             userPartners={userPartners}
             globalPartners={globalPartners}
+            enableMultiSelect={true}
+            selectedRowIds={allSelectedIds}
+            onSelectionChange={handleSelectionChange}
           />
+
+          {/* File viewer overlay - positioned over table area only */}
+          {selectedFile && viewerOpen && (
+            <FileViewerOverlay
+              open={viewerOpen}
+              onClose={() => {
+                setViewerOpen(false);
+                setHighlightText(null);
+              }}
+              downloadUrl={selectedFile.downloadUrl}
+              fileType={selectedFile.fileType}
+              fileName={selectedFile.fileName}
+              highlightText={highlightText}
+            />
+          )}
         </div>
 
         {/* Upload progress bar - sticky at bottom */}
@@ -500,11 +706,38 @@ function FilesContent() {
         )}
       </div>
 
-      {/* Right sidebar - File detail panel */}
-      {selectedFile && (
+      {/* Right sidebar - Bulk actions panel or File detail panel */}
+      {showBulkPanel ? (
         <div
           ref={panelRef}
-          className="fixed right-0 top-14 bottom-0 z-30 bg-background border-l flex"
+          className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
+          style={{ width: panelWidth }}
+        >
+          {/* Resize handle */}
+          <div
+            className={cn(
+              "w-1 cursor-col-resize bg-border hover:bg-primary/20 active:bg-primary/30 flex-shrink-0",
+              isResizing && "bg-primary/30"
+            )}
+            onMouseDown={handleResizeStart}
+          />
+          {/* Bulk actions panel content */}
+          <div className="flex-1 overflow-hidden">
+            <FileBulkActionsPanel
+              selectedFiles={selectedFiles}
+              onDelete={handleBulkDelete}
+              onMarkAsNotInvoice={handleBulkMarkAsNotInvoice}
+              onMarkAsInvoice={handleBulkMarkAsInvoice}
+              onClearSelection={handleClearSelection}
+              isDeleting={isBulkDeleting}
+              isUpdating={isBulkUpdating}
+            />
+          </div>
+        </div>
+      ) : selectedFile && (
+        <div
+          ref={panelRef}
+          className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
           style={{ width: panelWidth }}
         >
           {/* Resize handle */}
@@ -525,9 +758,21 @@ function FilesContent() {
               hasPrevious={hasPrevious}
               hasNext={hasNext}
               onDelete={handleDelete}
+              onRestore={handleRestore}
+              onMarkAsNotInvoice={handleMarkAsNotInvoice}
+              onUnmarkAsNotInvoice={handleUnmarkAsNotInvoice}
+              isParsing={parsingFileId === selectedFile.id}
               userPartners={userPartners}
               globalPartners={globalPartners}
               onCreatePartner={createPartner}
+              onOpenViewer={() => setViewerOpen((prev) => !prev)}
+              viewerOpen={viewerOpen}
+              onHighlightField={(text) => {
+                setHighlightText(text);
+                if (!viewerOpen) {
+                  setViewerOpen(true);
+                }
+              }}
             />
           </div>
         </div>

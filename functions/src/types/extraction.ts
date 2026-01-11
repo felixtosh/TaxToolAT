@@ -1,0 +1,32 @@
+/**
+ * Shared extraction types for document processing.
+ * Used by both Gemini and legacy Claude parsers.
+ */
+
+/**
+ * Normalized entity data (issuer or recipient)
+ */
+export interface ExtractedEntity {
+  name: string | null;
+  vatId: string | null;
+  address: string | null;
+  iban: string | null;
+  website: string | null;
+}
+
+export interface ExtractedData {
+  date: string | null; // ISO format YYYY-MM-DD
+  amount: number | null; // cents
+  currency: string | null;
+  vatPercent: number | null;
+  partner: string | null;
+  vatId: string | null; // VAT ID (e.g., ATU12345678, DE123456789)
+  iban: string | null; // IBAN if visible
+  address: string | null; // Full address as single string
+  website: string | null; // Vendor website domain (e.g., "company.de")
+  confidence: number;
+  fieldSpans: Record<string, string>; // field -> matched text from document
+  // Entity fields for counterparty determination
+  issuer: ExtractedEntity | null;
+  recipient: ExtractedEntity | null;
+}

@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { usePartners } from "@/hooks/use-partners";
+import { useUserData } from "@/hooks/use-user-data";
 import { PartnerToolbar } from "./partner-toolbar";
 import { PartnerDataTable } from "./partner-data-table";
 import { AddPartnerDialog } from "./add-partner-dialog";
@@ -24,6 +25,7 @@ export function PartnerTable({
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
 
   const { partners, loading, error, createPartner, deletePartner } = usePartners();
+  const { markedAsMe } = useUserData();
 
   // Filter partners by search
   const filteredPartners = useMemo(() => {
@@ -97,6 +99,7 @@ export function PartnerTable({
           onRowClick={onSelectPartner}
           selectedRowId={selectedPartnerId}
           onDelete={handleDeletePartner}
+          markedAsMe={markedAsMe}
         />
       </div>
 

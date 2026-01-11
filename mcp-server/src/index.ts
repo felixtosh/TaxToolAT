@@ -12,6 +12,7 @@ import { registerTestDataTools, testDataToolDefinitions } from "./tools/test-dat
 import { registerFileTools, fileToolDefinitions } from "./tools/files.js";
 import { registerGocardlessTools, gocardlessToolDefinitions } from "./tools/gocardless.js";
 import { registerCategoryTools, categoryToolDefinitions } from "./tools/categories.js";
+import { registerAutomationTools, automationToolDefinitions } from "./tools/automations.js";
 
 async function main() {
   const server = new Server(
@@ -37,6 +38,7 @@ async function main() {
     ...fileToolDefinitions,
     ...gocardlessToolDefinitions,
     ...categoryToolDefinitions,
+    ...automationToolDefinitions,
   ];
 
   // Register tool listing handler
@@ -72,6 +74,10 @@ async function main() {
       // Try category tools
       const categoryResult = await registerCategoryTools(ctx, name, args);
       if (categoryResult !== null) return categoryResult;
+
+      // Try automation tools
+      const automationResult = await registerAutomationTools(ctx, name, args);
+      if (automationResult !== null) return automationResult;
 
       throw new Error(`Unknown tool: ${name}`);
     } catch (error) {

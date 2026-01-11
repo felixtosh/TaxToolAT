@@ -37,11 +37,66 @@ export interface EmailIntegration {
   /** Requires re-authentication (token refresh failed) */
   needsReauth: boolean;
 
+  /** Whether sync is paused by user */
+  isPaused?: boolean;
+
+  /** When sync was paused */
+  pausedAt?: Timestamp;
+
   /** Last error message if any */
   lastError?: string;
 
   createdAt: Timestamp;
   updatedAt: Timestamp;
+
+  // === Sync Status ===
+
+  /** Last time invoices were synced from this account */
+  lastSyncAt?: Timestamp;
+
+  /** Status of the last sync attempt */
+  lastSyncStatus?: "success" | "partial" | "failed";
+
+  /** Error message from last sync */
+  lastSyncError?: string;
+
+  /** Number of files pulled in last sync */
+  lastSyncFileCount?: number;
+
+  /** Whether initial sync has completed (after first connection) */
+  initialSyncComplete?: boolean;
+
+  /** When initial sync started (for tracking progress) */
+  initialSyncStartedAt?: Timestamp;
+
+  // === Soft Disconnect State ===
+
+  /** When the integration was soft-disconnected (OAuth revoked but files preserved) */
+  disconnectedAt?: Timestamp;
+
+  /**
+   * Gmail message IDs that have been processed.
+   * Stored on disconnect to enable resumption on reconnect.
+   */
+  processedMessageIds?: string[];
+
+  /**
+   * Date range of the last sync (for resumption reference).
+   */
+  lastSyncDateRange?: {
+    from: Timestamp;
+    to: Timestamp;
+  };
+
+  /**
+   * Total date range that has been synced across all syncs.
+   * Used to detect gaps when transaction range expands.
+   * Expands over time as new syncs cover additional periods.
+   */
+  syncedDateRange?: {
+    from: Timestamp;
+    to: Timestamp;
+  };
 }
 
 /**

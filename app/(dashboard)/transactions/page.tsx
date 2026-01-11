@@ -6,11 +6,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { httpsCallable } from "firebase/functions";
 import { TransactionTable } from "@/components/transactions/transaction-table";
 import { TransactionDetailPanel } from "@/components/transactions/transaction-detail-panel";
+import { ConnectFileOverlay } from "@/components/files/connect-file-overlay";
 import { useTransactions } from "@/hooks/use-transactions";
 import { useSources } from "@/hooks/use-sources";
 import { usePartners } from "@/hooks/use-partners";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
+import { useTransactionFiles } from "@/hooks/use-files";
 import { functions } from "@/lib/firebase/config";
 import {
   parseFiltersFromUrl,
@@ -21,16 +23,12 @@ import {
 } from "@/lib/filters/url-params";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Transaction } from "@/types/transaction";
-import { PartnerMatchResult } from "@/types/partner";
-import { matchTransactionByPattern } from "@/lib/matching/partner-matcher";
 import { cn } from "@/lib/utils";
 
 const PANEL_WIDTH_KEY = "transactionDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 480;
 const MIN_PANEL_WIDTH = 380;
 const MAX_PANEL_WIDTH = 700;
-const HEADER_HEIGHT = 56; // h-14 = 3.5rem = 56px
-const SCROLL_RENDER_DELAY = 150; // ms to wait for virtualized table to render
 
 function TransactionTableFallback() {
   return (
@@ -82,6 +80,9 @@ function TransactionsContent() {
   const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  // Connect file overlay state - driven by URL param
+  const isConnectFileOpen = searchParams.get("connect") === "true";
 
   // Restore filters from localStorage on initial mount if no URL params
   const hasRestoredRef = useRef(false);
@@ -165,11 +166,42 @@ function TransactionsContent() {
     return sources.find((s) => s.id === selectedTransaction.sourceId);
   }, [selectedTransaction, sources]);
 
-  // Compute pattern suggestion for selected transaction (same logic as table column)
-  const selectedPatternSuggestion = useMemo(() => {
-    if (!selectedTransaction) return null;
-    return matchTransactionByPattern(selectedTransaction, partners);
-  }, [selectedTransaction, partners]);
+  // Get files connected to selected transaction (for overlay)
+  const { files: connectedFiles, connectFile } = useTransactionFiles(selectedTransaction?.id || "");
+  const connectedFileIds = useMemo(() => connectedFiles.map(f => f.id), [connectedFiles]);
+
+  // Open/close connect file overlay via URL param
+  const openConnectFileOverlay = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("connect", "true");
+    router.push(`/transactions?${params.toString()}`, { scroll: false });
+  }, [router, searchParams]);
+
+  const closeConnectFileOverlay = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("connect");
+    router.push(`/transactions?${params.toString()}`, { scroll: false });
+  }, [router, searchParams]);
+
+  const toggleConnectFileOverlay = useCallback(() => {
+    if (isConnectFileOpen) {
+      closeConnectFileOverlay();
+    } else {
+      openConnectFileOverlay();
+    }
+  }, [isConnectFileOpen, openConnectFileOverlay, closeConnectFileOverlay]);
+
+  // Handle connect file from overlay
+  const handleConnectFile = useCallback(
+    async (fileId: string) => {
+      if (!selectedTransaction) return;
+      await connectFile(fileId);
+      closeConnectFileOverlay();
+    },
+    [selectedTransaction, connectFile, closeConnectFileOverlay]
+  );
+
+  // Close overlay when transaction is deselected
 
   // Load panel width from localStorage
   useEffect(() => {
@@ -263,44 +295,6 @@ function TransactionsContent() {
     }
   }, [currentIndex, filteredTransactions, handleSelectTransaction]);
 
-  // Track previous selectedId to avoid unnecessary scrolls
-  const prevSelectedIdRef = useRef<string | null>(null);
-
-  // Check if element is visible in viewport (below header, above bottom)
-  const isElementInView = useCallback((element: Element) => {
-    const rect = element.getBoundingClientRect();
-    return rect.top >= HEADER_HEIGHT && rect.bottom <= window.innerHeight - 20;
-  }, []);
-
-  // Scroll to a transaction by ID
-  const scrollToTransaction = useCallback((id: string) => {
-    const index = filteredTransactions.findIndex((t) => t.id === id);
-    if (index === -1) return;
-
-    // Use virtualizer to scroll first (ensures row is rendered)
-    tableRef.current?.scrollToIndex(index);
-
-    // Fine-tune with scrollIntoView after virtualized table renders
-    setTimeout(() => {
-      const element = document.querySelector(`[data-transaction-id="${id}"]`);
-      element?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, SCROLL_RENDER_DELAY);
-  }, [filteredTransactions]);
-
-  // Scroll to selected transaction when it changes
-  useEffect(() => {
-    if (loading || !selectedId || !filteredTransactions.length) return;
-    if (selectedId === prevSelectedIdRef.current) return;
-
-    prevSelectedIdRef.current = selectedId;
-
-    // Skip scroll if element is already visible
-    const element = document.querySelector(`[data-transaction-id="${selectedId}"]`);
-    if (element && isElementInView(element)) return;
-
-    scrollToTransaction(selectedId);
-  }, [selectedId, loading, filteredTransactions, isElementInView, scrollToTransaction]);
-
   // Trigger backend matching when patterns change or on initial load
   useEffect(() => {
     if (loading || !transactions.length || !partners.length) return;
@@ -368,22 +362,36 @@ function TransactionsContent() {
         className="h-full transition-[margin] duration-200 ease-in-out"
         style={{ marginRight: selectedTransaction ? panelWidth : 0 }}
       >
-        <TransactionTable
-          tableRef={tableRef}
-          onSelectTransaction={handleSelectTransaction}
-          selectedTransactionId={selectedId}
-          searchValue={searchValue}
-          onSearchChange={handleSearchChange}
-          userPartners={partners}
-          globalPartners={globalPartners}
-        />
+        {/* Relative container for overlay positioning */}
+        <div className="h-full relative">
+          <TransactionTable
+            tableRef={tableRef}
+            onSelectTransaction={handleSelectTransaction}
+            selectedTransactionId={selectedId}
+            searchValue={searchValue}
+            onSearchChange={handleSearchChange}
+            userPartners={partners}
+            globalPartners={globalPartners}
+          />
+
+          {/* Connect file overlay - positioned over table area */}
+          {selectedTransaction && (
+            <ConnectFileOverlay
+              open={isConnectFileOpen}
+              onClose={closeConnectFileOverlay}
+              onSelect={handleConnectFile}
+              connectedFileIds={connectedFileIds}
+              transaction={selectedTransaction}
+            />
+          )}
+        </div>
       </div>
 
-      {/* Right sidebar - fixed position */}
+      {/* Right sidebar - fixed position, z-50 to stay above overlays */}
       {selectedTransaction && (
         <div
           ref={panelRef}
-          className="fixed right-0 top-14 bottom-0 z-30 bg-background border-l flex"
+          className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
           style={{ width: panelWidth }}
         >
           {/* Resize handle */}
@@ -410,7 +418,7 @@ function TransactionsContent() {
               onAssignPartner={assignToTransaction}
               onRemovePartner={removeFromTransaction}
               onCreatePartner={createPartner}
-              patternSuggestion={selectedPatternSuggestion}
+              onOpenConnectFile={toggleConnectFileOverlay}
             />
           </div>
         </div>

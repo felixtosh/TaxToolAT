@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { VertexAI } from "@google-cloud/vertexai";
+import { logAIUsage } from "../utils/ai-usage-logger";
 
 // Get project ID from environment (Firebase sets this automatically)
 function getProjectId(): string {
@@ -8,7 +9,16 @@ function getProjectId(): string {
 
 const VERTEX_LOCATION = "europe-west1";
 
-interface CompanyInfo {
+/**
+ * Create a VertexAI instance for company lookup.
+ * Exported for use by other functions.
+ */
+export function createVertexAI(): VertexAI {
+  const projectId = getProjectId();
+  return new VertexAI({ project: projectId, location: VERTEX_LOCATION });
+}
+
+export interface CompanyInfo {
   name?: string;
   aliases?: string[];
   vatId?: string;
@@ -64,7 +74,8 @@ async function fetchPageContent(url: string): Promise<string | null> {
 async function extractFromContent(
   model: ReturnType<VertexAI["getGenerativeModel"]>,
   content: string,
-  domain: string
+  domain: string,
+  userId?: string
 ): Promise<CompanyInfo | null> {
   try {
     const result = await model.generateContent({
@@ -101,6 +112,17 @@ If no company info found, return {}. Return ONLY the JSON, no explanation.`
       }],
     });
 
+    // Log token usage if userId provided
+    const usageMetadata = result.response.usageMetadata;
+    if (userId && usageMetadata) {
+      await logAIUsage(userId, {
+        function: "companyLookup",
+        model: "gemini-2.0-flash-001",
+        inputTokens: usageMetadata.promptTokenCount || 0,
+        outputTokens: usageMetadata.candidatesTokenCount || 0,
+      });
+    }
+
     const text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
@@ -124,14 +146,16 @@ function isComplete(info: CompanyInfo | null): boolean {
 async function searchByUrl(
   vertexAI: VertexAI,
   normalizedUrl: string,
-  domain: string
+  domain: string,
+  userId?: string
 ): Promise<CompanyInfo> {
   // Use model with Google Search grounding (snake_case for API)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const googleSearchTool = { google_search: {} } as any;
+  const modelName = "gemini-2.0-flash-001";
 
   const model = vertexAI.getGenerativeModel({
-    model: "gemini-2.0-flash-001",
+    model: modelName,
     tools: [googleSearchTool],
   });
 
@@ -170,6 +194,18 @@ Return ONLY the JSON, no explanation.`
     }],
   });
 
+  // Log token usage if userId provided
+  const usageMetadata = result.response.usageMetadata;
+  if (userId && usageMetadata) {
+    await logAIUsage(userId, {
+      function: "companyLookupSearch",
+      model: modelName,
+      inputTokens: usageMetadata.promptTokenCount || 0,
+      outputTokens: usageMetadata.candidatesTokenCount || 0,
+      metadata: { webSearchUsed: true },
+    });
+  }
+
   const text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
   const jsonMatch = text.trim().match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
@@ -181,17 +217,23 @@ Return ONLY the JSON, no explanation.`
   return info;
 }
 
-// Search for company by name using Google Search grounding
-async function searchByName(
+/**
+ * Search for company by name using Google Search grounding.
+ * Exported for use by other functions (e.g., matchFilePartner trigger).
+ * @param userId - Optional user ID for token usage tracking
+ */
+export async function searchByName(
   vertexAI: VertexAI,
-  companyName: string
+  companyName: string,
+  userId?: string
 ): Promise<CompanyInfo> {
   // Use model with Google Search grounding (snake_case for API)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const googleSearchTool = { google_search: {} } as any;
+  const modelName = "gemini-2.0-flash-001";
 
   const model = vertexAI.getGenerativeModel({
-    model: "gemini-2.0-flash-001",
+    model: modelName,
     tools: [googleSearchTool],
   });
 
@@ -232,6 +274,18 @@ Return ONLY the JSON, no explanation.`
     }],
   });
 
+  // Log token usage if userId provided
+  const usageMetadata = result.response.usageMetadata;
+  if (userId && usageMetadata) {
+    await logAIUsage(userId, {
+      function: "companyLookupSearch",
+      model: modelName,
+      inputTokens: usageMetadata.promptTokenCount || 0,
+      outputTokens: usageMetadata.candidatesTokenCount || 0,
+      metadata: { webSearchUsed: true },
+    });
+  }
+
   const text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
   const jsonMatch = text.trim().match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
@@ -253,6 +307,7 @@ export const lookupCompany = onCall<LookupCompanyRequest>(
   },
   async (request) => {
     const { url, name } = request.data;
+    const userId = request.auth?.uid;
 
     const projectId = getProjectId();
     const vertexAI = new VertexAI({ project: projectId, location: VERTEX_LOCATION });
@@ -262,7 +317,7 @@ export const lookupCompany = onCall<LookupCompanyRequest>(
     try {
       // Name-only search (uses Google Search grounding)
       if (name && typeof name === "string" && !url) {
-        return await searchByName(vertexAI, name.trim());
+        return await searchByName(vertexAI, name.trim(), userId);
       }
 
       // URL-based search
@@ -292,7 +347,7 @@ export const lookupCompany = onCall<LookupCompanyRequest>(
       for (const path of impressumPaths) {
         const content = await fetchPageContent(`${baseUrl}${path}`);
         if (content && content.length > 200) {
-          const info = await extractFromContent(extractionModel, content, domain);
+          const info = await extractFromContent(extractionModel, content, domain, userId);
           if (isComplete(info)) {
             return info;
           }
@@ -300,7 +355,7 @@ export const lookupCompany = onCall<LookupCompanyRequest>(
       }
 
       // Step 2: Fallback to Google Search grounding
-      return await searchByUrl(vertexAI, normalizedUrl, domain);
+      return await searchByUrl(vertexAI, normalizedUrl, domain, userId);
     } catch (error) {
       console.error("Company lookup error:", error);
 
@@ -314,5 +369,266 @@ export const lookupCompany = onCall<LookupCompanyRequest>(
 
       throw new HttpsError("internal", "Failed to lookup company");
     }
+  }
+);
+
+// ============================================================================
+// EU VIES VAT ID Lookup
+// ============================================================================
+
+/** EU member state country codes for VAT validation */
+const EU_COUNTRIES = [
+  "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "EL", "ES",
+  "FI", "FR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT",
+  "NL", "PL", "PT", "RO", "SE", "SI", "SK", "XI", // XI = Northern Ireland
+];
+
+interface ParsedVatId {
+  countryCode: string;
+  vatNumber: string;
+}
+
+/**
+ * Parse a VAT ID string into country code and number.
+ * Handles various formats: ATU12345678, AT U12345678, ATU 123 456 78, AT-U12345678
+ */
+export function parseVatId(vatId: string): ParsedVatId | null {
+  // Remove all whitespace and non-alphanumeric characters
+  const cleaned = vatId.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+  if (cleaned.length < 4) return null;
+
+  // Extract 2-letter country code prefix
+  const countryCode = cleaned.substring(0, 2);
+  const vatNumber = cleaned.substring(2);
+
+  // Validate country code is valid EU member state
+  if (!EU_COUNTRIES.includes(countryCode)) return null;
+  if (!vatNumber || vatNumber.length < 2) return null;
+
+  return { countryCode, vatNumber };
+}
+
+interface ViesResponse {
+  valid: boolean;
+  name?: string;
+  address?: string;
+  countryCode: string;
+  vatNumber: string;
+  requestDate: string;
+}
+
+interface ViesError {
+  code: string;
+  message: string;
+}
+
+/**
+ * Normalize VIES text from ALL CAPS to title case
+ */
+function normalizeViesText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .replace(/---+/g, "")
+    .trim();
+}
+
+/**
+ * Parse VIES XML response
+ */
+function parseViesResponse(xml: string): ViesResponse | ViesError {
+  // Check for SOAP Fault (errors like MS_MAX_CONCURRENT_REQ)
+  const faultMatch = xml.match(/<(?:\w+:)?faultstring>([^<]+)<\/(?:\w+:)?faultstring>/);
+  if (faultMatch) {
+    const faultCode = xml.match(/<(?:\w+:)?faultcode>([^<]+)<\/(?:\w+:)?faultcode>/)?.[1] || "UNKNOWN";
+    return { code: faultCode, message: faultMatch[1] };
+  }
+
+  // Parse successful response - handle namespace prefixes like ns2:, urn:, etc.
+  const extractValue = (tag: string): string | undefined => {
+    // Match with optional namespace prefix (e.g., <ns2:valid> or <valid>)
+    const match = xml.match(new RegExp(`<(?:\\w+:)?${tag}>([^<]*)</(?:\\w+:)?${tag}>`));
+    return match?.[1]?.trim() || undefined;
+  };
+
+  const valid = extractValue("valid") === "true";
+  const name = extractValue("name");
+  const address = extractValue("address");
+  const countryCode = extractValue("countryCode") || "";
+  const vatNumber = extractValue("vatNumber") || "";
+  const requestDate = extractValue("requestDate") || new Date().toISOString().split("T")[0];
+
+  // Clean up VIES quirks (all-caps, trailing ----)
+  const cleanName = name && name !== "---" ? normalizeViesText(name) : undefined;
+  const cleanAddress = address && address !== "---" ? normalizeViesText(address) : undefined;
+
+  return { valid, name: cleanName, address: cleanAddress, countryCode, vatNumber, requestDate };
+}
+
+/**
+ * Query the EU VIES SOAP API for VAT validation
+ */
+export async function queryViesApi(countryCode: string, vatNumber: string): Promise<ViesResponse | ViesError> {
+  const soapEnvelope = `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:urn="urn:ec.europa.eu:taxud:vies:services:checkVat:types">
+  <soapenv:Body>
+    <urn:checkVat>
+      <urn:countryCode>${countryCode}</urn:countryCode>
+      <urn:vatNumber>${vatNumber}</urn:vatNumber>
+    </urn:checkVat>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+
+  
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+  try {
+    const response = await fetch(
+      "https://ec.europa.eu/taxation_customs/vies/services/checkVatService",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/xml; charset=utf-8",
+          SOAPAction: "",
+        },
+        body: soapEnvelope,
+        signal: controller.signal,
+      }
+    );
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return { code: "HTTP_ERROR", message: `HTTP ${response.status}` };
+    }
+
+    const xml = await response.text();
+    return parseViesResponse(xml);
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === "AbortError") {
+      return { code: "TIMEOUT", message: "VIES API request timed out" };
+    }
+    return { code: "NETWORK_ERROR", message: String(error) };
+  }
+}
+
+/**
+ * Parse VIES address string into structured format
+ */
+export function parseViesAddress(
+  addressString: string | undefined,
+  countryCode: string
+): CompanyInfo["address"] | undefined {
+  if (!addressString) return undefined;
+
+  // VIES format varies by country, but common pattern is:
+  // "STREET NAME 123\nPOSTAL CITY" or "STREET 123, POSTAL CITY, COUNTRY"
+  const lines = addressString.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+
+  if (lines.length === 0) return undefined;
+
+  // Attempt to extract postal code and city from last line(s)
+  // Common EU postal codes: 4-6 digits, sometimes with letters (UK, NL)
+  const lastLine = lines[lines.length - 1];
+  const postalCityMatch = lastLine.match(/^(\d{4,6})\s+(.+)$/);
+
+  if (postalCityMatch) {
+    return {
+      street: lines.slice(0, -1).join(", ") || undefined,
+      postalCode: postalCityMatch[1],
+      city: postalCityMatch[2],
+      country: countryCode,
+    };
+  }
+
+  // If no postal code pattern found, return street only
+  return {
+    street: lines.join(", "),
+    country: countryCode,
+  };
+}
+
+interface LookupByVatIdRequest {
+  vatId: string;
+}
+
+interface LookupByVatIdResponse extends CompanyInfo {
+  viesValid?: boolean;
+  viesError?: string;
+}
+
+/**
+ * Look up company information by EU VAT ID using the VIES service.
+ * This is the official EU VAT validation service - results are authoritative.
+ */
+export const lookupByVatId = onCall<LookupByVatIdRequest>(
+  {
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 30,
+  },
+  async (request): Promise<LookupByVatIdResponse> => {
+    const { vatId } = request.data;
+
+    if (!vatId || typeof vatId !== "string") {
+      throw new HttpsError("invalid-argument", "VAT ID is required");
+    }
+
+    // Parse VAT ID
+    const parsed = parseVatId(vatId);
+    if (!parsed) {
+      throw new HttpsError("invalid-argument", "Invalid VAT ID format. Expected EU format like ATU12345678");
+    }
+
+    console.log(`[VIES] Looking up VAT ID: ${parsed.countryCode}${parsed.vatNumber}`);
+
+    // Query VIES API
+    const viesResult = await queryViesApi(parsed.countryCode, parsed.vatNumber);
+
+    // Handle VIES errors
+    if ("code" in viesResult) {
+      console.warn(`[VIES] API error: ${viesResult.code} - ${viesResult.message}`);
+
+      // Return partial info for known errors (still return the formatted VAT ID)
+      return {
+        vatId: `${parsed.countryCode}${parsed.vatNumber}`,
+        country: parsed.countryCode,
+        viesValid: false,
+        viesError: viesResult.message,
+      };
+    }
+
+    // VAT is invalid
+    if (!viesResult.valid) {
+      return {
+        vatId: `${parsed.countryCode}${parsed.vatNumber}`,
+        country: parsed.countryCode,
+        viesValid: false,
+        viesError: "VAT ID not valid according to VIES",
+      };
+    }
+
+    // VIES returned valid + data
+    const result: LookupByVatIdResponse = {
+      vatId: `${parsed.countryCode}${parsed.vatNumber}`,
+      country: parsed.countryCode,
+      viesValid: true,
+    };
+
+    if (viesResult.name) {
+      result.name = viesResult.name;
+    }
+
+    if (viesResult.address) {
+      result.address = parseViesAddress(viesResult.address, parsed.countryCode);
+    }
+
+    console.log(`[VIES] Found: name="${result.name || "none"}", country=${result.country}`);
+
+    return result;
   }
 );

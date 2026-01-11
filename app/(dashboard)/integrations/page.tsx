@@ -1,39 +1,41 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
+import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
-import { Mail, Plus, AlertCircle, Check, RefreshCw, Trash2, Loader2 } from "lucide-react";
+import {
+  Mail,
+  Plus,
+  AlertCircle,
+  Check,
+  Loader2,
+  FileCheck,
+  ChevronRight,
+  RefreshCw,
+  Pause,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
-import { useState } from "react";
+import {
+  useActiveSyncForIntegration,
+  useIntegrationFileStats,
+} from "@/hooks/use-integration-details";
 import { EmailIntegration } from "@/types/email-integration";
 
 function IntegrationsContent() {
+  const router = useRouter();
   const {
     integrations,
     loading,
     error,
     connectGmail,
-    disconnect,
     refresh,
   } = useEmailIntegrations();
 
   const [connecting, setConnecting] = useState(false);
-  const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
 
   const handleConnectGmail = async () => {
@@ -44,17 +46,6 @@ function IntegrationsContent() {
       // Error is handled by the hook
     } finally {
       setConnecting(false);
-    }
-  };
-
-  const handleDisconnect = async (integrationId: string) => {
-    setDisconnecting(integrationId);
-    try {
-      await disconnect(integrationId);
-    } catch {
-      // Error is handled by the hook
-    } finally {
-      setDisconnecting(null);
     }
   };
 
@@ -138,9 +129,8 @@ function IntegrationsContent() {
                   <GmailAccountCard
                     key={integration.id}
                     integration={integration}
-                    onDisconnect={() => handleDisconnect(integration.id)}
+                    onClick={() => router.push(`/integrations/${integration.id}`)}
                     onRefresh={() => handleRefresh(integration.id)}
-                    disconnecting={disconnecting === integration.id}
                     refreshing={refreshing === integration.id}
                   />
                 ))}
@@ -175,103 +165,157 @@ function IntegrationsContent() {
 
 interface GmailAccountCardProps {
   integration: EmailIntegration;
-  onDisconnect: () => void;
+  onClick: () => void;
   onRefresh: () => void;
-  disconnecting: boolean;
   refreshing: boolean;
 }
 
 function GmailAccountCard({
   integration,
-  onDisconnect,
+  onClick,
   onRefresh,
-  disconnecting,
   refreshing,
 }: GmailAccountCardProps) {
+  const activeSync = useActiveSyncForIntegration(integration.id);
+  const { stats, loading: statsLoading } = useIntegrationFileStats(integration.id);
+
   const needsReauth = integration.needsReauth;
-  const lastAccessed = integration.lastAccessedAt?.toDate();
   const tokenExpiry = integration.tokenExpiresAt?.toDate();
   const isExpired = tokenExpiry && tokenExpiry < new Date();
+  const isPaused = integration.isPaused;
+
+  // Sync status from integration
+  const lastSyncAt = integration.lastSyncAt?.toDate();
+  const lastSyncStatus = integration.lastSyncStatus;
+  const initialSyncComplete = integration.initialSyncComplete;
+  const initialSyncStartedAt = integration.initialSyncStartedAt?.toDate();
+
+  const isSyncingNow = activeSync.isActive || (!initialSyncComplete && initialSyncStartedAt);
+  const showReconnect = needsReauth || isExpired;
 
   return (
-    <div className="flex items-center justify-between p-4 rounded-lg border bg-card">
-      <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
-          <Mail className="h-5 w-5 text-muted-foreground" />
-        </div>
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{integration.email}</span>
-            {needsReauth || isExpired ? (
-              <Badge variant="destructive" className="text-xs">
-                <AlertCircle className="h-3 w-3 mr-1" />
-                Reconnect Required
-              </Badge>
-            ) : (
-              <Badge variant="secondary" className="text-xs">
-                <Check className="h-3 w-3 mr-1" />
-                Connected
-              </Badge>
-            )}
+    <div
+      className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors"
+      onClick={onClick}
+    >
+      <div className="flex items-center justify-between">
+        {/* Left: Email and status */}
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+            <Mail className="h-5 w-5 text-muted-foreground" />
           </div>
-          <div className="text-xs text-muted-foreground">
-            {lastAccessed ? (
-              <>Last used {formatDistanceToNow(lastAccessed, { addSuffix: true })}</>
-            ) : (
-              <>Connected {formatDistanceToNow(integration.createdAt.toDate(), { addSuffix: true })}</>
-            )}
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{integration.email}</span>
+              {showReconnect ? (
+                <Badge variant="destructive" className="text-xs">
+                  <AlertCircle className="h-3 w-3 mr-1" />
+                  Reconnect Required
+                </Badge>
+              ) : isPaused ? (
+                <Badge variant="secondary" className="text-xs border-amber-500 text-amber-600">
+                  <Pause className="h-3 w-3 mr-1" />
+                  Paused
+                </Badge>
+              ) : isSyncingNow ? (
+                <Badge variant="secondary" className="text-xs border-blue-500 text-blue-600">
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  Syncing
+                </Badge>
+              ) : (
+                <Badge variant="secondary" className="text-xs">
+                  <Check className="h-3 w-3 mr-1" />
+                  Connected
+                </Badge>
+              )}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Connected {formatDistanceToNow(integration.createdAt.toDate(), { addSuffix: true })}
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="flex items-center gap-2">
-        {(needsReauth || isExpired) && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onRefresh}
-            disabled={refreshing}
-          >
-            {refreshing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            <span className="ml-2">Reconnect</span>
-          </Button>
-        )}
-
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
+        {/* Right: Stats, sync status, reconnect button, chevron */}
+        <div className="flex items-center gap-4">
+          {/* Reconnect Button */}
+          {showReconnect && (
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
-              className="text-muted-foreground hover:text-destructive"
-              disabled={disconnecting}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRefresh();
+              }}
+              disabled={refreshing}
             >
-              {disconnecting ? (
+              {refreshing ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Trash2 className="h-4 w-4" />
+                <RefreshCw className="h-4 w-4" />
               )}
+              <span className="ml-2">Reconnect</span>
             </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Disconnect Gmail Account?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This will disconnect <strong>{integration.email}</strong> from TaxStudio.
-                You can reconnect it anytime. Files already imported will remain.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={onDisconnect}>
-                Disconnect
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+          )}
+
+          {/* Stats and sync status */}
+          {!showReconnect && (
+            <div className="text-right">
+              {/* Active sync */}
+              {isSyncingNow ? (
+                <div className="flex items-center gap-2 text-sm text-blue-600">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>
+                    Syncing...
+                    {activeSync.filesCreated > 0 && ` (${activeSync.filesCreated} files)`}
+                  </span>
+                </div>
+              ) : (
+                <>
+                  {/* Stats row */}
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {statsLoading ? "..." : stats?.totalFilesImported || 0}
+                      </span> imported
+                    </span>
+                    <span className="text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {statsLoading ? "..." : stats?.filesExtracted || 0}
+                      </span> extracted
+                    </span>
+                    <span className="text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {statsLoading ? "..." : stats?.filesMatched || 0}
+                      </span> matched
+                    </span>
+                    {(stats?.filesWithErrors || 0) > 0 && (
+                      <span className="text-destructive">
+                        <span className="font-medium">
+                          {stats?.filesWithErrors || 0}
+                        </span> errors
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Last synced */}
+                  {initialSyncComplete && lastSyncAt && (
+                    <div className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground mt-1">
+                      <FileCheck className="h-3 w-3" />
+                      <span>
+                        Last synced {formatDistanceToNow(lastSyncAt, { addSuffix: true })}
+                        {lastSyncStatus === "failed" && (
+                          <span className="text-destructive ml-1">(failed)</span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </div>
       </div>
     </div>
   );

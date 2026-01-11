@@ -2,19 +2,22 @@
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { X, Building2, Globe, CreditCard, FileText, Pencil, Trash2, ExternalLink, Receipt, Sparkles, ChevronRight, Ban } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { X, Building2, Globe, CreditCard, FileText, Pencil, Trash2, ExternalLink, Receipt, Sparkles, ChevronRight, Ban, Mail, File, UserCheck, Loader2, Check, AlertCircle } from "lucide-react";
 import { UserPartner, PartnerFormData } from "@/types/partner";
 import { Transaction } from "@/types/transaction";
+import { TaxFile } from "@/types/file";
 import { usePartners } from "@/hooks/use-partners";
 import { formatIban } from "@/lib/import/deduplication";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { AddPartnerDialog } from "./add-partner-dialog";
 import { EmailPatternsSection } from "./email-patterns-section";
 import { collection, query, where, orderBy, limit, getDocs, documentId } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { format } from "date-fns";
 import Link from "next/link";
-import { removeEmailPatternFromPartner } from "@/lib/operations";
+import { removeEmailPatternFromPartner, mergePartnerIntoUserData, reextractFilesForPartner, unmarkPartnerAsMe } from "@/lib/operations";
+import { useUserData } from "@/hooks/use-user-data";
 
 const MOCK_USER_ID = "dev-user-123";
 
@@ -23,14 +26,45 @@ interface PartnerDetailPanelProps {
   onClose: () => void;
 }
 
+interface FeedbackMessage {
+  type: "success" | "info" | "error";
+  text: string;
+}
+
 export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps) {
   const { updatePartner, deletePartner } = usePartners();
+  const { isPartnerMarkedAsMe } = useUserData();
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isMarkingAsMe, setIsMarkingAsMe] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackMessage | null>(null);
+
+  // Check if this partner is marked as "my company"
+  const isMarkedAsMe = isPartnerMarkedAsMe(partner.id);
+
+  // Create operations context
+  const ctx = useMemo(() => ({ db, userId: MOCK_USER_ID }), []);
+
+  // Clear feedback after 4 seconds
+  useEffect(() => {
+    if (feedback) {
+      const timer = setTimeout(() => setFeedback(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [feedback]);
+
+  // Transaction state
   const [manualTransactions, setManualTransactions] = useState<Transaction[]>([]);
   const [autoTransactions, setAutoTransactions] = useState<Transaction[]>([]);
   const [manualRemovalTransactions, setManualRemovalTransactions] = useState<Transaction[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
+  const [totalTransactionCount, setTotalTransactionCount] = useState(0);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(true);
+
+  // File state
+  const [manualFiles, setManualFiles] = useState<TaxFile[]>([]);
+  const [autoFiles, setAutoFiles] = useState<TaxFile[]>([]);
+  const [manualRemovalFiles, setManualRemovalFiles] = useState<TaxFile[]>([]);
+  const [totalFileCount, setTotalFileCount] = useState(0);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(true);
 
   // Fetch connected transactions, separated by match type
   useEffect(() => {
@@ -57,7 +91,7 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
 
         setManualTransactions(manual.slice(0, 10));
         setAutoTransactions(auto.slice(0, 10));
-        setTotalCount(transactions.length);
+        setTotalTransactionCount(transactions.length);
 
         // Fetch manual removal transactions (to show date and amount)
         if (partner.manualRemovals && partner.manualRemovals.length > 0) {
@@ -91,6 +125,66 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
     fetchTransactions();
   }, [partner.id, partner.manualRemovals]);
 
+  // Fetch connected files, separated by match type
+  useEffect(() => {
+    async function fetchFiles() {
+      setIsLoadingFiles(true);
+      try {
+        // Fetch all connected files
+        const q = query(
+          collection(db, "files"),
+          where("userId", "==", MOCK_USER_ID),
+          where("partnerId", "==", partner.id),
+          orderBy("uploadedAt", "desc"),
+          limit(50)
+        );
+        const snapshot = await getDocs(q);
+        const files = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as TaxFile[];
+
+        // Separate manual vs auto/suggestion connections
+        const manual = files.filter((f) => f.partnerMatchedBy === "manual");
+        const auto = files.filter((f) => f.partnerMatchedBy !== "manual");
+
+        setManualFiles(manual.slice(0, 10));
+        setAutoFiles(auto.slice(0, 10));
+        setTotalFileCount(files.length);
+
+        // Fetch manual file removal files (to show filename)
+        if (partner.manualFileRemovals && partner.manualFileRemovals.length > 0) {
+          const uniqueFileIds = [...new Set(partner.manualFileRemovals.map((r) => r.fileId))];
+          const batchSize = 30;
+          const removalFiles: TaxFile[] = [];
+
+          for (let i = 0; i < uniqueFileIds.length && i < 30; i += batchSize) {
+            const batch = uniqueFileIds.slice(i, i + batchSize);
+            const removalQuery = query(
+              collection(db, "files"),
+              where("userId", "==", MOCK_USER_ID),
+              where(documentId(), "in", batch)
+            );
+            const removalSnapshot = await getDocs(removalQuery);
+            removalFiles.push(
+              ...(removalSnapshot.docs.map((doc) => ({
+                id: doc.id,
+                ...doc.data(),
+              })) as TaxFile[])
+            );
+          }
+
+          setManualRemovalFiles(removalFiles);
+        }
+      } catch (error) {
+        console.error("Failed to fetch files:", error);
+      } finally {
+        setIsLoadingFiles(false);
+      }
+    }
+    fetchFiles();
+  }, [partner.id, partner.manualFileRemovals]);
+
   const handleEdit = async (data: PartnerFormData) => {
     await updatePartner(partner.id, data);
   };
@@ -103,17 +197,94 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
   };
 
   const handleRemoveEmailPattern = async (patternIndex: number) => {
-    const ctx = { db, userId: MOCK_USER_ID };
     await removeEmailPatternFromPartner(ctx, partner.id, patternIndex);
+  };
+
+  const handleMarkAsMe = async () => {
+    setIsMarkingAsMe(true);
+    setFeedback(null);
+    try {
+      // 1. Add partner info to user data
+      const result = await mergePartnerIntoUserData(ctx, {
+        partnerId: partner.id,
+        name: partner.name,
+        vatId: partner.vatId,
+        ibans: partner.ibans,
+      });
+
+      // 2. Re-extract all files connected to this partner
+      // This will recalculate counterparties now that we know this partner is "me"
+      const reextractResult = await reextractFilesForPartner(ctx, partner.id);
+
+      // Build description of what was added
+      const added: string[] = [];
+      if (result.aliasAdded) added.push("name");
+      if (result.vatIdAdded) added.push("VAT ID");
+      if (result.ibansAdded > 0) added.push(`${result.ibansAdded} IBAN${result.ibansAdded > 1 ? "s" : ""}`);
+
+      if (added.length > 0 || reextractResult.queuedCount > 0) {
+        const parts: string[] = [];
+        if (added.length > 0) {
+          parts.push(`Added ${added.join(", ")} to your identity.`);
+        }
+        if (reextractResult.queuedCount > 0) {
+          parts.push(`Re-extracting ${reextractResult.queuedCount} file${reextractResult.queuedCount > 1 ? "s" : ""}.`);
+        }
+        setFeedback({
+          type: "success",
+          text: parts.join(" "),
+        });
+      } else {
+        setFeedback({
+          type: "info",
+          text: "This partner's info is already in your user data. No files to update.",
+        });
+      }
+    } catch (error) {
+      console.error("Failed to mark partner as me:", error);
+      setFeedback({
+        type: "error",
+        text: "Failed to add partner to your identity.",
+      });
+    } finally {
+      setIsMarkingAsMe(false);
+    }
+  };
+
+  const handleUnmarkAsMe = async () => {
+    setIsMarkingAsMe(true);
+    setFeedback(null);
+    try {
+      const removed = await unmarkPartnerAsMe(ctx, partner.id);
+      if (removed) {
+        setFeedback({
+          type: "success",
+          text: "Removed from your companies.",
+        });
+      }
+    } catch (error) {
+      console.error("Failed to unmark partner:", error);
+      setFeedback({
+        type: "error",
+        text: "Failed to remove from your companies.",
+      });
+    } finally {
+      setIsMarkingAsMe(false);
+    }
   };
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-        <div className="flex items-center gap-2 min-w-0">
-          <Building2 className="h-5 w-5 text-muted-foreground flex-shrink-0" />
-          <h2 className="font-semibold truncate">{partner.name}</h2>
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+            <h2 className="font-semibold truncate">{partner.name}</h2>
+          </div>
+          {isMarkedAsMe && (
+            <span className="text-xs text-primary ml-7">My Company</span>
+          )}
         </div>
         <Button variant="ghost" size="icon" onClick={onClose} className="flex-shrink-0">
           <X className="h-4 w-4" />
@@ -224,192 +395,535 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
           </div>
         )}
 
-        {/* Learned Patterns */}
-        {partner.learnedPatterns && partner.learnedPatterns.length > 0 && (
-          <div>
-            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-              <Sparkles className="h-3 w-3 inline mr-1" />
-              Learned Patterns
-            </h3>
-            <div className="space-y-1.5">
-              {partner.learnedPatterns.map((pattern, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <code className="text-xs bg-muted px-2 py-1 rounded font-mono flex-1 truncate">
-                    {pattern.pattern}
-                  </code>
-                  <Badge variant="secondary" className="text-xs shrink-0">
-                    {pattern.confidence}%
-                  </Badge>
-                  <span className="text-xs text-muted-foreground shrink-0">
-                    {pattern.field}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Email Search Patterns */}
         <EmailPatternsSection
           partner={partner}
           onRemovePattern={handleRemoveEmailPattern}
         />
 
-        {/* Connected Transactions */}
-        <div>
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-            <Receipt className="h-3 w-3 inline mr-1" />
-            Connected Transactions
-            {!isLoadingTransactions && (
-              <span className="ml-1 text-foreground">({totalCount})</span>
-            )}
-          </h3>
-          {isLoadingTransactions ? (
-            <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : manualTransactions.length === 0 && autoTransactions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No transactions connected yet</p>
-          ) : (
-            <div className="space-y-1">
-              {/* Manual connections */}
-              {manualTransactions.length > 0 && (
-                <>
-                  <p className="text-xs text-muted-foreground font-medium mt-2 mb-1">
-                    Manually connected ({manualTransactions.length})
-                  </p>
-                  {manualTransactions.map((tx) => (
-                    <Link
-                      key={tx.id}
-                      href={`/transactions?id=${tx.id}`}
-                      className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm truncate">{tx.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {tx.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
-                          {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
-                        </span>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </div>
-                    </Link>
-                  ))}
-                </>
-              )}
+        {/* Tabbed Interface for Files and Transactions */}
+        <Tabs defaultValue="transactions" className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="transactions" className="flex items-center gap-1.5">
+              <Receipt className="h-3.5 w-3.5" />
+              Transactions ({totalTransactionCount})
+            </TabsTrigger>
+            <TabsTrigger value="files" className="flex items-center gap-1.5">
+              <File className="h-3.5 w-3.5" />
+              Files ({totalFileCount})
+            </TabsTrigger>
+          </TabsList>
 
-              {/* Auto-matched connections */}
-              {autoTransactions.length > 0 && (
-                <>
-                  <p className="text-xs text-muted-foreground font-medium mt-3 mb-1 pt-2 border-t">
-                    Auto-matched ({autoTransactions.length})
-                  </p>
-                  {autoTransactions.map((tx) => (
-                    <Link
-                      key={tx.id}
-                      href={`/transactions?id=${tx.id}`}
-                      className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm truncate">{tx.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {tx.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
-                          {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
-                        </span>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </div>
-                    </Link>
-                  ))}
-                </>
-              )}
-
-              {totalCount > 20 && (
-                <Link
-                  href={`/transactions?partnerId=${partner.id}`}
-                  className="text-xs text-primary hover:underline block mt-2"
-                >
-                  View all {totalCount} transactions
-                </Link>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Manual Removals (False Positives) */}
-        {partner.manualRemovals && partner.manualRemovals.length > 0 && (() => {
-          // Deduplicate by transactionId (can have duplicates from repeated remove attempts)
-          const uniqueRemovals = partner.manualRemovals.filter(
-            (removal, index, self) =>
-              index === self.findIndex((r) => r.transactionId === removal.transactionId)
-          );
-          return (
-            <div>
-              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                <Ban className="h-3 w-3 inline mr-1" />
-                Manual Removals
-                <span className="ml-1 text-foreground">({uniqueRemovals.length})</span>
+          {/* Transactions Tab */}
+          <TabsContent value="transactions" className="space-y-4 mt-4">
+            {/* Transaction Matching Criteria */}
+            <div className="p-3 bg-muted/50 rounded-lg space-y-3">
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                <Sparkles className="h-3 w-3" />
+                Transaction Matching Criteria
               </h3>
-              <p className="text-xs text-muted-foreground mb-2">
-                Transactions you removed from this partner. Used to improve pattern learning.
-              </p>
-              <div className="space-y-1">
-                {uniqueRemovals.slice(0, 10).map((removal) => {
-                  // Find the actual transaction data for date and amount
-                  const tx = manualRemovalTransactions.find(t => t.id === removal.transactionId);
-                  const transactionId = tx?.id || removal.transactionId;
-                  return (
-                    <Link
-                      key={transactionId}
-                      href={`/transactions?id=${transactionId}`}
-                      className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm truncate">{tx?.name || removal.name || removal.partner || "Unknown"}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {tx?.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
-                        </p>
+
+              {/* IBANs for matching */}
+              {partner.ibans.length > 0 && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    <CreditCard className="h-3 w-3 inline mr-1" />
+                    IBAN Match <Badge variant="secondary" className="text-[10px] ml-1">100%</Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {partner.ibans.map((iban, idx) => (
+                      <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                        {formatIban(iban)}
+                      </code>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Website for matching */}
+              {partner.website && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    <Globe className="h-3 w-3 inline mr-1" />
+                    Website Match <Badge variant="secondary" className="text-[10px] ml-1">90%</Badge>
+                  </div>
+                  <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                    *{partner.website}*
+                  </code>
+                </div>
+              )}
+
+              {/* Glob patterns in aliases */}
+              {partner.aliases.some(a => a.includes("*")) && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    Manual Patterns <Badge variant="secondary" className="text-[10px] ml-1">90%</Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {partner.aliases.filter(a => a.includes("*")).map((alias, idx) => (
+                      <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                        {alias}
+                      </code>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Learned patterns (globs from manual assignments/removals) */}
+              {partner.learnedPatterns && partner.learnedPatterns.length > 0 && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    Learned Globs
+                  </div>
+                  <div className="space-y-1">
+                    {partner.learnedPatterns.map((pattern, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5">
+                        <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono flex-1 truncate">
+                          {pattern.pattern}
+                        </code>
+                        <Badge variant="secondary" className="text-[10px]">
+                          {pattern.confidence}%
+                        </Badge>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {tx && (
-                          <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
-                            {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
-                          </span>
-                        )}
-                        <X className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                    </Link>
-                  );
-                })}
-                {uniqueRemovals.length > 10 && (
-                  <p className="text-xs text-muted-foreground mt-2">
-                    +{uniqueRemovals.length - 10} more
-                  </p>
-                )}
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Name/Aliases for fuzzy matching */}
+              <div>
+                <div className="text-xs text-muted-foreground mb-1">
+                  Name Match <Badge variant="outline" className="text-[10px] ml-1">60-90%</Badge>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                    {partner.name}
+                  </code>
+                  {partner.aliases.filter(a => !a.includes("*")).map((alias, idx) => (
+                    <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                      {alias}
+                    </code>
+                  ))}
+                </div>
               </div>
             </div>
-          );
-        })()}
+
+            {/* Connected Transactions Section */}
+            <div>
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Connected Transactions
+              </h3>
+              {isLoadingTransactions ? (
+                <p className="text-sm text-muted-foreground">Loading...</p>
+              ) : manualTransactions.length === 0 && autoTransactions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No transactions connected yet</p>
+              ) : (
+                <div className="space-y-1">
+                  {/* Manual connections */}
+                  {manualTransactions.length > 0 && (
+                    <>
+                      <p className="text-xs text-muted-foreground font-medium mt-2 mb-1">
+                        Manually connected ({manualTransactions.length})
+                      </p>
+                      {manualTransactions.map((tx) => (
+                        <Link
+                          key={tx.id}
+                          href={`/transactions?id=${tx.id}`}
+                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm truncate">{tx.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {tx.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
+                              {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
+                            </span>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        </Link>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Auto-matched connections */}
+                  {autoTransactions.length > 0 && (
+                    <>
+                      <p className="text-xs text-muted-foreground font-medium mt-3 mb-1 pt-2 border-t">
+                        Auto-matched ({autoTransactions.length})
+                      </p>
+                      {autoTransactions.map((tx) => (
+                        <Link
+                          key={tx.id}
+                          href={`/transactions?id=${tx.id}`}
+                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm truncate">{tx.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {tx.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
+                              {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
+                            </span>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        </Link>
+                      ))}
+                    </>
+                  )}
+
+                  {totalTransactionCount > 20 && (
+                    <Link
+                      href={`/transactions?partnerId=${partner.id}`}
+                      className="text-xs text-primary hover:underline block mt-2"
+                    >
+                      View all {totalTransactionCount} transactions
+                    </Link>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Manual Removals Section for Transactions */}
+            {partner.manualRemovals && partner.manualRemovals.length > 0 && (() => {
+              const uniqueRemovals = partner.manualRemovals.filter(
+                (removal, index, self) =>
+                  index === self.findIndex((r) => r.transactionId === removal.transactionId)
+              );
+              return (
+                <div>
+                  <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                    <Ban className="h-3 w-3 inline mr-1" />
+                    Manual Removals
+                    <span className="ml-1 text-foreground">({uniqueRemovals.length})</span>
+                  </h3>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Transactions you removed from this partner. Used to improve pattern learning.
+                  </p>
+                  <div className="space-y-1">
+                    {uniqueRemovals.slice(0, 10).map((removal) => {
+                      const tx = manualRemovalTransactions.find((t) => t.id === removal.transactionId);
+                      const transactionId = tx?.id || removal.transactionId;
+                      return (
+                        <Link
+                          key={transactionId}
+                          href={`/transactions?id=${transactionId}`}
+                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm truncate">{tx?.name || removal.name || removal.partner || "Unknown"}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {tx?.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {tx && (
+                              <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
+                                {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
+                              </span>
+                            )}
+                            <X className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                        </Link>
+                      );
+                    })}
+                    {uniqueRemovals.length > 10 && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        +{uniqueRemovals.length - 10} more
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </TabsContent>
+
+          {/* Files Tab */}
+          <TabsContent value="files" className="space-y-4 mt-4">
+            {/* File Matching Criteria */}
+            <div className="p-3 bg-muted/50 rounded-lg space-y-3">
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                <File className="h-3 w-3" />
+                File Matching Criteria
+              </h3>
+
+              {/* IBANs for matching (extracted from invoices) */}
+              {partner.ibans.length > 0 && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    <CreditCard className="h-3 w-3 inline mr-1" />
+                    IBAN Match <Badge variant="secondary" className="text-[10px] ml-1">100%</Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {partner.ibans.map((iban, idx) => (
+                      <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                        {formatIban(iban)}
+                      </code>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* VAT ID for matching */}
+              {partner.vatId && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    <FileText className="h-3 w-3 inline mr-1" />
+                    VAT ID Match <Badge variant="secondary" className="text-[10px] ml-1">95%</Badge>
+                  </div>
+                  <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                    {partner.vatId}
+                  </code>
+                </div>
+              )}
+
+              {/* Email Domains (learned from Gmail files) */}
+              {partner.emailDomains && partner.emailDomains.length > 0 && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    <Mail className="h-3 w-3 inline mr-1" />
+                    Email Domain Match <Badge variant="secondary" className="text-[10px] ml-1">90%</Badge>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mb-1 italic">
+                    Learned from matched Gmail invoices
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {partner.emailDomains.map((domain, idx) => (
+                      <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                        @{domain}
+                      </code>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Website for matching */}
+              {partner.website && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    <Globe className="h-3 w-3 inline mr-1" />
+                    Website/Domain Match <Badge variant="secondary" className="text-[10px] ml-1">90%</Badge>
+                  </div>
+                  <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                    {partner.website}
+                  </code>
+                </div>
+              )}
+
+              {/* Name/Aliases for fuzzy matching on extractedPartner */}
+              <div>
+                <div className="text-xs text-muted-foreground mb-1">
+                  Extracted Partner Name Match <Badge variant="outline" className="text-[10px] ml-1">60-90%</Badge>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                    {partner.name}
+                  </code>
+                  {partner.aliases.filter(a => !a.includes("*")).map((alias, idx) => (
+                    <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                      {alias}
+                    </code>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Connected Files Section */}
+            <div>
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Connected Files
+              </h3>
+              {isLoadingFiles ? (
+                <p className="text-sm text-muted-foreground">Loading...</p>
+              ) : manualFiles.length === 0 && autoFiles.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No files connected yet</p>
+              ) : (
+                <div className="space-y-1">
+                  {/* Manual connections */}
+                  {manualFiles.length > 0 && (
+                    <>
+                      <p className="text-xs text-muted-foreground font-medium mt-2 mb-1">
+                        Manually connected ({manualFiles.length})
+                      </p>
+                      {manualFiles.map((file) => (
+                        <Link
+                          key={file.id}
+                          href={`/files?id=${file.id}`}
+                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm truncate">{file.fileName}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {file.uploadedAt?.toDate ? format(file.uploadedAt.toDate(), "MMM d, yyyy") : ""}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {file.extractedAmount && (
+                              <span className="text-sm font-medium tabular-nums">
+                                {new Intl.NumberFormat("de-DE", {
+                                  style: "currency",
+                                  currency: file.extractedCurrency || "EUR",
+                                }).format(file.extractedAmount / 100)}
+                              </span>
+                            )}
+                            <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        </Link>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Auto-matched files */}
+                  {autoFiles.length > 0 && (
+                    <>
+                      <p className="text-xs text-muted-foreground font-medium mt-3 mb-1 pt-2 border-t">
+                        Auto-matched ({autoFiles.length})
+                      </p>
+                      {autoFiles.map((file) => (
+                        <Link
+                          key={file.id}
+                          href={`/files?id=${file.id}`}
+                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm truncate">{file.fileName}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {file.uploadedAt?.toDate ? format(file.uploadedAt.toDate(), "MMM d, yyyy") : ""}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {file.extractedAmount && (
+                              <span className="text-sm font-medium tabular-nums">
+                                {new Intl.NumberFormat("de-DE", {
+                                  style: "currency",
+                                  currency: file.extractedCurrency || "EUR",
+                                }).format(file.extractedAmount / 100)}
+                              </span>
+                            )}
+                            <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        </Link>
+                      ))}
+                    </>
+                  )}
+
+                  {totalFileCount > 20 && (
+                    <Link
+                      href={`/files?partnerId=${partner.id}`}
+                      className="text-xs text-primary hover:underline block mt-2"
+                    >
+                      View all {totalFileCount} files
+                    </Link>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Manual File Removals Section */}
+            {partner.manualFileRemovals && partner.manualFileRemovals.length > 0 && (() => {
+              const uniqueRemovals = partner.manualFileRemovals.filter(
+                (removal, index, self) =>
+                  index === self.findIndex((r) => r.fileId === removal.fileId)
+              );
+              return (
+                <div>
+                  <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                    <Ban className="h-3 w-3 inline mr-1" />
+                    Manual Removals
+                    <span className="ml-1 text-foreground">({uniqueRemovals.length})</span>
+                  </h3>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Files you removed from this partner. Used to improve file matching.
+                  </p>
+                  <div className="space-y-1">
+                    {uniqueRemovals.slice(0, 10).map((removal) => {
+                      const file = manualRemovalFiles.find((f) => f.id === removal.fileId);
+                      return (
+                        <Link
+                          key={removal.fileId}
+                          href={`/files?id=${removal.fileId}`}
+                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm truncate">{file?.fileName || removal.fileName || "Unknown file"}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {file?.uploadedAt?.toDate ? format(file.uploadedAt.toDate(), "MMM d, yyyy") : ""}
+                            </p>
+                          </div>
+                          <X className="h-4 w-4 text-muted-foreground" />
+                        </Link>
+                      );
+                    })}
+                    {uniqueRemovals.length > 10 && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        +{uniqueRemovals.length - 10} more
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Footer Actions */}
-      <div className="p-4 border-t flex gap-2">
+      <div className="p-4 border-t space-y-2">
+        {/* Feedback message */}
+        {feedback && (
+          <div
+            className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm ${
+              feedback.type === "success"
+                ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300"
+                : feedback.type === "error"
+                ? "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300"
+                : "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+            }`}
+          >
+            {feedback.type === "success" ? (
+              <Check className="h-4 w-4 flex-shrink-0" />
+            ) : feedback.type === "error" ? (
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            ) : (
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            )}
+            <span>{feedback.text}</span>
+          </div>
+        )}
+        {/* Mark as Me / Unmark button */}
         <Button
-          variant="outline"
-          className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10"
-          onClick={handleDelete}
+          variant={isMarkedAsMe ? "secondary" : "outline"}
+          className="w-full"
+          onClick={isMarkedAsMe ? handleUnmarkAsMe : handleMarkAsMe}
+          disabled={isMarkingAsMe}
         >
-          <Trash2 className="h-4 w-4 mr-2" />
-          Delete
+          {isMarkingAsMe ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <UserCheck className="h-4 w-4 mr-2" />
+          )}
+          {isMarkedAsMe ? "Remove from my companies" : "This is my company"}
         </Button>
-        <Button variant="outline" className="flex-1" onClick={() => setIsEditDialogOpen(true)}>
-          <Pencil className="h-4 w-4 mr-2" />
-          Edit
-        </Button>
+        {/* Edit and Delete buttons */}
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10"
+            onClick={handleDelete}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete
+          </Button>
+          <Button variant="outline" className="flex-1" onClick={() => setIsEditDialogOpen(true)}>
+            <Pencil className="h-4 w-4 mr-2" />
+            Edit
+          </Button>
+        </div>
       </div>
 
       {/* Edit Dialog */}

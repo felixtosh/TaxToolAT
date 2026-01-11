@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { forwardRef, useImperativeHandle, useDeferredValue } from "react";
+import { forwardRef, useImperativeHandle } from "react";
 import {
   ColumnFiltersState,
   SortingState,
@@ -15,8 +15,9 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ResizableDataTableProps, DataTableHandle, DataTableSection } from "./types";
+import { ResizableDataTableProps, DataTableHandle, DataTableSection, RowClickModifiers } from "./types";
 import { ResizeHandle } from "./resize-handle";
 import { VirtualRow } from "./virtual-row";
 
@@ -24,11 +25,13 @@ const DEFAULT_MIN_COLUMN_WIDTH = 60;
 const DEFAULT_ESTIMATE_ROW_SIZE = 64;
 const DEFAULT_SECTION_HEADER_HEIGHT = 48;
 const DEFAULT_OVERSCAN = 10;
+const HEADER_HEIGHT = 56; // h-14 = 3.5rem = 56px
+const SCROLL_RENDER_DELAY = 150;
 
 /**
- * Virtual list item - either a section header or a data row
+ * Data table item - either a section header or a data row
  */
-type VirtualItem<TData> =
+type DataTableItem<TData> =
   | { type: "header"; sectionId: string; title: React.ReactNode; className?: string }
   | { type: "row"; data: TData; sectionId: string; rowClassName?: string };
 
@@ -47,12 +50,18 @@ function ResizableDataTableInner<TData extends { id: string }>(
     sectionHeaderHeight = DEFAULT_SECTION_HEADER_HEIGHT,
     overscan = DEFAULT_OVERSCAN,
     emptyMessage = "No data found.",
+    autoScrollToSelected = true,
+    initialSorting = [],
+    onSortingChange,
+    enableMultiSelect = false,
+    selectedRowIds,
+    onSelectionChange,
   }: ResizableDataTableProps<TData>,
   ref: React.ForwardedRef<DataTableHandle>
 ) {
-  // Build virtual items list from sections or flat data
-  const { virtualItems, flatData, itemToRowIndex } = React.useMemo(() => {
-    const items: VirtualItem<TData>[] = [];
+  // Build table items list from sections or flat data
+  const { tableItems, flatData, itemToRowIndex } = React.useMemo(() => {
+    const items: DataTableItem<TData>[] = [];
     const allData: TData[] = [];
     const indexMap = new Map<number, number>(); // virtualIndex -> rowIndex
 
@@ -89,9 +98,10 @@ function ResizableDataTableInner<TData extends { id: string }>(
       });
     }
 
-    return { virtualItems: items, flatData: allData, itemToRowIndex: indexMap };
+    return { tableItems: items, flatData: allData, itemToRowIndex: indexMap };
   }, [sections, data]);
-  const [sorting, setSorting] = React.useState<SortingState>([]);
+  const [sorting, setSorting] = React.useState<SortingState>(initialSorting);
+  const [isSorting, setIsSorting] = React.useState(false);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
     []
   );
@@ -115,7 +125,17 @@ function ResizableDataTableInner<TData extends { id: string }>(
       size: 150,
     },
     getCoreRowModel: getCoreRowModel(),
-    onSortingChange: setSorting,
+    onSortingChange: (updater) => {
+      setIsSorting(true);
+      const newSorting = typeof updater === "function" ? updater(sorting) : updater;
+      setSorting(newSorting);
+      onSortingChange?.(newSorting, true);
+      // Reset sorting indicator after a short delay (data is already sorted synchronously)
+      requestAnimationFrame(() => {
+        setIsSorting(false);
+        onSortingChange?.(newSorting, false);
+      });
+    },
     getSortedRowModel: getSortedRowModel(),
     onColumnFiltersChange: setColumnFilters,
     getFilteredRowModel: getFilteredRowModel(),
@@ -157,18 +177,96 @@ function ResizableDataTableInner<TData extends { id: string }>(
     return map;
   }, [rows]);
 
+  // Build display items from sorted rows (for flat data) or sections
+  // This ensures the virtualizer shows items in sorted order
+  const displayItems = React.useMemo(() => {
+    const items: DataTableItem<TData>[] = [];
+
+    if (sections && sections.length > 0) {
+      // For sectioned data, keep original section order but sort data within each
+      sections.forEach((section) => {
+        const sectionDataInSortedOrder = rows
+          .filter((r) => section.data.some((d) => d.id === r.original.id))
+          .map((r) => r.original);
+
+        if (sectionDataInSortedOrder.length > 0) {
+          items.push({
+            type: "header",
+            sectionId: section.id,
+            title: section.title,
+            className: section.headerClassName,
+          });
+          sectionDataInSortedOrder.forEach((item) => {
+            items.push({
+              type: "row",
+              data: item,
+              sectionId: section.id,
+              rowClassName: section.rowClassName,
+            });
+          });
+        }
+      });
+    } else {
+      // For flat data, use sorted rows directly
+      rows.forEach((row) => {
+        items.push({ type: "row", data: row.original, sectionId: "default" });
+      });
+    }
+
+    return items;
+  }, [rows, sections]);
+
+  // Multi-select: track last selected ROW ID for Shift+click range selection
+  // We store the ID (not index) so it stays valid when sorting changes
+  const [lastSelectedRowId, setLastSelectedRowId] = React.useState<string | null>(null);
+
+  // Multi-select: build a map from row id to display index for efficient lookups
+  const rowIdToIndexMap = React.useMemo(() => {
+    const map = new Map<string, number>();
+    displayItems.forEach((item, index) => {
+      if (item.type === "row") {
+        map.set(item.data.id, index);
+      }
+    });
+    return map;
+  }, [displayItems]);
+
+  // Get current index of last selected row (recalculated when displayItems changes)
+  const lastSelectedIndex = lastSelectedRowId ? (rowIdToIndexMap.get(lastSelectedRowId) ?? null) : null;
+
+  // Use a ref to always have the latest selectedRowIds (avoids stale closure in rapid clicks)
+  const selectedRowIdsRef = React.useRef(selectedRowIds);
+  React.useEffect(() => {
+    selectedRowIdsRef.current = selectedRowIds;
+  }, [selectedRowIds]);
+
+  // Track total size and visible rows in state to avoid flushSync warning during render
+  const [totalSize, setTotalSize] = React.useState(0);
+  const [visibleRows, setVisibleRows] = React.useState<
+    { index: number; start: number; size: number; key: React.Key }[]
+  >([]);
+
   const virtualizer = useVirtualizer({
-    count: virtualItems.length,
+    count: displayItems.length,
     getScrollElement: () => parentRef.current,
     estimateSize: (index) => {
-      const item = virtualItems[index];
+      const item = displayItems[index];
       return item?.type === "header" ? sectionHeaderHeight : estimateRowSize;
     },
     overscan,
+    // Update state when virtualizer changes (scroll, resize, etc.)
+    onChange: (instance) => {
+      setTotalSize(instance.getTotalSize());
+      setVisibleRows(instance.getVirtualItems());
+    },
   });
 
-  // Defer total size to avoid flushSync warning during render
-  const totalSize = useDeferredValue(virtualizer.getTotalSize());
+  // Initialize on mount and when display items change (e.g., after sorting)
+  React.useLayoutEffect(() => {
+    setTotalSize(virtualizer.getTotalSize());
+    setVisibleRows(virtualizer.getVirtualItems());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayItems.length, displayItems]);
 
   // Expose scrollToIndex method via ref
   useImperativeHandle(
@@ -180,6 +278,49 @@ function ResizableDataTableInner<TData extends { id: string }>(
     }),
     [virtualizer]
   );
+
+  // Check if element is fully visible in viewport (below header, above bottom)
+  const isElementInView = React.useCallback((element: Element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.top >= HEADER_HEIGHT && rect.bottom <= window.innerHeight - 20;
+  }, []);
+
+  // Track previous selectedRowId to only scroll when selection actually changes
+  // This prevents scroll jumps when new items are synced (displayItems changes)
+  const prevSelectedRowIdRef = React.useRef<string | null | undefined>(undefined);
+
+  // Auto-scroll to selected row when selection changes (not when data changes)
+  React.useEffect(() => {
+    if (!autoScrollToSelected || !selectedRowId) {
+      prevSelectedRowIdRef.current = selectedRowId;
+      return;
+    }
+
+    // Only scroll if selectedRowId actually changed (not just displayItems)
+    const selectionChanged = prevSelectedRowIdRef.current !== selectedRowId;
+    prevSelectedRowIdRef.current = selectedRowId;
+
+    if (!selectionChanged) return;
+
+    // Skip scroll if element exists and is already fully visible (e.g., user clicked on it)
+    const element = document.querySelector(`[data-row-id="${selectedRowId}"]`);
+    if (element && isElementInView(element)) return;
+
+    // Find index in displayItems
+    const index = displayItems.findIndex(
+      (item) => item.type === "row" && item.data.id === selectedRowId
+    );
+    if (index === -1) return;
+
+    // First scroll via virtualizer to ensure row is rendered
+    virtualizer.scrollToIndex(index, { align: "center" });
+
+    // Fine-tune with scrollIntoView after virtualized table renders
+    setTimeout(() => {
+      const el = document.querySelector(`[data-row-id="${selectedRowId}"]`);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, SCROLL_RENDER_DELAY);
+  }, [selectedRowId, autoScrollToSelected, displayItems, virtualizer, isElementInView]);
 
   // Get column sizes from table state, using defaults
   const columnSizes = React.useMemo(() => {
@@ -312,16 +453,66 @@ function ResizableDataTableInner<TData extends { id: string }>(
     [columnSizing, lastColumnId, defaultColumnSizes]
   );
 
-  // Stable click handler
+  // Row click handler with multi-select support
   const handleRowClick = React.useCallback(
-    (row: TData) => {
-      onRowClick?.(row);
+    (row: TData, modifiers: RowClickModifiers) => {
+      if (!enableMultiSelect) {
+        // Single-select mode: just call onRowClick
+        onRowClick?.(row);
+        return;
+      }
+
+      // Multi-select mode
+      // Use ref to get latest selection (avoids stale closure when clicking rapidly)
+      const clickedIndex = rowIdToIndexMap.get(row.id) ?? -1;
+      const isModifierClick = modifiers.metaKey || modifiers.ctrlKey;
+      const currentSelection = selectedRowIdsRef.current ?? new Set<string>();
+
+      if (modifiers.shiftKey && lastSelectedIndex !== null && clickedIndex !== -1) {
+        // Shift+click: select range from lastSelectedIndex to clicked index
+        // Clear previous selections and select only the range
+        const start = Math.min(lastSelectedIndex, clickedIndex);
+        const end = Math.max(lastSelectedIndex, clickedIndex);
+
+        const newSelection = new Set<string>();
+        for (let i = start; i <= end; i++) {
+          const item = displayItems[i];
+          if (item?.type === "row") {
+            newSelection.add(item.data.id);
+          }
+        }
+
+        onSelectionChange?.(newSelection);
+        // Don't update lastSelectedRowId on shift-click to allow extending selection
+      } else if (isModifierClick) {
+        // CMD/Ctrl+click: toggle individual selection
+        const newSelection = new Set(currentSelection);
+        if (newSelection.has(row.id)) {
+          newSelection.delete(row.id);
+        } else {
+          newSelection.add(row.id);
+        }
+
+        onSelectionChange?.(newSelection);
+        setLastSelectedRowId(row.id);
+      } else {
+        // Regular click: clear ALL selection and select only this row
+        const newSelection = new Set([row.id]);
+        onSelectionChange?.(newSelection);
+        setLastSelectedRowId(row.id);
+      }
     },
-    [onRowClick]
+    [enableMultiSelect, onRowClick, lastSelectedIndex, displayItems, rowIdToIndexMap, onSelectionChange]
   );
 
   return (
-    <div ref={parentRef} className="flex-1 overflow-auto">
+    <div ref={parentRef} className="flex-1 overflow-auto relative">
+      {/* Sorting indicator */}
+      {isSorting && (
+        <div className="absolute top-2 right-4 z-20">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        </div>
+      )}
       <table
         className="border-collapse"
         style={{ width: totalTableWidth, tableLayout: "fixed" }}
@@ -333,7 +524,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
         </colgroup>
         <thead className="sticky top-0 z-10 bg-muted">
           {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id} className="border-b">
+            <tr key={headerGroup.id} className="border-b relative">
               {headerGroup.headers.map((header, index) => (
                 <th
                   key={header.id}
@@ -344,14 +535,16 @@ function ResizableDataTableInner<TData extends { id: string }>(
                   )}
                   style={{ width: columnSizes[index] }}
                 >
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(
-                        header.column.columnDef.header,
-                        header.getContext()
-                      )}
-                  {/* Custom resize handle with double-click reset */}
-                  {header.column.getCanResize() && (
+                  <div className="flex items-center min-w-0 overflow-hidden w-full">
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(
+                          header.column.columnDef.header,
+                          header.getContext()
+                        )}
+                  </div>
+                  {/* Custom resize handle with double-click reset (skip last column) */}
+                  {header.column.getCanResize() && index !== headerGroup.headers.length - 1 && (
                     <ResizeHandle
                       header={header as Header<unknown, unknown>}
                       onResetToDefault={() => resetColumnToDefault(header.column.id)}
@@ -366,9 +559,12 @@ function ResizableDataTableInner<TData extends { id: string }>(
           ))}
         </thead>
         <tbody className="relative" style={{ height: totalSize }}>
-          {virtualItems.length ? (
-            virtualizer.getVirtualItems().map((virtualRow) => {
-              const item = virtualItems[virtualRow.index];
+          {displayItems.length ? (
+            visibleRows.map((visibleRow) => {
+              const item = displayItems[visibleRow.index];
+
+              // Guard against undefined item (can happen during rapid data changes)
+              if (!item) return null;
 
               // Render section header
               if (item.type === "header") {
@@ -381,8 +577,8 @@ function ResizableDataTableInner<TData extends { id: string }>(
                       top: 0,
                       left: 0,
                       width: "100%",
-                      height: virtualRow.size,
-                      transform: `translateY(${virtualRow.start}px)`,
+                      height: visibleRow.size,
+                      transform: `translateY(${visibleRow.start}px)`,
                     }}
                   >
                     <td
@@ -401,7 +597,10 @@ function ResizableDataTableInner<TData extends { id: string }>(
               if (!row) return null;
 
               const original = row.original;
-              const isSelected = selectedRowId === original.id;
+              const isPrimarySelected = selectedRowId === original.id;
+              const isSelected = enableMultiSelect
+                ? (selectedRowIds?.has(original.id) ?? false)
+                : isPrimarySelected;
               const baseClassName = getRowClassName?.(original, isSelected);
               const sectionClassName = item.rowClassName;
               const combinedClassName = cn(baseClassName, sectionClassName);
@@ -412,9 +611,10 @@ function ResizableDataTableInner<TData extends { id: string }>(
                   key={row.id}
                   row={row}
                   isSelected={isSelected}
+                  isPrimarySelected={isPrimarySelected}
                   onClick={handleRowClick}
-                  virtualStart={virtualRow.start}
-                  virtualSize={virtualRow.size}
+                  virtualStart={visibleRow.start}
+                  virtualSize={visibleRow.size}
                   columnSizes={columnSizes}
                   className={combinedClassName}
                   dataAttributes={dataAttributes}

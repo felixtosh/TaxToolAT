@@ -92,8 +92,11 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all" }) {
       byFunction: {
         chat: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
         companyLookup: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
+        companyLookupSearch: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
         patternLearning: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
         columnMatching: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
+        extraction: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
+        classification: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
       },
       byModel: {},
     };
@@ -188,8 +191,11 @@ function formatFunctionName(fn: AIFunction): string {
   const names: Record<AIFunction, string> = {
     chat: "Chat",
     companyLookup: "Company Lookup",
+    companyLookupSearch: "Company Search",
     patternLearning: "Pattern Learning",
     columnMatching: "Column Matching",
+    extraction: "File Extraction",
+    classification: "Classification",
   };
   return names[fn] || fn;
 }

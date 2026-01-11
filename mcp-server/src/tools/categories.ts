@@ -163,11 +163,24 @@ export async function registerCategoryTools(
       const snapshot = await getDocs(q);
 
       if (snapshot.empty) {
-        // Initialize categories if none exist
+        // Check ALL categories for this user (including inactive) to prevent duplicates
+        const allCategoriesQuery = query(
+          collection(ctx.db, CATEGORIES_COLLECTION),
+          where("userId", "==", ctx.userId)
+        );
+        const allSnapshot = await getDocs(allCategoriesQuery);
+        const existingTemplateIds = new Set(
+          allSnapshot.docs.map((d) => d.data().templateId)
+        );
+
         const now = Timestamp.now();
         const batch = writeBatch(ctx.db);
+        let createdCount = 0;
 
         for (const template of NO_RECEIPT_CATEGORY_TEMPLATES) {
+          if (existingTemplateIds.has(template.id)) {
+            continue; // Skip - already exists
+          }
           const docRef = doc(collection(ctx.db, CATEGORIES_COLLECTION));
           batch.set(docRef, {
             userId: ctx.userId,
@@ -182,9 +195,12 @@ export async function registerCategoryTools(
             createdAt: now,
             updatedAt: now,
           });
+          createdCount++;
         }
 
-        await batch.commit();
+        if (createdCount > 0) {
+          await batch.commit();
+        }
 
         // Re-fetch
         const newSnapshot = await getDocs(q);

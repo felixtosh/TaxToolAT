@@ -4,7 +4,7 @@ import { EmailSearchPattern } from "./email-integration";
 /**
  * Matching algorithm source identifier
  */
-export type MatchSource = "iban" | "vatId" | "website" | "name" | "pattern" | "manual";
+export type MatchSource = "iban" | "vatId" | "website" | "emailDomain" | "name" | "pattern" | "manual";
 
 /**
  * How a partner was matched to a transaction
@@ -179,6 +179,24 @@ export interface ManualRemoval {
 }
 
 /**
+ * Record of a file that was manually removed from this partner.
+ * Used as negative training signal (false positive) for file-partner matching.
+ */
+export interface ManualFileRemoval {
+  /** ID of the file that was removed */
+  fileId: string;
+
+  /** When the removal happened */
+  removedAt: Timestamp;
+
+  /** Snapshot of file's extracted partner name (for pattern learning) */
+  extractedPartner: string | null;
+
+  /** Snapshot of file's filename (for reference) */
+  fileName: string;
+}
+
+/**
  * User-specific partner
  * Collection: /partners/{id} with userId field
  */
@@ -232,6 +250,13 @@ export interface UserPartner {
   manualRemovals?: ManualRemoval[];
 
   /**
+   * Files user explicitly removed from this partner.
+   * Used as negative training signal (false positives) for file-partner matching.
+   * Capped at 50 entries.
+   */
+  manualFileRemovals?: ManualFileRemoval[];
+
+  /**
    * Learned email search patterns for finding invoices from this partner.
    * Used to auto-suggest Gmail searches when connecting files.
    * @deprecated Use fileSourcePatterns instead for unified file source tracking
@@ -250,6 +275,26 @@ export interface UserPartner {
 
   /** When file source patterns were last updated */
   fileSourcePatternsUpdatedAt?: Timestamp;
+
+  /**
+   * Known email domains for this partner (e.g., ["amazon.de", "amazon.com"]).
+   * Learned from files matched to transactions with this partner.
+   * Used to boost confidence when matching files from known sender domains.
+   */
+  emailDomains?: string[];
+
+  /** When email domains were last updated */
+  emailDomainsUpdatedAt?: Timestamp;
+
+  /**
+   * Invoice links discovered from emails (for manual download).
+   * Found by precision search Strategy 4 (email_invoice) when analyzing email content.
+   * User can click these to download invoices that weren't attachments.
+   */
+  invoiceLinks?: import("./precision-search").DiscoveredInvoiceLink[];
+
+  /** When invoice links were last updated */
+  invoiceLinksUpdatedAt?: Timestamp;
 
   /** Active status (soft delete) */
   isActive: boolean;

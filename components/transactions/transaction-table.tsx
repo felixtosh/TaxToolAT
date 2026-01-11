@@ -7,12 +7,13 @@ import { useSources } from "@/hooks/use-sources";
 import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
 import { useFiles } from "@/hooks/use-files";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
+import { useAutomations } from "@/hooks/use-automations";
 import { parseFiltersFromUrl, buildFilterUrl } from "@/lib/filters/url-params";
-import { matchAllTransactionsByPattern } from "@/lib/matching";
-import { matchTransactionToCategories } from "@/lib/matching/category-matcher";
+// Category suggestions come from transaction.categorySuggestions (computed on backend)
 import { DataTable, DataTableHandle } from "./data-table";
 import { getTransactionColumns } from "./transaction-columns";
 import { TransactionToolbar } from "./transaction-toolbar";
+import { AutomationDialog } from "@/components/automations";
 import { Transaction, TransactionFilters } from "@/types/transaction";
 import { UserPartner, GlobalPartner } from "@/types/partner";
 import { CategorySuggestion } from "@/types/no-receipt-category";
@@ -44,6 +45,12 @@ export function TransactionTable({
   const { sources } = useSources();
   const { categories } = useNoReceiptCategories();
   const { files } = useFiles();
+  const {
+    openPipelineId,
+    openAutomationDialog,
+    closeAutomationDialog,
+    integrationStatuses,
+  } = useAutomations();
 
   // Internal ref for DataTable, use external if provided
   const internalTableRef = useRef<DataTableHandle>(null);
@@ -152,29 +159,22 @@ export function TransactionTable({
     router.push(url);
   };
 
-  // Compute pattern-based suggestions for unassigned transactions (instant, client-side)
-  const patternSuggestions = useMemo(
-    () => matchAllTransactionsByPattern(transactions, userPartners),
-    [transactions, userPartners]
-  );
-
-  // Compute category suggestions for transactions without files or categories
+  // Use stored category suggestions from backend (no client-side computation)
   const categorySuggestions = useMemo(() => {
     const map = new Map<string, CategorySuggestion>();
-    if (categories.length === 0) return map;
 
     for (const tx of transactions) {
       // Skip if already has category or files
       if (tx.noReceiptCategoryId || (tx.fileIds && tx.fileIds.length > 0)) {
         continue;
       }
-      const suggestions = matchTransactionToCategories(tx, categories);
-      if (suggestions.length > 0) {
-        map.set(tx.id, suggestions[0]); // Take top suggestion
+      // Use stored suggestions from transaction (computed by backend)
+      if (tx.categorySuggestions && tx.categorySuggestions.length > 0) {
+        map.set(tx.id, tx.categorySuggestions[0]); // Take top suggestion
       }
     }
     return map;
-  }, [transactions, categories]);
+  }, [transactions]);
 
   // Create a map of transactionId -> total file amount for the file pill
   const fileAmountsMap = useMemo(() => {
@@ -200,8 +200,16 @@ export function TransactionTable({
 
   // Create columns with sources and partners lookup - must be before conditional returns
   const columns = useMemo(
-    () => getTransactionColumns(sources, userPartners, globalPartners, patternSuggestions, categories, categorySuggestions, fileAmountsMap),
-    [sources, userPartners, globalPartners, patternSuggestions, categories, categorySuggestions, fileAmountsMap]
+    () => getTransactionColumns(
+      sources,
+      userPartners,
+      globalPartners,
+      categories,
+      categorySuggestions,
+      fileAmountsMap,
+      openAutomationDialog
+    ),
+    [sources, userPartners, globalPartners, categories, categorySuggestions, fileAmountsMap, openAutomationDialog]
   );
 
   const handleRowClick = (transaction: Transaction) => {
@@ -239,6 +247,16 @@ export function TransactionTable({
           />
         </TooltipProvider>
       </div>
+
+      {/* Automation Dialog */}
+      {openPipelineId && (
+        <AutomationDialog
+          open={true}
+          onClose={closeAutomationDialog}
+          pipelineId={openPipelineId}
+          integrationStatuses={integrationStatuses}
+        />
+      )}
     </div>
   );
 }

@@ -1,17 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-
-export interface ExtractedData {
-  date: string | null; // ISO format YYYY-MM-DD
-  amount: number | null; // cents
-  currency: string | null;
-  vatPercent: number | null;
-  partner: string | null;
-  vatId: string | null; // VAT ID (e.g., ATU12345678, DE123456789)
-  iban: string | null; // IBAN if visible
-  address: string | null; // Full address as single string
-  confidence: number;
-  fieldSpans: Record<string, string>; // field -> matched text from document
-}
+import { ExtractedData } from "../types/extraction";
 
 /**
  * Parse OCR text using Claude Haiku to extract structured invoice/receipt data
@@ -103,7 +91,12 @@ Example response:
     vatId: parsed.vatId || null,
     iban: parsed.iban || null,
     address: parsed.address || null,
+    website: null, // Claude parser doesn't extract website (legacy)
     confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
     fieldSpans: parsed.fieldSpans || {},
+    // Legacy Claude parser doesn't extract entities - set to null
+    // The extractionCore will handle these as null and fall back to legacy partner field
+    issuer: null,
+    recipient: null,
   };
 }

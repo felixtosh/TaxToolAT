@@ -201,7 +201,7 @@ export async function clearIntegrationReauthFlag(
 }
 
 /**
- * Soft-delete an email integration
+ * Soft-delete an email integration (basic - use softDisconnectEmailIntegration for full flow)
  */
 export async function deleteEmailIntegration(
   ctx: OperationsContext,
@@ -218,6 +218,142 @@ export async function deleteEmailIntegration(
     isActive: false,
     updatedAt: Timestamp.now(),
   });
+}
+
+/**
+ * Soft disconnect an email integration.
+ * Preserves the integration and its processed message history for later reconnection.
+ *
+ * This is the preferred method for disconnecting - it stores sync state
+ * so reconnection can resume from where it left off.
+ */
+export async function softDisconnectEmailIntegration(
+  ctx: OperationsContext,
+  integrationId: string,
+  processedMessageIds: string[],
+  lastSyncDateRange?: { from: Date; to: Date }
+): Promise<void> {
+  const existing = await getEmailIntegration(ctx, integrationId);
+  if (!existing) {
+    throw new Error("Email integration not found");
+  }
+
+  const docRef = doc(ctx.db, INTEGRATIONS_COLLECTION, integrationId);
+
+  const updates: Record<string, unknown> = {
+    isActive: false,
+    disconnectedAt: Timestamp.now(),
+    processedMessageIds,
+    updatedAt: Timestamp.now(),
+  };
+
+  if (lastSyncDateRange) {
+    updates.lastSyncDateRange = {
+      from: Timestamp.fromDate(lastSyncDateRange.from),
+      to: Timestamp.fromDate(lastSyncDateRange.to),
+    };
+  }
+
+  await updateDoc(docRef, updates);
+}
+
+/**
+ * Reconnect a previously disconnected email integration.
+ * Clears the disconnected state and updates token expiry.
+ */
+export async function reconnectEmailIntegration(
+  ctx: OperationsContext,
+  integrationId: string,
+  newExpiresAt: Date
+): Promise<void> {
+  const docRef = doc(ctx.db, INTEGRATIONS_COLLECTION, integrationId);
+
+  await updateDoc(docRef, {
+    isActive: true,
+    disconnectedAt: null,
+    needsReauth: false,
+    lastError: null,
+    tokenExpiresAt: Timestamp.fromDate(newExpiresAt),
+    updatedAt: Timestamp.now(),
+  });
+}
+
+/**
+ * Pause sync for an email integration.
+ * Sets isPaused flag to prevent automatic syncs.
+ */
+export async function pauseEmailIntegration(
+  ctx: OperationsContext,
+  integrationId: string
+): Promise<void> {
+  const existing = await getEmailIntegration(ctx, integrationId);
+  if (!existing) {
+    throw new Error("Email integration not found");
+  }
+
+  const docRef = doc(ctx.db, INTEGRATIONS_COLLECTION, integrationId);
+  await updateDoc(docRef, {
+    isPaused: true,
+    pausedAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  });
+}
+
+/**
+ * Resume sync for an email integration.
+ * Clears isPaused flag to allow automatic syncs.
+ */
+export async function resumeEmailIntegration(
+  ctx: OperationsContext,
+  integrationId: string
+): Promise<void> {
+  const existing = await getEmailIntegration(ctx, integrationId);
+  if (!existing) {
+    throw new Error("Email integration not found");
+  }
+
+  const docRef = doc(ctx.db, INTEGRATIONS_COLLECTION, integrationId);
+  await updateDoc(docRef, {
+    isPaused: false,
+    pausedAt: null,
+    updatedAt: Timestamp.now(),
+  });
+}
+
+/**
+ * Find a disconnected integration by email (for reconnection detection).
+ * Returns the most recently disconnected integration if multiple exist.
+ */
+export async function getDisconnectedIntegrationByEmail(
+  ctx: OperationsContext,
+  email: string
+): Promise<EmailIntegration | null> {
+  const q = query(
+    collection(ctx.db, INTEGRATIONS_COLLECTION),
+    where("userId", "==", ctx.userId),
+    where("email", "==", email.toLowerCase()),
+    where("isActive", "==", false)
+  );
+
+  const snapshot = await getDocs(q);
+  if (snapshot.empty) {
+    return null;
+  }
+
+  // Return the most recently disconnected one
+  const docs = snapshot.docs.map((d) => ({
+    id: d.id,
+    ...d.data(),
+  })) as EmailIntegration[];
+
+  // Sort by disconnectedAt descending (most recent first)
+  docs.sort((a, b) => {
+    const aTime = a.disconnectedAt?.toMillis() || 0;
+    const bTime = b.disconnectedAt?.toMillis() || 0;
+    return bTime - aTime;
+  });
+
+  return docs[0] || null;
 }
 
 // ============================================================================

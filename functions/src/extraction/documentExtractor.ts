@@ -10,16 +10,29 @@
  * Set EXTRACTION_PROVIDER environment variable to switch providers.
  */
 
-import { ExtractedData } from "./claudeParser";
+import { ExtractedData } from "../types/extraction";
 import { OCRBlock } from "./visionApi";
+import { GeminiBoundingBox, ExtractedRawText, ExtractedAdditionalField } from "./geminiParser";
 
 export type ExtractionProvider = "vision-claude" | "gemini";
 
 export interface ExtractionResult {
   text: string;
-  blocks: OCRBlock[]; // Empty for Gemini (no bounding boxes from native vision)
+  blocks: OCRBlock[]; // Empty for Gemini (uses geminiBoundingBoxes instead)
   extracted: ExtractedData;
   provider: ExtractionProvider;
+  /** Document classified as not an invoice (tax form, spam, etc.) */
+  isNotInvoice?: boolean;
+  /** Reason for not being an invoice */
+  notInvoiceReason?: string | null;
+  /** Bounding boxes from Gemini (native vision) */
+  geminiBoundingBoxes?: GeminiBoundingBox[];
+  /** Raw text for each field as it appears in the document (for PDF search) */
+  extractedRaw?: ExtractedRawText;
+  /** Additional fields extracted beyond standard invoice fields */
+  additionalFields?: ExtractedAdditionalField[];
+  /** Token usage for AI calls */
+  usage?: { inputTokens: number; outputTokens: number; model: string };
 }
 
 export interface ExtractionConfig {
@@ -27,6 +40,8 @@ export interface ExtractionConfig {
   anthropicApiKey?: string;
   // Gemini uses service account auth via Vertex AI (no API key needed)
   geminiModel?: string;
+  // Skip two-phase classification (user has overridden AI classification)
+  skipClassification?: boolean;
 }
 
 /**
@@ -95,30 +110,107 @@ async function extractWithVisionClaude(
 
 /**
  * Extract using Gemini Flash (native PDF vision)
+ * Classification is separate from extraction:
+ * 1. classifyDocument determines if it's an invoice (unless skipClassification)
+ * 2. parseWithGemini extracts data (assumes document is valid)
  */
 async function extractWithGemini(
   fileBuffer: Buffer,
   fileType: string,
   config: ExtractionConfig
 ): Promise<ExtractionResult> {
-  const { parseWithGemini, DEFAULT_GEMINI_MODEL } = await import("./geminiParser");
+  const {
+    parseWithGemini,
+    classifyDocument,
+    DEFAULT_GEMINI_MODEL,
+  } = await import("./geminiParser");
   type GeminiModel = import("./geminiParser").GeminiModel;
 
   // Gemini uses service account auth via Vertex AI (no API key needed)
   const model = (config.geminiModel || DEFAULT_GEMINI_MODEL) as GeminiModel;
 
-  // Gemini does OCR + extraction in one call
+  // Classification phase - skip if user has already confirmed it's an invoice
+  if (!config.skipClassification) {
+    console.log(`  [Classification] Checking if document is a valid invoice...`);
+
+    const classification = await classifyDocument(fileBuffer, fileType, model);
+
+    if (!classification.isInvoice) {
+      console.log(`  [Classification] Not an invoice: ${classification.reason}`);
+      // Return early without full extraction
+      return {
+        text: "(classification only - not an invoice)",
+        blocks: [],
+        extracted: {
+          date: null,
+          amount: null,
+          currency: null,
+          vatPercent: null,
+          partner: null,
+          vatId: null,
+          iban: null,
+          address: null,
+          website: null,
+          issuer: null,
+          recipient: null,
+          confidence: classification.confidence,
+          fieldSpans: {},
+        },
+        provider: "gemini",
+        isNotInvoice: true,
+        notInvoiceReason: classification.reason,
+      };
+    }
+
+    console.log(`  [Classification] Valid invoice, proceeding with extraction`);
+  } else {
+    console.log(`  [Skip-Classification] User override - treating as invoice`);
+  }
+
+  // Extraction phase - parseWithGemini only extracts, no classification
   const result = await parseWithGemini(fileBuffer, fileType, model);
 
-  if (!result.rawText || result.rawText.trim().length === 0) {
-    throw new Error("No text extracted from document");
+  // Use rawText if available, otherwise generate from extracted data
+  // Gemini Flash Lite sometimes omits rawText to save tokens
+  let text = result.rawText || "";
+  if (!text.trim()) {
+    // Generate fallback text from extracted fields for display
+    const parts: string[] = [];
+    const e = result.extracted;
+    if (e.partner) parts.push(e.partner);
+    if (e.date) parts.push(e.date);
+    if (e.amount !== null) {
+      const amt = (e.amount / 100).toFixed(2).replace(".", ",");
+      parts.push(`${amt} ${e.currency || "EUR"}`);
+    }
+    if (e.address) parts.push(e.address);
+    if (e.vatId) parts.push(e.vatId);
+    if (e.iban) parts.push(e.iban);
+    text = parts.join("\n") || "(no text extracted)";
+  }
+
+  // Only fail if we got no useful data at all
+  const hasUsefulData =
+    result.extracted.partner ||
+    result.extracted.amount !== null ||
+    result.extracted.date ||
+    text.trim().length > 0;
+
+  if (!hasUsefulData) {
+    throw new Error("No text or data extracted from document");
   }
 
   return {
-    text: result.rawText,
-    blocks: [], // Gemini native vision doesn't provide bounding boxes
+    text,
+    blocks: [], // Gemini native vision uses geminiBoundingBoxes instead
     extracted: result.extracted,
     provider: "gemini",
+    isNotInvoice: false, // Classification already passed, or user override
+    notInvoiceReason: null,
+    geminiBoundingBoxes: result.boundingBoxes,
+    extractedRaw: result.extractedRaw,
+    additionalFields: result.additionalFields,
+    usage: result.usage,
   };
 }
 

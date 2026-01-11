@@ -1,5 +1,34 @@
 import { Timestamp } from "firebase/firestore";
-import { FileSourceType } from "./partner";
+import { FileSourceType, PartnerSuggestion } from "./partner";
+import { InvoiceDirection } from "./user-data";
+
+/**
+ * Entity information extracted from a document (issuer or recipient).
+ * Used to store both parties so we can determine the counterparty in post-processing.
+ */
+export interface ExtractedEntity {
+  /** Company or person name */
+  name: string | null;
+  /** VAT identification number */
+  vatId: string | null;
+  /** Full address */
+  address: string | null;
+  /** IBAN (typically only issuer has this visible) */
+  iban?: string | null;
+  /** Website domain */
+  website?: string | null;
+}
+
+/**
+ * Raw text for an extracted entity (for PDF search/highlight)
+ */
+export interface ExtractedEntityRaw {
+  name?: string | null;
+  vatId?: string | null;
+  address?: string | null;
+  iban?: string | null;
+  website?: string | null;
+}
 
 /**
  * Match sources for transaction matching - indicates which criteria contributed to a match
@@ -76,8 +105,26 @@ export interface TaxFile {
   /** For Gmail imports: which integration (account) the file came from */
   gmailIntegrationId?: string;
 
+  /** For Gmail imports: email address of the integration account (e.g., "myaccount@gmail.com") */
+  gmailIntegrationEmail?: string;
+
   /** For Gmail imports: email subject */
   gmailSubject?: string;
+
+  /** For Gmail imports: attachment ID (for deduplication) */
+  gmailAttachmentId?: string;
+
+  /** For Gmail imports: sender email address */
+  gmailSenderEmail?: string;
+
+  /** For Gmail imports: sender email domain (e.g., "amazon.de") */
+  gmailSenderDomain?: string;
+
+  /** For Gmail imports: sender display name */
+  gmailSenderName?: string;
+
+  /** For Gmail imports: when the email was sent */
+  gmailEmailDate?: Timestamp;
 
   // === AI Extracted Data ===
 
@@ -104,6 +151,55 @@ export interface TaxFile {
 
   /** AI-extracted address */
   extractedAddress?: string | null;
+
+  /** AI-extracted website domain */
+  extractedWebsite?: string | null;
+
+  // === Extracted Entities (for counterparty determination) ===
+
+  /**
+   * The entity that issued/created the document (letterhead, sender).
+   * Contains name, VAT ID, address, IBAN, website.
+   */
+  extractedIssuer?: ExtractedEntity | null;
+
+  /**
+   * The entity that receives the document (bill-to, recipient).
+   * Contains name, VAT ID, address.
+   */
+  extractedRecipient?: ExtractedEntity | null;
+
+  /**
+   * Which party matched user data (if any).
+   * - "issuer" = user is the sender (outgoing invoice)
+   * - "recipient" = user is the receiver (incoming invoice)
+   * - null = neither matched (e.g., forwarded invoice, or no user data configured)
+   */
+  matchedUserAccount?: "issuer" | "recipient" | null;
+
+  /**
+   * Raw text as it appears in the document for each field.
+   * Used for PDF text search/highlight (since we normalize values for storage).
+   * E.g., amount might be stored as 12345 (cents) but raw is "123,45 €"
+   */
+  extractedRaw?: {
+    date?: string | null;
+    amount?: string | null;
+    vatPercent?: string | null;
+    partner?: string | null;
+    vatId?: string | null;
+    iban?: string | null;
+    address?: string | null;
+    website?: string | null;
+    issuer?: ExtractedEntityRaw | null;
+    recipient?: ExtractedEntityRaw | null;
+  } | null;
+
+  /**
+   * Additional fields extracted from the document beyond standard invoice fields.
+   * E.g., invoice number, due date, reference, PO number, etc.
+   */
+  extractedAdditionalFields?: ExtractedAdditionalField[] | null;
 
   /** AI-extracted text (OCR result) */
   extractedText?: string | null;
@@ -136,6 +232,17 @@ export interface TaxFile {
   /** When transaction matching was last run */
   transactionMatchedAt?: Timestamp | null;
 
+  // === Partner Matching ===
+
+  /** Whether partner matching has been completed (triggers transaction matching) */
+  partnerMatchComplete?: boolean;
+
+  /** When partner matching was last run */
+  partnerMatchedAt?: Timestamp | null;
+
+  /** Partner suggestions from auto-matching (top 3) */
+  partnerSuggestions?: PartnerSuggestion[];
+
   // === Partner Assignment ===
 
   /** Assigned partner ID (user or global) */
@@ -149,6 +256,28 @@ export interface TaxFile {
 
   /** Confidence score for partner match (0-100) */
   partnerMatchConfidence?: number | null;
+
+  // === Classification ===
+
+  /** Whether AI classification (invoice vs not-invoice) has completed */
+  classificationComplete?: boolean;
+
+  /** AI determined this is not an invoice (tax form, spam, etc.) */
+  isNotInvoice?: boolean;
+
+  /** Reason why this is not an invoice */
+  notInvoiceReason?: string | null;
+
+  /**
+   * Invoice direction: incoming (user is recipient) or outgoing (user is issuer).
+   * Determined by comparing extracted partner against user data.
+   */
+  invoiceDirection?: InvoiceDirection;
+
+  // === Soft Delete (for Gmail imports) ===
+
+  /** Soft deletion timestamp - file won't be re-imported if deleted */
+  deletedAt?: Timestamp | null;
 
   // === Metadata ===
 
@@ -219,6 +348,12 @@ export interface FileFilters {
   /** Date range for extracted document date */
   extractedDateFrom?: Date;
   extractedDateTo?: Date;
+
+  /** Include soft-deleted files (default: false) */
+  includeDeleted?: boolean;
+
+  /** Show only "not invoice" files */
+  isNotInvoice?: boolean;
 }
 
 /**
@@ -237,7 +372,13 @@ export interface FileCreateData {
   sourceType?: "upload" | "gmail";
   gmailMessageId?: string;
   gmailIntegrationId?: string;
+  gmailIntegrationEmail?: string;
   gmailSubject?: string;
+  gmailAttachmentId?: string;
+  gmailSenderEmail?: string;
+  gmailSenderDomain?: string;
+  gmailSenderName?: string;
+  gmailEmailDate?: Date;
 }
 
 /**
@@ -249,7 +390,30 @@ export interface FileExtractionData {
   extractedCurrency?: string | null;
   extractedVatPercent?: number | null;
   extractedPartner?: string | null;
+  extractedVatId?: string | null;
+  extractedIban?: string | null;
+  extractedAddress?: string | null;
+  extractedWebsite?: string | null;
   extractedText?: string | null;
+
+  // Extracted entities (for counterparty determination)
+  extractedIssuer?: ExtractedEntity | null;
+  extractedRecipient?: ExtractedEntity | null;
+  matchedUserAccount?: "issuer" | "recipient" | null;
+
+  extractedRaw?: {
+    date?: string | null;
+    amount?: string | null;
+    vatPercent?: string | null;
+    partner?: string | null;
+    vatId?: string | null;
+    iban?: string | null;
+    address?: string | null;
+    website?: string | null;
+    issuer?: ExtractedEntityRaw | null;
+    recipient?: ExtractedEntityRaw | null;
+  } | null;
+  extractedAdditionalFields?: ExtractedAdditionalField[] | null;
   extractionConfidence?: number | null;
   extractionComplete: boolean;
   extractionError?: string | null;
@@ -276,4 +440,19 @@ export interface ExtractedFieldLocation {
     /** Page index for multi-page PDFs */
     pageIndex: number;
   };
+}
+
+/**
+ * An additional field extracted from a document beyond the standard invoice fields.
+ * Used for arbitrary data like invoice numbers, due dates, references, etc.
+ */
+export interface ExtractedAdditionalField {
+  /** Human-readable label for the field (e.g., "Invoice Number", "Due Date") */
+  label: string;
+
+  /** The extracted value */
+  value: string;
+
+  /** Raw text as it appears in the document (for PDF search) */
+  rawValue?: string;
 }

@@ -9,6 +9,7 @@ import { VirtualRowProps } from "./types";
 function VirtualRowInner<TData extends { id: string }>({
   row,
   isSelected,
+  isPrimarySelected,
   onClick,
   virtualStart,
   virtualSize,
@@ -16,9 +17,16 @@ function VirtualRowInner<TData extends { id: string }>({
   className,
   dataAttributes = {},
 }: VirtualRowProps<TData>) {
-  const handleClick = React.useCallback(() => {
-    onClick(row.original);
-  }, [onClick, row.original]);
+  const handleClick = React.useCallback(
+    (e: React.MouseEvent) => {
+      onClick(row.original, {
+        shiftKey: e.shiftKey,
+        metaKey: e.metaKey,
+        ctrlKey: e.ctrlKey,
+      });
+    },
+    [onClick, row.original]
+  );
 
   const totalWidth = columnSizes.reduce((sum, w) => sum + w, 0);
 
@@ -32,7 +40,10 @@ function VirtualRowInner<TData extends { id: string }>({
       onClick={handleClick}
       className={cn(
         "cursor-pointer transition-colors border-b hover:bg-muted/50",
-        isSelected && "bg-primary/10 hover:bg-primary/15",
+        // Primary selection: stronger highlight
+        isPrimarySelected && "bg-primary/10 hover:bg-primary/15",
+        // Additional selection (not primary): lighter highlight
+        isSelected && !isPrimarySelected && "bg-primary/5 hover:bg-primary/10",
         className
       )}
       style={{
@@ -78,6 +89,7 @@ export const VirtualRow = memo(
     return (
       prevProps.row.id === nextProps.row.id &&
       prevProps.isSelected === nextProps.isSelected &&
+      prevProps.isPrimarySelected === nextProps.isPrimarySelected &&
       prevProps.virtualStart === nextProps.virtualStart &&
       prevProps.virtualSize === nextProps.virtualSize &&
       prevProps.className === nextProps.className &&

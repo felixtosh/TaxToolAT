@@ -75,6 +75,8 @@ export class GmailClient implements EmailProviderClient {
     from?: string;
     limit?: number;
     pageToken?: string;
+    /** If true, fetch all messages in matching threads to get complete attachments */
+    expandThreads?: boolean;
   }): Promise<EmailSearchResult> {
     // Build Gmail search query
     const searchQuery = buildGmailSearchQuery({
@@ -108,21 +110,48 @@ export class GmailClient implements EmailProviderClient {
       };
     }
 
-    // Fetch full message details for each result
-    const messages = await Promise.all(
-      searchResult.messages.map((msg) => this.getMessage(msg.id))
-    );
+    let validMessages: EmailMessage[];
 
-    // Filter out null results (messages that couldn't be fetched)
-    const validMessages = messages.filter(
-      (msg): msg is EmailMessage => msg !== null
-    );
+    if (params.expandThreads) {
+      // Get unique thread IDs and fetch full threads
+      const threadIds = [...new Set(searchResult.messages.map((m) => m.threadId))];
+      const threadMessages = await Promise.all(
+        threadIds.map((threadId) => this.getThreadMessages(threadId))
+      );
+      validMessages = threadMessages.flat();
+    } else {
+      // Fetch full message details for each result
+      const messages = await Promise.all(
+        searchResult.messages.map((msg) => this.getMessage(msg.id))
+      );
+      // Filter out null results (messages that couldn't be fetched)
+      validMessages = messages.filter(
+        (msg): msg is EmailMessage => msg !== null
+      );
+    }
 
     return {
       messages: validMessages,
       nextPageToken: searchResult.nextPageToken,
       totalEstimate: searchResult.resultSizeEstimate,
     };
+  }
+
+  /**
+   * Get all messages in a thread
+   */
+  async getThreadMessages(threadId: string): Promise<EmailMessage[]> {
+    try {
+      const thread = await this.gmailFetch<{
+        id: string;
+        messages: GmailMessage[];
+      }>(`/threads/${threadId}?format=full`);
+
+      return thread.messages.map((msg) => this.parseMessage(msg));
+    } catch (error) {
+      console.error(`Failed to fetch thread ${threadId}:`, error);
+      return [];
+    }
   }
 
   /**
@@ -290,6 +319,57 @@ export class GmailClient implements EmailProviderClient {
   }
 
   /**
+   * Get the HTML and/or text body content of an email
+   * @param messageId - Gmail message ID
+   * @returns Object with htmlBody and textBody (either or both may be undefined)
+   */
+  async getEmailContent(messageId: string): Promise<{
+    htmlBody?: string;
+    textBody?: string;
+  }> {
+    const message = await this.gmailFetch<GmailMessage>(
+      `/messages/${messageId}?format=full`
+    );
+
+    let htmlBody: string | undefined;
+    let textBody: string | undefined;
+
+    // Helper to decode base64url encoded content
+    const decodeBody = (data: string): string => {
+      const decoded = Buffer.from(
+        data.replace(/-/g, "+").replace(/_/g, "/"),
+        "base64"
+      ).toString("utf-8");
+      return decoded;
+    };
+
+    // Recursive function to find body parts
+    const extractBodies = (part: GmailMessagePart | undefined): void => {
+      if (!part) return;
+
+      // Check if this part has body data
+      if (part.body?.data) {
+        if (part.mimeType === "text/html" && !htmlBody) {
+          htmlBody = decodeBody(part.body.data);
+        } else if (part.mimeType === "text/plain" && !textBody) {
+          textBody = decodeBody(part.body.data);
+        }
+      }
+
+      // Recursively check child parts
+      if (part.parts) {
+        for (const childPart of part.parts) {
+          extractBodies(childPart);
+        }
+      }
+    };
+
+    extractBodies(message.payload);
+
+    return { htmlBody, textBody };
+  }
+
+  /**
    * Validate that the current access token is still valid
    */
   async validateAuth(): Promise<boolean> {
@@ -306,27 +386,38 @@ export class GmailClient implements EmailProviderClient {
   }
 
   /**
-   * Attempt to refresh the access token
-   * Note: This requires server-side implementation with client secret
+   * Attempt to refresh the access token via the server-side refresh endpoint
    */
   async refreshAuth(): Promise<boolean> {
-    // Token refresh must be done server-side where the client secret is available
-    // This method is called by API routes, not directly from client
     if (!this.refreshToken) {
       return false;
     }
 
     try {
-      // This would be implemented in an API route
-      // The API route would call Google's token endpoint with:
-      // - client_id
-      // - client_secret
-      // - refresh_token
-      // - grant_type: "refresh_token"
+      const response = await fetch("/api/gmail/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ integrationId: this.integrationId }),
+      });
 
-      // For now, return false to trigger re-authentication
-      return false;
-    } catch {
+      if (!response.ok) {
+        console.error("Token refresh failed:", await response.text());
+        return false;
+      }
+
+      const data = await response.json();
+
+      // Update the access token
+      this.accessToken = data.accessToken;
+
+      // Notify callback if provided
+      if (this.onTokenRefresh) {
+        this.onTokenRefresh(data.accessToken, new Date(data.expiresAt));
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Token refresh error:", error);
       return false;
     }
   }

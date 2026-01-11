@@ -1,13 +1,13 @@
 "use client";
 
-import { SearchInput } from "@/components/ui/search-input";
+import { SearchButton } from "@/components/ui/search-button";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Filter, Link2, X } from "lucide-react";
+import { Filter, Link2, X, Trash2, FileX } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { FileFilters } from "@/types/file";
 
@@ -25,20 +25,22 @@ export function FileToolbar({
   onFiltersChange,
 }: FileToolbarProps) {
   const hasConnectionFilter = filters.hasConnections !== undefined;
+  const hasExtractionFilter = filters.extractionComplete !== undefined;
+  const hasDeletedFilter = filters.includeDeleted === true;
+  const hasNotInvoiceFilter = filters.isNotInvoice !== undefined;
 
   const clearFilters = () => {
     onFiltersChange({});
   };
 
-  const hasActiveFilters = hasConnectionFilter;
+  const hasActiveFilters = hasConnectionFilter || hasExtractionFilter || hasDeletedFilter || hasNotInvoiceFilter;
 
   return (
     <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap">
-      <SearchInput
+      <SearchButton
         value={searchValue}
-        onChange={onSearchChange}
+        onSearch={onSearchChange}
         placeholder="Search files..."
-        className="w-[300px]"
       />
 
       <Popover>
@@ -84,10 +86,10 @@ export function FileToolbar({
         <PopoverTrigger asChild>
           <Button variant="outline" size="sm" className="h-9">
             <Filter className="mr-2 h-4 w-4" />
-            Extraction
+            Status
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-[200px] p-2">
+        <PopoverContent align="start" className="w-[220px] p-2">
           <div className="space-y-1">
             <Button
               variant={filters.extractionComplete === true ? "secondary" : "ghost"}
@@ -114,6 +116,36 @@ export function FileToolbar({
               }
             >
               Pending extraction
+            </Button>
+            <div className="h-px bg-border my-1" />
+            <Button
+              variant={filters.isNotInvoice === true ? "secondary" : "ghost"}
+              size="sm"
+              className="w-full justify-start"
+              onClick={() =>
+                onFiltersChange({
+                  ...filters,
+                  isNotInvoice: filters.isNotInvoice === true ? undefined : true,
+                })
+              }
+            >
+              <FileX className="mr-2 h-4 w-4" />
+              Not invoices
+            </Button>
+            <div className="h-px bg-border my-1" />
+            <Button
+              variant={filters.includeDeleted === true ? "secondary" : "ghost"}
+              size="sm"
+              className="w-full justify-start text-muted-foreground"
+              onClick={() =>
+                onFiltersChange({
+                  ...filters,
+                  includeDeleted: filters.includeDeleted === true ? undefined : true,
+                })
+              }
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Include deleted
             </Button>
           </div>
         </PopoverContent>
@@ -156,6 +188,25 @@ export function FileToolbar({
               <X
                 className="h-3 w-3 cursor-pointer"
                 onClick={() => onFiltersChange({ ...filters, extractionComplete: undefined })}
+              />
+            </Badge>
+          )}
+          {filters.isNotInvoice === true && (
+            <Badge variant="secondary" className="gap-1">
+              Not invoices
+              <X
+                className="h-3 w-3 cursor-pointer"
+                onClick={() => onFiltersChange({ ...filters, isNotInvoice: undefined })}
+              />
+            </Badge>
+          )}
+          {filters.includeDeleted === true && (
+            <Badge variant="outline" className="gap-1 text-muted-foreground">
+              <Trash2 className="h-3 w-3" />
+              Showing deleted
+              <X
+                className="h-3 w-3 cursor-pointer"
+                onClick={() => onFiltersChange({ ...filters, includeDeleted: undefined })}
               />
             </Badge>
           )}

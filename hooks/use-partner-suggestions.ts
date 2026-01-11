@@ -4,7 +4,6 @@ import { useMemo } from "react";
 import { Transaction } from "@/types/transaction";
 import { TaxFile } from "@/types/file";
 import { UserPartner, GlobalPartner, PartnerSuggestion, PartnerMatchResult } from "@/types/partner";
-import { matchTransactionByPattern } from "@/lib/matching/partner-matcher";
 import { normalizeIban } from "@/lib/import/deduplication";
 import { calculateCompanyNameSimilarity, vatIdsMatch } from "@/lib/matching/fuzzy-match";
 
@@ -13,10 +12,9 @@ export interface PartnerSuggestionWithDetails extends PartnerSuggestion {
 }
 
 /**
- * Hook to get partner suggestions for a transaction with full partner details
- * Combines:
- * 1. Server-side stored suggestions (transaction.partnerSuggestions)
- * 2. Client-side pattern matches (instant, from learned patterns)
+ * Hook to get partner suggestions for a transaction with full partner details.
+ * Uses server-side stored suggestions (transaction.partnerSuggestions).
+ * All pattern matching is done on the backend for consistency.
  */
 export function usePartnerSuggestions(
   transaction: Transaction | null,
@@ -25,69 +23,45 @@ export function usePartnerSuggestions(
 ): PartnerSuggestionWithDetails[] {
   return useMemo(() => {
     if (!transaction) return [];
+    if (!transaction.partnerSuggestions || transaction.partnerSuggestions.length === 0) {
+      return [];
+    }
 
     const results: PartnerSuggestionWithDetails[] = [];
     const seenPartnerIds = new Set<string>();
 
-    // 1. Add client-side pattern matches first (instant, most relevant)
-    if (!transaction.partnerId) {
-      const patternMatch = matchTransactionByPattern(transaction, userPartners);
-      if (patternMatch) {
-        const partner = userPartners.find((p) => p.id === patternMatch.partnerId);
+    for (const suggestion of transaction.partnerSuggestions) {
+      if (seenPartnerIds.has(suggestion.partnerId)) continue;
 
-        // CRITICAL: Check if user manually removed this transaction from this partner
-        const isManuallyRemoved = partner?.manualRemovals?.some(
+      let partner: UserPartner | GlobalPartner | undefined;
+      if (suggestion.partnerType === "user") {
+        partner = userPartners.find((p) => p.id === suggestion.partnerId);
+      } else {
+        partner = globalPartners.find((p) => p.id === suggestion.partnerId);
+      }
+
+      if (!partner) continue;
+
+      // CRITICAL: Check if user manually removed this transaction from this partner
+      if (suggestion.partnerType === "user") {
+        const userPartner = partner as UserPartner;
+        const isManuallyRemoved = userPartner.manualRemovals?.some(
           (r) => r.transactionId === transaction.id
         );
-
-        if (partner && !seenPartnerIds.has(patternMatch.partnerId) && !isManuallyRemoved) {
-          seenPartnerIds.add(patternMatch.partnerId);
-          results.push({
-            partnerId: patternMatch.partnerId,
-            partnerType: "user",
-            confidence: patternMatch.confidence,
-            source: "pattern",
-            partner,
-          });
-        }
+        if (isManuallyRemoved) continue;
       }
-    }
 
-    // 2. Add server-side stored suggestions
-    if (transaction.partnerSuggestions && transaction.partnerSuggestions.length > 0) {
-      for (const suggestion of transaction.partnerSuggestions) {
-        if (seenPartnerIds.has(suggestion.partnerId)) continue;
-
-        let partner: UserPartner | GlobalPartner | undefined;
-        if (suggestion.partnerType === "user") {
-          partner = userPartners.find((p) => p.id === suggestion.partnerId);
-        } else {
-          partner = globalPartners.find((p) => p.id === suggestion.partnerId);
-        }
-
-        if (!partner) continue;
-
-        // CRITICAL: Check if user manually removed this transaction from this partner
-        if (suggestion.partnerType === "user") {
-          const userPartner = partner as UserPartner;
-          const isManuallyRemoved = userPartner.manualRemovals?.some(
-            (r) => r.transactionId === transaction.id
-          );
-          if (isManuallyRemoved) continue;
-        }
-
-        // Filter out global partners where user already has a local copy
-        if (suggestion.partnerType === "global") {
-          const hasLocalCopy = userPartners.some((up) => up.globalPartnerId === suggestion.partnerId);
-          if (hasLocalCopy) continue;
-        }
-
-        seenPartnerIds.add(suggestion.partnerId);
-        results.push({
-          ...suggestion,
-          partner,
-        });
+      // Filter out global partners where user already has a local copy
+      if (suggestion.partnerType === "global") {
+        const hasLocalCopy = userPartners.some((up) => up.globalPartnerId === suggestion.partnerId);
+        if (hasLocalCopy) continue;
       }
+
+      seenPartnerIds.add(suggestion.partnerId);
+      results.push({
+        ...suggestion,
+        partner,
+      });
     }
 
     // Sort by confidence (highest first)
@@ -210,6 +184,12 @@ export function useFilePartnerSuggestions(
     for (const partner of userPartners) {
       const match = matchFileToPartner(file, partner, "user");
       if (match && !seenPartnerIds.has(match.partnerId)) {
+        // CRITICAL: Check if user manually removed this file from this partner
+        const isManuallyRemoved = partner.manualFileRemovals?.some(
+          (r) => r.fileId === file.id
+        );
+        if (isManuallyRemoved) continue;
+
         seenPartnerIds.add(match.partnerId);
         results.push({
           partnerId: match.partnerId,

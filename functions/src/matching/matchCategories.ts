@@ -178,7 +178,27 @@ export async function matchCategoriesForUser(
         updates.noReceiptCategoryTemplateId = topMatch.templateId;
         updates.noReceiptCategoryConfidence = topMatch.confidence;
         updates.noReceiptCategoryMatchedBy = "auto";
+        updates.isComplete = true;
         autoMatched++;
+
+        // Link partner to category for future matching (if transaction has a partner)
+        if (transaction.partnerId) {
+          const category = categories.find((c) => c.id === topMatch.categoryId);
+          if (category && !category.matchedPartnerIds.includes(transaction.partnerId)) {
+            const categoryRef = db.collection("noReceiptCategories").doc(topMatch.categoryId);
+            batch.update(categoryRef, {
+              matchedPartnerIds: FieldValue.arrayUnion(transaction.partnerId),
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+            // Update local cache to prevent duplicate arrayUnion in same batch
+            category.matchedPartnerIds.push(transaction.partnerId);
+            console.log(
+              `Auto-linked partner ${transaction.partnerId} to category ${topMatch.templateId}`
+            );
+            batchCount++;
+          }
+        }
+
         console.log(
           `Auto-matched tx ${txDoc.id} to category ${topMatch.templateId} (${topMatch.confidence}%)`
         );

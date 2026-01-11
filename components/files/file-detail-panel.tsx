@@ -10,14 +10,32 @@ import {
   Download,
   Trash2,
   Plus,
+  Upload,
+  Mail,
+  RotateCcw,
+  Loader2,
+  ExternalLink,
+  Info,
 } from "lucide-react";
+import Link from "next/link";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { FilePreview } from "./file-preview";
-import { FileViewerDialog } from "./file-viewer-dialog";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
 import { FileTransactionSuggestions } from "./file-transaction-suggestions";
@@ -32,7 +50,10 @@ import {
   removePartnerFromFile,
   acceptTransactionSuggestion,
   dismissTransactionSuggestion,
+  retryFileExtraction,
+  updateFileDirection,
 } from "@/lib/operations";
+import { InvoiceDirection } from "@/types/user-data";
 import { useFilePartnerSuggestions, PartnerSuggestionWithDetails } from "@/hooks/use-partner-suggestions";
 import { shouldAutoApply } from "@/lib/matching/partner-matcher";
 import { db } from "@/lib/firebase/config";
@@ -45,9 +66,26 @@ function FieldRow({ label, children, className }: { label: string; children: Rea
   return (
     <div className={cn("flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4", className)}>
       <span className="text-sm text-muted-foreground shrink-0 sm:w-28">{label}</span>
-      <span className="text-sm">{children}</span>
+      <div className="text-sm w-0 flex-1">{children}</div>
     </div>
   );
+}
+
+// Helper to determine invoice type status for display
+type InvoiceTypeStatus = 'unknown' | 'analyzing' | 'invoice' | 'not_invoice';
+
+function getInvoiceTypeStatus(file: TaxFile): InvoiceTypeStatus {
+  // Classification not done yet - show "Analyzing..."
+  if (!file.classificationComplete) return 'analyzing';
+
+  // Classification done - show result
+  if (file.isNotInvoice === true) return 'not_invoice';
+  if (file.isNotInvoice === false) return 'invoice';
+
+  // Fallback for legacy files without classificationComplete
+  const hasData = !!(file.extractedAmount || file.extractedDate || file.extractedPartner);
+  if (hasData) return 'invoice';
+  return 'unknown';
 }
 
 interface FileDetailPanelProps {
@@ -58,9 +96,18 @@ interface FileDetailPanelProps {
   hasPrevious?: boolean;
   hasNext?: boolean;
   onDelete?: () => void;
+  onRestore?: () => void;
+  onMarkAsNotInvoice?: () => void;
+  onUnmarkAsNotInvoice?: () => void;
+  /** True when parsing is in progress after user marked file as invoice (skipping classification) */
+  isParsing?: boolean;
   userPartners: UserPartner[];
   globalPartners: GlobalPartner[];
   onCreatePartner: (data: { name: string; aliases?: string[]; vatId?: string; ibans?: string[]; website?: string; country?: string; notes?: string }) => Promise<string>;
+  onOpenViewer?: () => void;
+  viewerOpen?: boolean;
+  /** Called when user clicks an extracted field to highlight it in the viewer */
+  onHighlightField?: (text: string) => void;
 }
 
 export function FileDetailPanel({
@@ -71,15 +118,22 @@ export function FileDetailPanel({
   hasPrevious = false,
   hasNext = false,
   onDelete,
+  onRestore,
+  onMarkAsNotInvoice,
+  onUnmarkAsNotInvoice,
+  isParsing = false,
   userPartners,
   globalPartners,
   onCreatePartner,
+  onOpenViewer,
+  viewerOpen = false,
+  onHighlightField,
 }: FileDetailPanelProps) {
   const router = useRouter();
-  const [viewerOpen, setViewerOpen] = useState(false);
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
   const [isConnectTransactionOpen, setIsConnectTransactionOpen] = useState(false);
+  const [isRetryingExtraction, setIsRetryingExtraction] = useState(false);
 
   const ctx: OperationsContext = useMemo(
     () => ({ db, userId: MOCK_USER_ID }),
@@ -202,7 +256,11 @@ export function FileDetailPanel({
 
   const handleDisconnect = useCallback(
     async (transactionId: string) => {
-      await disconnectFileFromTransaction(ctx, file.id, transactionId);
+      try {
+        await disconnectFileFromTransaction(ctx, file.id, transactionId);
+      } catch (error) {
+        console.error("Failed to disconnect file from transaction:", error);
+      }
     },
     [ctx, file.id]
   );
@@ -238,6 +296,25 @@ export function FileDetailPanel({
     },
     [ctx, file.id]
   );
+
+  const handleRetryExtraction = useCallback(async () => {
+    setIsRetryingExtraction(true);
+    try {
+      await retryFileExtraction(ctx, file.id);
+    } catch (error) {
+      console.error("Failed to retry extraction:", error);
+    } finally {
+      setIsRetryingExtraction(false);
+    }
+  }, [ctx, file.id]);
+
+  const handleDirectionChange = useCallback(async (direction: InvoiceDirection) => {
+    try {
+      await updateFileDirection(ctx, file.id, direction);
+    } catch (error) {
+      console.error("Failed to update invoice direction:", error);
+    }
+  }, [ctx, file.id]);
 
   return (
     <>
@@ -281,33 +358,110 @@ export function FileDetailPanel({
         {/* Content */}
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-6">
-            {/* Preview thumbnail - 25% width, click to open viewer */}
+            {/* Preview thumbnail - 25% width, click to toggle viewer */}
             <div className="flex gap-4">
               <div className="w-1/4 flex-shrink-0">
                 <FilePreview
                   downloadUrl={file.downloadUrl}
                   fileType={file.fileType}
                   fileName={file.fileName}
-                  onClick={() => setViewerOpen(true)}
+                  onClick={onOpenViewer}
+                  active={viewerOpen}
                 />
                 <p className="text-xs text-muted-foreground text-center mt-1">
-                  Click to view
+                  {viewerOpen ? "Click to close" : "Click to view"}
                 </p>
               </div>
               <div className="flex-1 space-y-2">
-                {/* Quick file info */}
+                {/* Quick file info - fixed label width for alignment */}
                 <div className="text-sm space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Uploaded</span>
-                    <span>{format(file.uploadedAt.toDate(), "MMM d, yyyy")}</span>
+                  {/* Source & From at top */}
+                  <div className="flex items-start gap-3">
+                    <span className="text-muted-foreground w-16 shrink-0">Source</span>
+                    <div className="flex-1 text-right">
+                      {file.sourceType === "gmail" ? (
+                        file.gmailIntegrationId ? (
+                          <Link
+                            href={`/integrations/${file.gmailIntegrationId}`}
+                            className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+                          >
+                            <Mail className="h-3 w-3" />
+                            {file.gmailIntegrationEmail || "Gmail"}
+                            <ExternalLink className="h-3 w-3" />
+                          </Link>
+                        ) : (
+                          <span className="inline-flex items-center gap-1">
+                            <Mail className="h-3 w-3" />
+                            {file.gmailIntegrationEmail || "Gmail"}
+                          </span>
+                        )
+                      ) : (
+                        <span className="inline-flex items-center gap-1">
+                          <Upload className="h-3 w-3" />
+                          Upload
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Size</span>
-                    <span>{formatFileSize(file.fileSize)}</span>
+                  {file.sourceType === "gmail" && file.gmailSenderEmail && (
+                    <div className="flex items-start gap-3">
+                      <span className="text-muted-foreground w-16 shrink-0">From</span>
+                      <span className="flex-1 text-right break-all">
+                        {file.gmailSenderEmail}
+                      </span>
+                    </div>
+                  )}
+                  {/* File metadata */}
+                  <div className="flex items-start gap-3">
+                    <span className="text-muted-foreground w-16 shrink-0">Uploaded</span>
+                    <span className="flex-1 text-right">{format(file.uploadedAt.toDate(), "MMM d, yyyy")}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Type</span>
-                    <span className="truncate ml-2">{file.fileType.split("/")[1].toUpperCase()}</span>
+                  <div className="flex items-start gap-3">
+                    <span className="text-muted-foreground w-16 shrink-0">Size</span>
+                    <span className="flex-1 text-right">{formatFileSize(file.fileSize)}</span>
+                  </div>
+                  {/* Invoice Type Classification */}
+                  <div className="flex items-center gap-3">
+                    <span className="text-muted-foreground w-16 shrink-0">Type</span>
+                    <div className="flex-1 flex justify-end">
+                      {(() => {
+                        const status = getInvoiceTypeStatus(file);
+                        // Show "Analyzing..." only during classification phase
+                        // When isParsing is true, user already confirmed it's an invoice
+                        if (status === 'analyzing' && !isParsing) {
+                          return (
+                            <span className="flex items-center gap-1.5 text-muted-foreground">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Analyzing...
+                            </span>
+                          );
+                        }
+                        // When parsing after user override, show dropdown with "Invoice" selected
+                        const displayStatus = isParsing ? 'invoice' : status;
+                        return (
+                          <Select
+                            value={displayStatus === 'invoice' ? 'invoice' : displayStatus === 'not_invoice' ? 'not_invoice' : 'unknown'}
+                            onValueChange={(value) => {
+                              if (value === 'invoice' && onUnmarkAsNotInvoice) {
+                                onUnmarkAsNotInvoice();
+                              } else if (value === 'not_invoice' && onMarkAsNotInvoice) {
+                                onMarkAsNotInvoice();
+                              }
+                            }}
+                            disabled={isParsing}
+                          >
+                            <SelectTrigger className="h-7 w-[120px] text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="unknown" disabled>Unknown</SelectItem>
+                              <SelectItem value="invoice">Invoice</SelectItem>
+                              <SelectItem value="not_invoice">Not Invoice</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        );
+                      })()}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -316,19 +470,75 @@ export function FileDetailPanel({
             <Separator />
 
             {/* Extracted Info */}
-            <FileExtractedInfo file={file} />
+            <FileExtractedInfo
+              file={file}
+              onRetryExtraction={file.extractionError ? handleRetryExtraction : undefined}
+              isRetrying={isRetryingExtraction}
+              isParsing={isParsing}
+              onFieldClick={onHighlightField}
+              onDirectionChange={handleDirectionChange}
+            />
 
             <Separator />
 
             {/* Partner Assignment Section */}
             <div className="space-y-3">
-              <h3 className="text-sm font-medium">Partner</h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium">Partner</h3>
+                {/* Debug info button */}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-6 w-6">
+                      <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80 text-xs" align="end">
+                    <div className="space-y-2">
+                      <p className="font-medium">Partner Match Debug</p>
+                      <div className="space-y-1 text-muted-foreground">
+                        <p><span className="font-medium text-foreground">Matched By:</span> {file.partnerMatchedBy || "none"}</p>
+                        <p><span className="font-medium text-foreground">Confidence:</span> {file.partnerMatchConfidence ?? "—"}%</p>
+                        <p><span className="font-medium text-foreground">Partner ID:</span> {file.partnerId || "none"}</p>
+                        <p><span className="font-medium text-foreground">Partner Type:</span> {file.partnerType || "none"}</p>
+                      </div>
+                      {file.partnerSuggestions && file.partnerSuggestions.length > 0 && (
+                        <>
+                          <Separator className="my-2" />
+                          <p className="font-medium">Suggestions ({file.partnerSuggestions.length})</p>
+                          <div className="space-y-1.5">
+                            {file.partnerSuggestions.map((s, i) => (
+                              <div key={i} className="text-muted-foreground bg-muted/50 p-1.5 rounded">
+                                <p><span className="font-medium text-foreground">#{i+1}:</span> {s.partnerId}</p>
+                                <p>Confidence: {s.confidence}% | Source: {s.source}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                      {file.extractedPartner && (
+                        <>
+                          <Separator className="my-2" />
+                          <p className="font-medium">Extracted Data</p>
+                          <div className="space-y-1 text-muted-foreground">
+                            <p><span className="font-medium text-foreground">Partner:</span> {file.extractedPartner}</p>
+                            {file.extractedVatId && <p><span className="font-medium text-foreground">VAT ID:</span> {file.extractedVatId}</p>}
+                            {file.extractedIban && <p><span className="font-medium text-foreground">IBAN:</span> {file.extractedIban}</p>}
+                            {file.invoiceDirection && <p><span className="font-medium text-foreground">Direction:</span> {file.invoiceDirection}</p>}
+                            {file.matchedUserAccount && <p><span className="font-medium text-foreground">User Account:</span> {file.matchedUserAccount}</p>}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
 
               <FieldRow label="Connect">
                 {assignedPartner ? (
                   <PartnerPill
                     name={assignedPartner.name}
                     confidence={file.partnerMatchConfidence ?? undefined}
+                    matchedBy={file.partnerMatchedBy}
                     partnerType={file.partnerType ?? undefined}
                     onClick={handleNavigateToPartner}
                     onRemove={handleRemovePartner}
@@ -391,35 +601,43 @@ export function FileDetailPanel({
         </ScrollArea>
 
         {/* Footer actions */}
-        <div className="p-4 border-t flex gap-2">
-          <Button variant="outline" className="flex-1" asChild>
-            <a href={file.downloadUrl} download={file.fileName}>
-              <Download className="h-4 w-4 mr-2" />
-              Download
-            </a>
-          </Button>
-          {onDelete && (
-            <Button
-              variant="outline"
-              className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10"
-              onClick={onDelete}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete
+        <div className="p-4 border-t flex flex-col gap-2">
+          {/* Primary row: Download + Delete/Restore */}
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" asChild>
+              <a href={file.downloadUrl} download={file.fileName}>
+                <Download className="h-4 w-4 mr-2" />
+                Download
+              </a>
             </Button>
-          )}
+            {file.deletedAt ? (
+              // Show restore for deleted files
+              onRestore && (
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={onRestore}
+                >
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Restore
+                </Button>
+              )
+            ) : (
+              // Show delete for non-deleted files
+              onDelete && (
+                <Button
+                  variant="outline"
+                  className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onClick={onDelete}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </Button>
+              )
+            )}
+          </div>
         </div>
       </div>
-
-      {/* Full viewer dialog */}
-      <FileViewerDialog
-        open={viewerOpen}
-        onOpenChange={setViewerOpen}
-        downloadUrl={file.downloadUrl}
-        fileType={file.fileType}
-        fileName={file.fileName}
-        extractedFields={file.extractedFields}
-      />
 
       {/* Add Partner Dialog */}
       <AddPartnerDialog

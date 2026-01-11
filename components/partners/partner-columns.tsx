@@ -15,12 +15,14 @@ import {
 interface PartnerColumnOptions {
   onEdit?: (partner: UserPartner) => void;
   onDelete?: (partnerId: string) => void;
+  /** Partner IDs marked as "my company" */
+  markedAsMe?: string[];
 }
 
 export function getPartnerColumns(
   options: PartnerColumnOptions = {}
 ): ColumnDef<UserPartner>[] {
-  const { onEdit, onDelete } = options;
+  const { onEdit, onDelete, markedAsMe = [] } = options;
 
   return [
     {
@@ -28,17 +30,20 @@ export function getPartnerColumns(
       header: "Name",
       cell: ({ row }) => {
         const partner = row.original;
+        const isMyCompany = markedAsMe.includes(partner.id);
         return (
           <div className="flex items-center gap-2">
             <Building2 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
             <div className="min-w-0">
               <div className="font-medium truncate">{partner.name}</div>
-              {partner.aliases.length > 0 && (
+              {isMyCompany ? (
+                <div className="text-xs text-primary truncate">My Company</div>
+              ) : partner.aliases.length > 0 ? (
                 <div className="text-xs text-muted-foreground truncate">
                   aka: {partner.aliases.slice(0, 2).join(", ")}
                   {partner.aliases.length > 2 && ` +${partner.aliases.length - 2}`}
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         );

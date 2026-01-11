@@ -207,12 +207,13 @@ export async function assignCategoryToTransaction(
   });
 
   // If transaction has a partner and category doesn't have this partner, add it
-  if (txData.partnerId && matchedBy === "manual") {
+  // Auto-link partners to categories for both manual and auto matches
+  if (txData.partnerId && (matchedBy === "manual" || matchedBy === "auto")) {
     if (!category.matchedPartnerIds.includes(txData.partnerId)) {
       batch.update(categoryRef, {
         matchedPartnerIds: arrayUnion(txData.partnerId),
       });
-      console.log(`[Category] Added partner ${txData.partnerId} to category ${categoryId}`);
+      console.log(`[Category] Added partner ${txData.partnerId} to category ${categoryId} (${matchedBy})`);
     }
   }
 
@@ -416,6 +417,29 @@ async function triggerCategoryMatching(transactionIds: string[]): Promise<void> 
   console.log(
     `[Category Re-match] Processed ${result.data.processed}, auto-matched ${result.data.autoMatched}, suggestions ${result.data.withSuggestions}`
   );
+}
+
+/**
+ * Trigger category matching for ALL unmatched transactions via Cloud Function.
+ * Use this to populate categorySuggestions for existing transactions.
+ * Returns the results from the Cloud Function.
+ */
+export async function triggerCategoryMatchingForAll(): Promise<{
+  processed: number;
+  autoMatched: number;
+  withSuggestions: number;
+}> {
+  const matchCategories = httpsCallable<
+    { matchAll?: boolean },
+    { processed: number; autoMatched: number; withSuggestions: number }
+  >(functions, "matchCategories");
+
+  console.log("[Category Match All] Triggering category matching for all unmatched transactions...");
+  const result = await matchCategories({ matchAll: false }); // matchAll: false = only unmatched
+  console.log(
+    `[Category Match All] Processed ${result.data.processed}, auto-matched ${result.data.autoMatched}, suggestions ${result.data.withSuggestions}`
+  );
+  return result.data;
 }
 
 // ============ Pattern Learning ============

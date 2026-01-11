@@ -196,20 +196,6 @@ function AdminPartnersContent() {
     }
   };
 
-  // Scroll to selected partner when it changes from URL
-  useEffect(() => {
-    if (selectedId && !loading) {
-      setTimeout(() => {
-        const element = document.querySelector(
-          `[data-partner-id="${selectedId}"]`
-        );
-        if (element) {
-          element.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-      }, 100);
-    }
-  }, [selectedId, loading]);
-
   return (
     <div className="h-full overflow-hidden">
       {/* Main content - adjusts margin when panel is open */}
@@ -240,7 +226,7 @@ function AdminPartnersContent() {
       {/* Right sidebar - fixed position */}
       {showPanel && (
         <div
-          className="fixed right-0 top-14 bottom-0 z-30 bg-background border-l flex"
+          className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
           style={{ width: panelWidth }}
         >
           {/* Resize handle */}

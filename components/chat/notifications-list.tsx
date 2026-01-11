@@ -43,7 +43,7 @@ export function NotificationsList({
       <div className="border-t p-4">
         <Button className="w-full" size="lg" onClick={onStartNewConversation}>
           <MessageSquare className="mr-2 h-5 w-5" />
-          Start New Conversation
+          New Conversation
         </Button>
       </div>
     </div>
