@@ -23,6 +23,7 @@ const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 export async function GET(request: NextRequest) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI || "http://localhost:3000/api/gmail/callback";
+  const returnTo = request.nextUrl.searchParams.get("returnTo");
 
   if (!clientId) {
     return NextResponse.json(
@@ -61,6 +62,16 @@ export async function GET(request: NextRequest) {
     expires: stateExpiry,
     path: "/",
   });
+
+  if (returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
+    response.cookies.set("gmail_oauth_return_to", returnTo, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      expires: stateExpiry,
+      path: "/",
+    });
+  }
 
   return response;
 }

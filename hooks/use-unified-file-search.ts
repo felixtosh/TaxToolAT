@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo } from "react";
 import { differenceInDays, subDays, addDays } from "date-fns";
 import { TaxFile } from "@/types/file";
 import { EmailMessage, EmailAttachment } from "@/types/email-integration";
+import { isPdfOrImageAttachment } from "@/lib/email-providers/interface";
 import { UserPartner, FileSourcePattern } from "@/types/partner";
 import { useFiles } from "./use-files";
 import { useEmailIntegrations } from "./use-email-integrations";
@@ -379,10 +380,7 @@ export function useUnifiedFileSearch(
       for (const message of gmailResults) {
         for (const attachment of message.attachments) {
           // Only include PDFs and images
-          if (
-            attachment.mimeType !== "application/pdf" &&
-            !attachment.mimeType.startsWith("image/")
-          ) {
+          if (!isPdfOrImageAttachment(attachment.mimeType, attachment.filename)) {
             continue;
           }
 

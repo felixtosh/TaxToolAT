@@ -40,6 +40,39 @@ const INVOICE_MIME_TYPES = [
   "image/webp",
 ];
 
+function buildFilenameQueries(transactionName: string): string[] {
+  const tokens = new Set<string>();
+
+  const addMatches = (regex: RegExp) => {
+    const matches = transactionName.match(regex);
+    if (!matches) return;
+    for (const match of matches) {
+      const cleaned = match.replace(/[^A-Za-z0-9._-]/g, "");
+      if (cleaned.length > 0) {
+        tokens.add(cleaned);
+      }
+    }
+  };
+
+  // Invoice-like tokens (e.g., R-2024.014) and long numeric IDs.
+  addMatches(/\b[A-Za-z]{0,5}-?\d{3,}(?:[./]\d+)?\b/g);
+  addMatches(/\b\d{8,}\b/g);
+
+  return Array.from(tokens).map((token) => `filename:${token}`);
+}
+
+function mergeQueries(base: string[], extras: string[]): string[] {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const query of [...base, ...extras]) {
+    const normalized = query.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    merged.push(normalized);
+  }
+  return merged;
+}
+
 // Strategy execution order (used when creating queue items)
 export const DEFAULT_STRATEGIES: SearchStrategy[] = [
   "partner_files",
@@ -870,14 +903,17 @@ async function executeEmailAttachmentStrategy(
     attempt.geminiTokensUsed =
       (attempt.geminiTokensUsed || 0) + queryResult.usage.inputTokens + queryResult.usage.outputTokens;
 
-    if (queryResult.queries.length === 0) {
+    const filenameQueries = buildFilenameQueries(transaction.name);
+    const queries = mergeQueries(queryResult.queries, filenameQueries);
+
+    if (queries.length === 0) {
       attempt.completedAt = Timestamp.now();
       return attempt;
     }
 
     attempt.searchParams = {
       ...attempt.searchParams,
-      queries: queryResult.queries,
+      queries,
       queryReasoning: queryResult.reasoning,
     };
 
@@ -885,7 +921,7 @@ async function executeEmailAttachmentStrategy(
     const processedMessageIds = new Set<string>();
 
     for (const { client, integration } of clients) {
-      for (const query of queryResult.queries) {
+      for (const query of queries) {
         try {
           // Add has:attachment to the query if not present
           const fullQuery = query.includes("has:attachment")
@@ -1027,14 +1063,17 @@ async function executeEmailInvoiceStrategy(
     attempt.geminiTokensUsed =
       (attempt.geminiTokensUsed || 0) + queryResult.usage.inputTokens + queryResult.usage.outputTokens;
 
-    if (queryResult.queries.length === 0) {
+    const filenameQueries = buildFilenameQueries(transaction.name);
+    const queries = mergeQueries(queryResult.queries, filenameQueries);
+
+    if (queries.length === 0) {
       attempt.completedAt = Timestamp.now();
       return attempt;
     }
 
     attempt.searchParams = {
       ...attempt.searchParams,
-      queries: queryResult.queries,
+      queries,
       queryReasoning: queryResult.reasoning,
     };
 
@@ -1042,7 +1081,7 @@ async function executeEmailInvoiceStrategy(
     const processedMessageIds = new Set<string>();
 
     for (const { client, integration } of clients) {
-      for (const query of queryResult.queries) {
+      for (const query of queries) {
         try {
           // Remove has:attachment if present, we want emails without attachments too
           const cleanQuery = query.replace(/has:attachment/gi, "").trim();

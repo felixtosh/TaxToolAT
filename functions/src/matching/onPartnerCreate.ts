@@ -7,6 +7,7 @@ import {
   TransactionData,
 } from "../utils/partner-matcher";
 import { matchCategoriesForTransactions } from "./matchCategories";
+import { createLocalPartnerFromGlobal } from "./createLocalPartnerFromGlobal";
 
 const db = getFirestore();
 
@@ -144,8 +145,24 @@ export const onPartnerCreate = onDocumentCreated(
           };
 
           if (shouldAutoApply(topMatch.confidence)) {
-            updates.partnerId = topMatch.partnerId;
-            updates.partnerType = topMatch.partnerType;
+            let assignedPartnerId = topMatch.partnerId;
+            let assignedPartnerType = topMatch.partnerType;
+
+            if (topMatch.partnerType === "global") {
+              try {
+                assignedPartnerId = await createLocalPartnerFromGlobal(userId, topMatch.partnerId);
+                assignedPartnerType = "user";
+              } catch (error) {
+                console.error(
+                  `[PartnerMatch] Failed to create local partner from global:`,
+                  error
+                );
+                // Fall back to assigning global if localization fails
+              }
+            }
+
+            updates.partnerId = assignedPartnerId;
+            updates.partnerType = assignedPartnerType;
             updates.partnerMatchConfidence = topMatch.confidence;
             updates.partnerMatchedBy = "auto";
             autoMatched++;

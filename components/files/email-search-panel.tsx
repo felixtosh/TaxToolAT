@@ -28,6 +28,7 @@ import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
 import { EmailMessage, EmailAttachment } from "@/types/email-integration";
+import { isPdfOrImageAttachment } from "@/lib/email-providers/interface";
 import { FilePreview } from "./file-preview";
 
 interface EmailSearchPanelProps {
@@ -91,9 +92,7 @@ export function EmailSearchPanel({
 
     for (const message of messages) {
       for (const attachment of message.attachments) {
-        const isPdf = attachment.mimeType === "application/pdf";
-        const isImage = attachment.mimeType.startsWith("image/");
-        if (isPdf || isImage) {
+        if (isPdfOrImageAttachment(attachment.mimeType, attachment.filename)) {
           attachments.push({
             key: `${message.messageId}-${attachment.attachmentId}`,
             attachment,
@@ -489,7 +488,10 @@ interface AttachmentResultCardProps {
 }
 
 function AttachmentResultCard({ attachment, message, isSelected, onSelect }: AttachmentResultCardProps) {
-  const isPdf = attachment.mimeType === "application/pdf";
+  const isPdf =
+    attachment.mimeType === "application/pdf" ||
+    (attachment.mimeType === "application/octet-stream" &&
+      attachment.filename.toLowerCase().endsWith(".pdf"));
   const sizeKb = Math.round(attachment.size / 1024);
 
   return (

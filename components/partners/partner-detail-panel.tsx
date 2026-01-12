@@ -8,6 +8,7 @@ import { UserPartner, PartnerFormData } from "@/types/partner";
 import { Transaction } from "@/types/transaction";
 import { TaxFile } from "@/types/file";
 import { usePartners } from "@/hooks/use-partners";
+import { useEmailIntegrations } from "@/hooks/use-email-integrations";
 import { formatIban } from "@/lib/import/deduplication";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { AddPartnerDialog } from "./add-partner-dialog";
@@ -33,6 +34,7 @@ interface FeedbackMessage {
 
 export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps) {
   const { updatePartner, deletePartner } = usePartners();
+  const { integrations } = useEmailIntegrations();
   const { isPartnerMarkedAsMe } = useUserData();
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isMarkingAsMe, setIsMarkingAsMe] = useState(false);
@@ -43,6 +45,26 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
 
   // Create operations context
   const ctx = useMemo(() => ({ db, userId: MOCK_USER_ID }), []);
+
+  const integrationLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const integration of integrations) {
+      map.set(
+        integration.id,
+        integration.displayName || integration.email || integration.provider
+      );
+    }
+    return map;
+  }, [integrations]);
+
+  const gmailFilePatterns = useMemo(() => {
+    return (partner.fileSourcePatterns || [])
+      .filter((pattern) => pattern.sourceType === "gmail")
+      .sort((a, b) => {
+        if (b.usageCount !== a.usageCount) return b.usageCount - a.usageCount;
+        return b.confidence - a.confidence;
+      });
+  }, [partner.fileSourcePatterns]);
 
   // Clear feedback after 4 seconds
   useEffect(() => {
@@ -698,6 +720,40 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
                         @{domain}
                       </code>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Gmail search patterns */}
+              {gmailFilePatterns.length > 0 && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    <Mail className="h-3 w-3 inline mr-1" />
+                    Gmail Search Patterns <Badge variant="secondary" className="text-[10px] ml-1">{gmailFilePatterns.length}</Badge>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mb-1 italic">
+                    Learned searches and accounts used to find invoices
+                  </p>
+                  <div className="space-y-1">
+                    {gmailFilePatterns.map((pattern, index) => {
+                      const label = pattern.integrationId
+                        ? integrationLabels.get(pattern.integrationId) || pattern.integrationId
+                        : "Any account";
+
+                      return (
+                        <div key={`${pattern.pattern}-${index}`} className="flex items-center gap-1.5">
+                          <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono flex-1 truncate">
+                            {pattern.pattern}
+                          </code>
+                          <Badge variant="secondary" className="text-[10px]">
+                            {label}
+                          </Badge>
+                          <Badge variant="outline" className="text-[10px]">
+                            {pattern.confidence}%
+                          </Badge>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

@@ -26,7 +26,7 @@ export interface UseEmailIntegrationsResult {
   /** Disconnect an integration */
   disconnect: (integrationId: string) => Promise<void>;
   /** Refresh an integration (reconnect OAuth) */
-  refresh: (integrationId: string) => Promise<void>;
+  refresh: (integrationId: string, returnTo?: string) => Promise<void>;
   /** Pause sync for an integration */
   pauseSync: (integrationId: string) => Promise<void>;
   /** Resume sync for an integration */
@@ -109,15 +109,16 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
 
   // Refresh integration (reconnect OAuth)
   const refresh = useCallback(
-    async (integrationId: string) => {
+    async (integrationId: string, returnTo?: string) => {
       // Find the integration to get the email
       const integration = integrations.find((i) => i.id === integrationId);
       if (!integration) {
         throw new Error("Integration not found");
       }
 
+      const returnToParam = returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : "";
       // Redirect to OAuth flow - callback will update existing integration
-      window.location.href = "/api/gmail/authorize";
+      window.location.href = `/api/gmail/authorize${returnToParam}`;
     },
     [integrations]
   );

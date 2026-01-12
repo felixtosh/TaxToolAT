@@ -32,9 +32,20 @@ export const extractFileData = onDocumentCreated(
       return;
     }
 
+    if (fileData.deletedAt) {
+      console.log(`File ${fileId} is soft-deleted, skipping extraction`);
+      return;
+    }
+
     console.log(`[${new Date().toISOString()}] Starting extraction for file: ${fileData.fileName} (${fileId})`);
 
     try {
+      const latestDoc = await db.collection("files").doc(fileId).get();
+      if (latestDoc.exists && latestDoc.data()?.deletedAt) {
+        console.log(`File ${fileId} was soft-deleted before extraction, skipping`);
+        return;
+      }
+
       await runExtraction(fileId, fileData, {
         anthropicApiKey: anthropicApiKey.value(),
         skipClassification: false,

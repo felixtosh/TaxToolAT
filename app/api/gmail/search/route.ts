@@ -38,6 +38,18 @@ export async function POST(request: NextRequest) {
       expandThreads = false,
     } = body;
 
+    console.log("[Gmail Search] Request", {
+      integrationId,
+      query,
+      dateFrom,
+      dateTo,
+      from,
+      hasAttachments,
+      limit,
+      pageToken,
+      expandThreads,
+    });
+
     if (!integrationId) {
       return NextResponse.json(
         { error: "integrationId is required" },
@@ -116,6 +128,31 @@ export async function POST(request: NextRequest) {
 
     // Update last accessed time
     await markIntegrationAccessed(ctx, integrationId);
+
+    const messageSummaries = result.messages.map((msg) => ({
+      messageId: msg.messageId,
+      threadId: msg.threadId,
+      subject: msg.subject,
+      attachmentCount: msg.attachments.length,
+      attachments: msg.attachments.map((attachment) => ({
+        filename: attachment.filename,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+      })),
+    }));
+
+    console.log("[Gmail Search] Response", {
+      integrationId,
+      messageCount: result.messages.length,
+      totalEstimate: result.totalEstimate,
+      nextPageToken: result.nextPageToken,
+      messages: messageSummaries,
+    });
+
+    console.log(
+      "[Gmail Search] Response details",
+      JSON.stringify({ integrationId, messages: messageSummaries }, null, 2)
+    );
 
     return NextResponse.json({
       success: true,

@@ -13,14 +13,18 @@ import {
   Loader2,
   Paperclip,
   FileDown,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ContentOverlay } from "@/components/ui/content-overlay";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { isPdfOrImageAttachment } from "@/lib/email-providers/interface";
 import { FilePreview } from "./file-preview";
 import {
   useUnifiedFileSearch,
@@ -30,12 +34,75 @@ import {
 import { usePartners } from "@/hooks/use-partners";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
 import { useGmailSearchQueries } from "@/hooks/use-gmail-search-queries";
-import { learnFileSourcePattern } from "@/lib/operations";
+import { addEmailDomainToPartner, learnFileSourcePattern } from "@/lib/operations";
 import { db } from "@/lib/firebase/config";
 import { EmailMessage, EmailAttachment } from "@/types/email-integration";
 import { Transaction } from "@/types/transaction";
 
 const MOCK_USER_ID = "dev-user-123";
+
+const RECEIPT_KEYWORDS = [
+  "invoice",
+  "rechnung",
+  "receipt",
+  "beleg",
+  "quittung",
+  "faktura",
+  "bon",
+  "bill",
+];
+
+const AUTH_ERROR_CODES = new Set([
+  "AUTH_EXPIRED",
+  "TOKEN_EXPIRED",
+  "REAUTH_REQUIRED",
+  "TOKENS_MISSING",
+]);
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildAmountVariants(amountCents?: number | null): string[] {
+  if (amountCents == null) return [];
+  const amount = Math.abs(amountCents) / 100;
+  const fixed = amount.toFixed(2);
+  const withComma = fixed.replace(".", ",");
+  const en = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+  const de = new Intl.NumberFormat("de-DE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+
+  return Array.from(new Set([fixed, withComma, en, de]));
+}
+
+function extractTokens(text?: string | null): string[] {
+  if (!text) return [];
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 3);
+}
+
+function containsAny(haystack: string, needles: string[]): boolean {
+  return needles.some((needle) => haystack.includes(needle));
+}
+
+function extractEmailDomain(email?: string | null): string | null {
+  if (!email) return null;
+  const match = email.toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
+  return match ? match[1] : null;
+}
 
 interface ConnectFileOverlayProps {
   open: boolean;
@@ -97,6 +164,13 @@ export function ConnectFileOverlay({
   const [searchLoading, setSearchLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [emailContentByMessageId, setEmailContentByMessageId] = useState<
+    Record<string, { textBody?: string; htmlBody?: string }>
+  >({});
+  const [lastSearchTerm, setLastSearchTerm] = useState<string | null>(null);
+  const [gmailAuthIssues, setGmailAuthIssues] = useState<
+    Record<string, { code: string; message: string }>
+  >({});
 
   // Hooks
   const { partners } = usePartners();
@@ -105,6 +179,16 @@ export function ConnectFileOverlay({
     () => integrations.filter((i) => i.provider === "gmail"),
     [integrations]
   );
+  const integrationLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const integration of integrations) {
+      map.set(
+        integration.id,
+        integration.displayName || integration.email || integration.provider
+      );
+    }
+    return map;
+  }, [integrations]);
 
   const partner = useMemo(
     () => (transaction?.partnerId ? partners.find((p) => p.id === transaction.partnerId) : null),
@@ -152,9 +236,7 @@ export function ConnectFileOverlay({
     const attachments: GmailAttachmentItem[] = [];
     for (const message of gmailMessages) {
       for (const attachment of message.attachments) {
-        const isPdf = attachment.mimeType === "application/pdf";
-        const isImage = attachment.mimeType.startsWith("image/");
-        if (isPdf || isImage) {
+        if (isPdfOrImageAttachment(attachment.mimeType, attachment.filename)) {
           attachments.push({
             key: `${message.messageId}-${attachment.attachmentId}`,
             attachment,
@@ -183,6 +265,197 @@ export function ConnectFileOverlay({
     if (!selectedAttachmentKey) return null;
     return allAttachments.find((a) => a.key === selectedAttachmentKey) || null;
   }, [allAttachments, selectedAttachmentKey]);
+
+  useEffect(() => {
+    if (!hasSearched || gmailMessages.length === 0) return;
+
+    let cancelled = false;
+
+    const fetchContent = async () => {
+      for (const message of gmailMessages) {
+        if (emailContentByMessageId[message.messageId]) continue;
+
+        try {
+          const response = await fetch("/api/gmail/email-content", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              integrationId: message.integrationId,
+              messageId: message.messageId,
+            }),
+          });
+
+          if (!response.ok) continue;
+          const data = await response.json();
+          if (cancelled) return;
+
+          setEmailContentByMessageId((prev) => ({
+            ...prev,
+            [message.messageId]: {
+              textBody: data.textBody,
+              htmlBody: data.htmlBody,
+            },
+          }));
+        } catch {
+          // Ignore content fetch errors to avoid blocking search UI
+        }
+      }
+    };
+
+    fetchContent();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [gmailMessages, hasSearched, emailContentByMessageId]);
+
+  const attachmentSignals = useMemo(() => {
+    const amountVariants = buildAmountVariants(transaction?.amount);
+    const partnerTokens = [
+      ...extractTokens(partner?.name),
+      ...extractTokens(transaction?.partner),
+    ];
+    const invoiceTokens = [
+      ...extractTokens(transaction?.name),
+      ...extractTokens(transaction?.reference),
+    ];
+    const knownDomains = (partner?.emailDomains || []).map((d) => d.toLowerCase());
+    const gmailPatterns = (partner?.fileSourcePatterns || []).filter(
+      (pattern) => pattern.sourceType === "gmail" && pattern.integrationId
+    );
+
+    const map = new Map<
+      string,
+      { score: number; label: string | null; reasons: string[] }
+    >();
+
+    for (const item of allAttachments) {
+      const message = item.message;
+      const content = emailContentByMessageId[message.messageId];
+      const bodyText = content?.textBody
+        ? content.textBody
+        : content?.htmlBody
+          ? stripHtml(content.htmlBody)
+          : "";
+
+      const combined = [
+        message.subject,
+        message.snippet,
+        message.from,
+        bodyText,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      const filename = item.attachment.filename.toLowerCase();
+      const subject = (message.subject || "").toLowerCase();
+      const senderDomain = extractEmailDomain(message.from);
+
+      let score = 0;
+      const reasons: string[] = [];
+      let dateMultiplier = 1;
+
+      if (item.attachment.isLikelyReceipt) {
+        score += 0.15;
+        reasons.push("Likely receipt file type");
+      }
+      if (containsAny(filename, RECEIPT_KEYWORDS)) {
+        score += 0.25;
+        reasons.push("Filename has invoice keyword");
+      }
+      if (containsAny(subject, RECEIPT_KEYWORDS)) {
+        score += 0.15;
+        reasons.push("Subject has invoice keyword");
+      }
+      if (containsAny(combined, RECEIPT_KEYWORDS)) {
+        score += 0.1;
+        reasons.push("Email text has invoice keyword");
+      }
+
+      if (
+        amountVariants.length > 0 &&
+        containsAny(combined + " " + filename, amountVariants.map((v) => v.toLowerCase()))
+      ) {
+        score += 0.2;
+        reasons.push("Amount appears in email or filename");
+      }
+
+      if (partnerTokens.length > 0 && containsAny(combined, partnerTokens)) {
+        score += 0.1;
+        reasons.push("Partner name appears in email");
+      }
+
+      if (invoiceTokens.length > 0 && containsAny(combined + " " + filename, invoiceTokens)) {
+        score += 0.1;
+        reasons.push("Invoice reference appears in email or filename");
+      }
+
+      if (senderDomain && knownDomains.includes(senderDomain)) {
+        score += 0.2;
+        reasons.push(`Sender domain matches ${senderDomain}`);
+      }
+
+      if (
+        gmailPatterns.some((pattern) => pattern.integrationId === message.integrationId)
+      ) {
+        score += 0.1;
+        reasons.push("Learned Gmail account pattern");
+      }
+
+      if (transactionDate) {
+        const dayDiff =
+          Math.abs(message.date.getTime() - transactionDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (dayDiff <= 7) dateMultiplier = 1;
+        else if (dayDiff <= 14) dateMultiplier = 0.9;
+        else if (dayDiff <= 30) dateMultiplier = 0.8;
+        else if (dayDiff <= 60) dateMultiplier = 0.65;
+        else if (dayDiff <= 90) dateMultiplier = 0.5;
+        else if (dayDiff <= 180) dateMultiplier = 0.35;
+        else dateMultiplier = 0.25;
+        reasons.push(`Date distance ×${dateMultiplier.toFixed(2)}`);
+      }
+
+      score = score * dateMultiplier;
+
+      if (score > 0.95) score = 0.95;
+
+      const label = score >= 0.75 ? "Strong" : score >= 0.4 ? "Likely" : null;
+      map.set(item.key, { score, label, reasons });
+    }
+
+    return map;
+  }, [
+    allAttachments,
+    emailContentByMessageId,
+    partner?.name,
+    partner?.emailDomains,
+    partner?.fileSourcePatterns,
+    transaction?.amount,
+    transaction?.name,
+    transaction?.partner,
+    transaction?.reference,
+    transactionDate,
+  ]);
+
+  const sortedAttachments = useMemo(() => {
+    return [...allAttachments].sort((a, b) => {
+      const aScore = attachmentSignals.get(a.key)?.score ?? 0;
+      const bScore = attachmentSignals.get(b.key)?.score ?? 0;
+      if (bScore !== aScore) return bScore - aScore;
+
+      if (a.attachment.isLikelyReceipt && !b.attachment.isLikelyReceipt) return -1;
+      if (!a.attachment.isLikelyReceipt && b.attachment.isLikelyReceipt) return 1;
+
+      if (transactionDate) {
+        const aDiff = Math.abs(a.message.date.getTime() - transactionDate.getTime());
+        const bDiff = Math.abs(b.message.date.getTime() - transactionDate.getTime());
+        return aDiff - bDiff;
+      }
+
+      return b.message.date.getTime() - a.message.date.getTime();
+    });
+  }, [allAttachments, attachmentSignals, transactionDate]);
 
   // Sort emails by proximity to transaction date
   const sortedEmails = useMemo(() => {
@@ -235,6 +508,51 @@ export function ConnectFileOverlay({
     return "";
   }, [partner?.name, transaction?.partner, transaction?.name, transaction?.reference]);
 
+  const buildGmailQueries = useCallback(
+    (searchWith: string, includeTransactionTokens: boolean) => {
+    const queries = new Set<string>();
+    if (searchWith) {
+      queries.add(searchWith);
+    }
+
+    const isDomain = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(searchWith);
+    const isEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(searchWith);
+    const hasGmailOperator = searchWith.includes(":");
+
+    if (!hasGmailOperator && (isDomain || isEmail)) {
+      queries.add(`from:${searchWith}`);
+    }
+
+    const tokenSources = [searchWith];
+    if (includeTransactionTokens) {
+      if (transaction?.name) tokenSources.push(transaction.name);
+      if (transaction?.reference) tokenSources.push(transaction.reference);
+    }
+
+    const filenameTokens = new Set<string>();
+    for (const source of tokenSources) {
+      if (!/\d/.test(source)) continue;
+      const normalizedSource = source.replace(/\s+/g, "");
+      const patterns = [source, normalizedSource];
+      for (const value of patterns) {
+        const matches =
+          value.match(/\b[A-Za-z]{0,5}-?\d{3,}(?:[./]\d+)?\b/g) || [];
+        for (const match of matches) {
+          const cleaned = match.replace(/[^A-Za-z0-9._-]/g, "");
+          if (cleaned.length > 0) {
+            filenameTokens.add(cleaned);
+          }
+        }
+      }
+    }
+
+    for (const token of filenameTokens) {
+      queries.add(`filename:${token}`);
+    }
+
+    return Array.from(queries);
+  }, [transaction?.name, transaction?.reference]);
+
   // Track transaction ID to detect changes
   const lastTransactionIdRef = useRef<string | null>(null);
 
@@ -273,7 +591,7 @@ export function ConnectFileOverlay({
 
     if (queryToUse) {
       setSearchQuery(queryToUse);
-      setTimeout(() => handleSearch(queryToUse), 50);
+      setTimeout(() => handleSearch(queryToUse, "auto"), 50);
     }
   }, [open, hasSearched, transaction, bestLearnedPattern, simpleSearch]);
 
@@ -282,8 +600,12 @@ export function ConnectFileOverlay({
     integration: { id: string },
     query: string,
     hasAttachments: boolean,
-    expandThreads: boolean = false
-  ): Promise<EmailMessage[]> => {
+    expandThreads: boolean = false,
+    limit: number = 20
+  ): Promise<{
+    messages: EmailMessage[];
+    authIssue?: { integrationId: string; code: string; message: string };
+  }> => {
     try {
       const response = await fetch("/api/gmail/search", {
         method: "POST",
@@ -292,19 +614,41 @@ export function ConnectFileOverlay({
           integrationId: integration.id,
           query,
           hasAttachments,
-          limit: 20,
+          limit,
           expandThreads,
         }),
       });
-      if (!response.ok) return [];
+      if (!response.ok) {
+        let errorData: { error?: string; code?: string } | null = null;
+        try {
+          errorData = await response.json();
+        } catch {
+          errorData = null;
+        }
+
+        if (response.status === 403 && errorData?.code && AUTH_ERROR_CODES.has(errorData.code)) {
+          return {
+            messages: [],
+            authIssue: {
+              integrationId: integration.id,
+              code: errorData.code,
+              message: errorData.error || "Reconnect Gmail to search this inbox.",
+            },
+          };
+        }
+
+        return { messages: [] };
+      }
       const data = await response.json();
-      return (data.messages || []).map((msg: EmailMessage & { date: string }) => ({
-        ...msg,
-        date: new Date(msg.date),
-        integrationId: integration.id,
-      }));
+      return {
+        messages: (data.messages || []).map((msg: EmailMessage & { date: string }) => ({
+          ...msg,
+          date: new Date(msg.date),
+          integrationId: integration.id,
+        })),
+      };
     } catch {
-      return [];
+      return { messages: [] };
     }
   }, []);
 
@@ -319,16 +663,18 @@ export function ConnectFileOverlay({
   };
 
   // Search handler - searches based on active tab
-  const handleSearch = useCallback(async (query?: string) => {
+  const handleSearch = useCallback(async (query?: string, source: "auto" | "manual" = "manual") => {
     const searchWith = query || searchQuery;
     if (!searchWith) return;
 
+    setLastSearchTerm(searchWith);
     setSearchLoading(true);
     setError(null);
     setHasSearched(true);
     setSelectedResult(null);
     setSelectedAttachmentKey(null);
     setSelectedEmail(null);
+    setGmailAuthIssues({});
 
     try {
       // Always search local files
@@ -339,39 +685,58 @@ export function ConnectFileOverlay({
         // Build query variations to find more results
         // 1. Basic query (searches subject, body, etc.)
         // 2. from: query (finds emails from sender/domain matching query)
-        const queries = [searchWith];
-        // Add from: variant if query looks like a company/domain name (no spaces, no special Gmail operators)
-        if (!searchWith.includes(" ") && !searchWith.includes(":")) {
-          queries.push(`from:${searchWith}`);
-        }
+        const queries = buildGmailQueries(searchWith, source === "auto");
 
         // Search for attachments with all query variations
         // expandThreads=true fetches all messages in matching threads for complete attachment coverage
         const attachmentResults = await Promise.all(
           gmailIntegrations.flatMap((integration) =>
-            queries.map((q) => searchGmail(integration, q, true, true))
+            queries.flatMap((q) => [
+              searchGmail(integration, q, true, true, 50),
+              searchGmail(integration, q, false, true, 20),
+            ])
           )
         );
-        setGmailMessages(dedupeMessages(attachmentResults.flat()));
+        const attachmentMessages = attachmentResults.flatMap((result) => result.messages);
+        setGmailMessages(dedupeMessages(attachmentMessages));
 
         // Search for emails with all query variations
         // expandThreads=true ensures we see full thread context for email-to-PDF conversion
         const emailResults = await Promise.all(
           gmailIntegrations.flatMap((integration) =>
-            queries.map((q) => searchGmail(integration, q, false, true))
+            queries.map((q) => searchGmail(integration, q, false, true, 20))
           )
         );
-        setEmails(dedupeMessages(emailResults.flat()));
+        const emailMessages = emailResults.flatMap((result) => result.messages);
+        setEmails(dedupeMessages(emailMessages));
+
+        const issueMap = new Map<string, { code: string; message: string }>();
+        for (const result of [...attachmentResults, ...emailResults]) {
+          if (result.authIssue && !issueMap.has(result.authIssue.integrationId)) {
+            issueMap.set(result.authIssue.integrationId, {
+              code: result.authIssue.code,
+              message: result.authIssue.message,
+            });
+          }
+        }
+        setGmailAuthIssues(Object.fromEntries(issueMap));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
     } finally {
       setSearchLoading(false);
     }
-  }, [searchQuery, searchLocalFiles, hasGmailIntegration, gmailIntegrations, searchGmail]);
+  }, [
+    searchQuery,
+    searchLocalFiles,
+    hasGmailIntegration,
+    gmailIntegrations,
+    searchGmail,
+    buildGmailQueries,
+  ]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Enter") handleSearch();
+    if (e.key === "Enter") handleSearch(undefined, "manual");
   }, [handleSearch]);
 
   // Handle selecting a local file
@@ -407,6 +772,37 @@ export function ConnectFileOverlay({
     }
   };
 
+  const gmailAuthIssueList = useMemo(() => {
+    if (Object.keys(gmailAuthIssues).length === 0) return [];
+    return Object.entries(gmailAuthIssues).map(([integrationId, issue]) => {
+      const integration = integrations.find((item) => item.id === integrationId);
+      const providerLabel = integration?.provider
+        ? `${integration.provider.charAt(0).toUpperCase()}${integration.provider.slice(1)}`
+        : "Email";
+      return {
+        integrationId,
+        email: integration?.email || integration?.displayName || "Gmail",
+        providerLabel,
+        message: issue.message,
+      };
+    });
+  }, [gmailAuthIssues, integrations]);
+
+  const reconnectReturnTo = useMemo(() => {
+    if (typeof window === "undefined") return "/integrations";
+    const pathname = window.location.pathname;
+    const searchParams = new URLSearchParams(window.location.search);
+    if (transaction?.id) {
+      if (!searchParams.get("id")) {
+        searchParams.set("id", transaction.id);
+      }
+      if (searchParams.get("connect") !== "true") {
+        searchParams.set("connect", "true");
+      }
+    }
+    return `${pathname}?${searchParams.toString()}`;
+  }, [transaction?.id]);
+
   // Handle saving Gmail attachment
   const handleSaveAttachment = async () => {
     if (!selectedAttachment) return;
@@ -434,7 +830,44 @@ export function ConnectFileOverlay({
       }
 
       const data = await response.json();
-      await onSelect(data.fileId, { sourceType: "gmail" });
+      const searchPattern = lastSearchTerm || searchQuery || undefined;
+      await onSelect(data.fileId, {
+        sourceType: "gmail",
+        searchPattern,
+        gmailIntegrationId: selectedAttachment.integrationId,
+        gmailMessageId: selectedAttachment.attachment.messageId,
+      });
+
+      if (partner && searchPattern && transaction) {
+        try {
+          await learnFileSourcePattern(
+            { db, userId: MOCK_USER_ID },
+            partner.id,
+            transaction.id,
+            {
+              sourceType: "gmail",
+              searchPattern,
+              integrationId: selectedAttachment.integrationId,
+            }
+          );
+        } catch (err) {
+          console.error("Failed to learn file source pattern:", err);
+        }
+      }
+
+      const senderDomain = extractEmailDomain(selectedAttachment.message.from);
+      if (partner && senderDomain) {
+        try {
+          await addEmailDomainToPartner(
+            { db, userId: MOCK_USER_ID },
+            partner.id,
+            senderDomain
+          );
+        } catch (err) {
+          console.error("Failed to learn email domain:", err);
+        }
+      }
+
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save attachment");
@@ -541,7 +974,8 @@ export function ConnectFileOverlay({
   const loading = searchLoading || localFilesLoading;
 
   return (
-    <ContentOverlay open={open} onClose={onClose} title="Connect File to Transaction" subtitle={subtitle}>
+    <TooltipProvider>
+      <ContentOverlay open={open} onClose={onClose} title="Connect File to Transaction" subtitle={subtitle}>
       <div className="flex h-full">
         {/* Left sidebar: Search + Tabs + Results */}
         <div className="w-[350px] shrink-0 border-r flex flex-col min-h-0">
@@ -565,7 +999,7 @@ export function ConnectFileOverlay({
                     )}
                     onClick={() => {
                       setSearchQuery(query);
-                      handleSearch(query);
+                      handleSearch(query, "manual");
                     }}
                   >
                     {query}
@@ -586,7 +1020,7 @@ export function ConnectFileOverlay({
               />
             </div>
 
-            <Button onClick={() => handleSearch()} disabled={loading} className="w-full">
+            <Button onClick={() => handleSearch(undefined, "manual")} disabled={loading} className="w-full">
               {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
               Search
             </Button>
@@ -624,6 +1058,33 @@ export function ConnectFileOverlay({
                 )}
               </TabsTrigger>
             </TabsList>
+
+            {gmailAuthIssueList.length > 0 && (
+              <div className="px-4 py-2 text-xs text-amber-700 bg-amber-50 border-b flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-medium">Reconnect Search Integration</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {gmailAuthIssueList.map((issue) => (
+                      <Button
+                        key={issue.integrationId}
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-3 border-amber-200 text-amber-700 hover:bg-amber-100"
+                        asChild
+                      >
+                        <a
+                          href={`/integrations/${issue.integrationId}?toggleReconnect=true&returnTo=${encodeURIComponent(reconnectReturnTo)}`}
+                        >
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                          {issue.providerLabel}: {issue.email}
+                        </a>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Files Tab Results */}
             <TabsContent value="files" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden" forceMount>
@@ -716,9 +1177,14 @@ export function ConnectFileOverlay({
                   </div>
                 ) : (
                   <div className="p-2 space-y-1">
-                    {allAttachments.map((item) => {
+                    {sortedAttachments.map((item) => {
                       const isSelected = selectedAttachmentKey === item.key;
-                      const isPdf = item.attachment.mimeType === "application/pdf";
+                      const isPdf =
+                        item.attachment.mimeType === "application/pdf" ||
+                        (item.attachment.mimeType === "application/octet-stream" &&
+                          item.attachment.filename.toLowerCase().endsWith(".pdf"));
+                      const signal = attachmentSignals.get(item.key);
+                      const confidence = signal ? Math.round(signal.score * 100) : null;
 
                       return (
                         <button
@@ -726,7 +1192,7 @@ export function ConnectFileOverlay({
                           type="button"
                           onClick={() => setSelectedAttachmentKey(item.key)}
                           className={cn(
-                            "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors",
+                            "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors min-w-0 overflow-hidden",
                             isSelected && "bg-primary/10 ring-1 ring-primary",
                             !isSelected && "hover:bg-muted"
                           )}
@@ -734,15 +1200,43 @@ export function ConnectFileOverlay({
                           <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
                             {isPdf ? <FileText className="h-5 w-5 text-red-500" /> : <Image className="h-5 w-5 text-blue-500" />}
                           </div>
-                          <div className="flex-1 min-w-0">
+                          <div className="flex-1 min-w-0 overflow-hidden">
                             <p className="text-sm font-medium truncate">{item.attachment.filename}</p>
-                            <p className="text-xs text-muted-foreground truncate">{item.message.fromName || item.message.from}</p>
-                            <div className="flex items-center gap-2 mt-0.5">
+                            <p className="text-xs text-muted-foreground truncate">
+                              {item.message.fromName || item.message.from}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground truncate">
+                              {integrationLabels.get(item.message.integrationId) || "Gmail"}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-2 mt-0.5 min-w-0">
                               <span className="text-xs text-muted-foreground">{format(item.message.date, "MMM d, yyyy")}</span>
                               <span className="text-xs text-muted-foreground">·</span>
                               <span className="text-xs text-muted-foreground">{Math.round(item.attachment.size / 1024)} KB</span>
-                              {item.attachment.isLikelyReceipt && (
-                                <Badge variant="secondary" className="text-xs py-0 h-4 text-green-600">Likely</Badge>
+                              {signal?.label && (
+                                <Badge variant="secondary" className="text-xs py-0 h-4 text-green-600">
+                                  {signal.label}
+                                </Badge>
+                              )}
+                              {confidence !== null && confidence > 0 && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="text-xs py-0 h-4">
+                                      {confidence}%
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[260px] text-xs">
+                                    <div className="font-medium mb-1">Confidence signals</div>
+                                    <div className="space-y-0.5">
+                                      {signal?.reasons?.length
+                                        ? signal.reasons.map((reason, index) => (
+                                            <div key={`${item.key}-reason-${index}`}>
+                                              {reason}
+                                            </div>
+                                          ))
+                                        : "No signals yet"}
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
                               )}
                             </div>
                           </div>
@@ -906,5 +1400,6 @@ export function ConnectFileOverlay({
         </div>
       </div>
     </ContentOverlay>
+    </TooltipProvider>
   );
 }

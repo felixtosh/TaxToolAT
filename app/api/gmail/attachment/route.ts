@@ -13,6 +13,16 @@ const TOKENS_COLLECTION = "emailTokens";
 const FILES_COLLECTION = "files";
 const TRANSACTIONS_COLLECTION = "transactions";
 
+function normalizeMimeType(mimeType: string, filename: string): string {
+  if (
+    mimeType === "application/octet-stream" &&
+    filename.toLowerCase().endsWith(".pdf")
+  ) {
+    return "application/pdf";
+  }
+  return mimeType;
+}
+
 /**
  * GET /api/gmail/attachment
  * Download attachment for preview
@@ -66,12 +76,16 @@ export async function GET(request: NextRequest) {
       mimeType: mimeType || undefined,
       filename: filename || undefined,
     });
+    const normalizedMimeType = normalizeMimeType(
+      attachment.mimeType,
+      attachment.filename
+    );
 
     // Return the attachment data with appropriate headers
     // Convert Buffer to Uint8Array for NextResponse compatibility
     return new NextResponse(new Uint8Array(attachment.data), {
       headers: {
-        "Content-Type": attachment.mimeType,
+        "Content-Type": normalizedMimeType,
         "Content-Disposition": `inline; filename="${attachment.filename}"`,
         "Content-Length": String(attachment.size),
       },
@@ -159,6 +173,10 @@ export async function POST(request: NextRequest) {
       mimeType: mimeType || undefined,
       filename: filename || undefined,
     });
+    const normalizedMimeType = normalizeMimeType(
+      attachment.mimeType,
+      attachment.filename
+    );
 
     // Calculate file hash for deduplication
     const fileHash = createHash("sha256").update(attachment.data).digest("hex");
@@ -170,7 +188,7 @@ export async function POST(request: NextRequest) {
     const storageRef = ref(storage, storagePath);
 
     await uploadBytes(storageRef, attachment.data, {
-      contentType: attachment.mimeType,
+      contentType: normalizedMimeType,
       customMetadata: {
         originalName: attachment.filename,
         gmailMessageId: messageId,
@@ -185,7 +203,7 @@ export async function POST(request: NextRequest) {
     const fileData = {
       userId: MOCK_USER_ID,
       fileName: attachment.filename,
-      fileType: attachment.mimeType,
+      fileType: normalizedMimeType,
       fileSize: attachment.size,
       storagePath,
       downloadUrl,

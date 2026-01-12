@@ -134,6 +134,16 @@ export function isLikelyReceiptAttachment(
   filename: string,
   mimeType: string
 ): boolean {
+  const normalizedMimeType = mimeType.toLowerCase();
+  const normalizedFilename = filename.toLowerCase();
+  const looksLikePdfOrImage =
+    normalizedFilename.endsWith(".pdf") ||
+    /\.(png|jpe?g|gif|webp)$/.test(normalizedFilename);
+
+  if (normalizedMimeType === "application/octet-stream" && looksLikePdfOrImage) {
+    return true;
+  }
+
   // Check MIME type - PDFs and images are most common for receipts
   const receiptMimeTypes = [
     "application/pdf",
@@ -143,12 +153,11 @@ export function isLikelyReceiptAttachment(
     "image/webp",
   ];
 
-  if (!receiptMimeTypes.includes(mimeType.toLowerCase())) {
+  if (!receiptMimeTypes.includes(normalizedMimeType)) {
     return false;
   }
 
   // Check filename for receipt/invoice indicators
-  const lowerFilename = filename.toLowerCase();
   const receiptKeywords = [
     "invoice",
     "receipt",
@@ -167,7 +176,7 @@ export function isLikelyReceiptAttachment(
   ];
 
   // If filename contains receipt keywords, definitely likely
-  if (receiptKeywords.some((kw) => lowerFilename.includes(kw))) {
+  if (receiptKeywords.some((kw) => normalizedFilename.includes(kw))) {
     return true;
   }
 
@@ -178,6 +187,30 @@ export function isLikelyReceiptAttachment(
 
   // Images with generic names might be receipts
   // but we'll be conservative
+  return false;
+}
+
+/**
+ * Helper to determine if an attachment should be treated as a PDF or image.
+ * Gmail sometimes reports real PDFs as application/octet-stream.
+ */
+export function isPdfOrImageAttachment(
+  mimeType: string,
+  filename: string
+): boolean {
+  const normalizedType = (mimeType || "").toLowerCase();
+  const normalizedName = (filename || "").toLowerCase();
+  const isPdfExt = normalizedName.endsWith(".pdf");
+  const isImageExt = /\.(png|jpe?g|gif|webp)$/.test(normalizedName);
+
+  if (normalizedType === "application/pdf" || normalizedType.startsWith("image/")) {
+    return true;
+  }
+
+  if (normalizedType === "application/octet-stream" && (isPdfExt || isImageExt)) {
+    return true;
+  }
+
   return false;
 }
 

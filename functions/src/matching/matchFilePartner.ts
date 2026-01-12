@@ -12,6 +12,7 @@
 
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { createLocalPartnerFromGlobal } from "./createLocalPartnerFromGlobal";
 import { isValidCompanyName } from "../utils/companyNameValidator";
 import {
   matchFileToAllPartners,
@@ -404,6 +405,135 @@ async function markPartnerMatchComplete(
   }
 
   await db.collection("files").doc(fileId).update(update);
+
+  if (partnerId) {
+    const mergedFileData = {
+      ...fileDoc.data(),
+      partnerId,
+      partnerType,
+      partnerMatchedBy: matchedBy,
+      partnerMatchConfidence: confidence,
+    };
+    await syncPartnerToConnectedTransactions(fileId, mergedFileData);
+  }
+}
+
+type PartnerMatchedBy = "manual" | "suggestion" | "auto" | null;
+
+function resolvePartnerConflictWithConfidence(
+  filePartnerId: string | null | undefined,
+  fileMatchedBy: PartnerMatchedBy,
+  fileConfidence: number | null | undefined,
+  txPartnerId: string | null | undefined,
+  txMatchedBy: PartnerMatchedBy,
+  txConfidence: number | null | undefined
+): { winnerId: string | null; source: "file" | "transaction" | null; shouldSync: boolean } {
+  const filePid = filePartnerId ?? null;
+  const txPid = txPartnerId ?? null;
+
+  if (!filePid && !txPid) {
+    return { winnerId: null, source: null, shouldSync: false };
+  }
+  if (filePid && !txPid) {
+    return { winnerId: filePid, source: "file", shouldSync: true };
+  }
+  if (txPid && !filePid) {
+    return { winnerId: txPid, source: "transaction", shouldSync: true };
+  }
+
+  const fileIsManual = fileMatchedBy === "manual";
+  const txIsManual = txMatchedBy === "manual";
+
+  if (fileIsManual && txIsManual) {
+    return { winnerId: null, source: null, shouldSync: false };
+  }
+  if (fileIsManual && !txIsManual) {
+    return { winnerId: filePid!, source: "file", shouldSync: true };
+  }
+  if (txIsManual && !fileIsManual) {
+    return { winnerId: txPid!, source: "transaction", shouldSync: true };
+  }
+
+  const fileConf = fileConfidence ?? 0;
+  const txConf = txConfidence ?? 0;
+
+  if (fileConf > txConf) {
+    return { winnerId: filePid!, source: "file", shouldSync: true };
+  }
+  if (txConf > fileConf) {
+    return { winnerId: txPid!, source: "transaction", shouldSync: true };
+  }
+
+  return { winnerId: txPid!, source: "transaction", shouldSync: true };
+}
+
+async function syncPartnerToConnectedTransactions(
+  fileId: string,
+  fileData: FirebaseFirestore.DocumentData
+): Promise<void> {
+  if (!fileData.partnerId) return;
+
+  const transactionIds = new Set<string>();
+
+  const connectionsSnap = await db
+    .collection("fileConnections")
+    .where("fileId", "==", fileId)
+    .get();
+
+  for (const connection of connectionsSnap.docs) {
+    const connectionData = connection.data();
+    if (connectionData.transactionId) {
+      transactionIds.add(connectionData.transactionId);
+    }
+  }
+
+  if (Array.isArray(fileData.transactionIds)) {
+    for (const txId of fileData.transactionIds) {
+      if (typeof txId === "string") {
+        transactionIds.add(txId);
+      }
+    }
+  }
+
+  if (transactionIds.size === 0) return;
+
+  const now = Timestamp.now();
+
+  for (const transactionId of transactionIds) {
+    if (!transactionId) continue;
+
+    const txRef = db.collection("transactions").doc(transactionId);
+    const txDoc = await txRef.get();
+    if (!txDoc.exists) continue;
+
+    const txData = txDoc.data()!;
+    if (txData.userId !== fileData.userId) continue;
+
+    const resolution = resolvePartnerConflictWithConfidence(
+      fileData.partnerId,
+      fileData.partnerMatchedBy as PartnerMatchedBy,
+      fileData.partnerMatchConfidence,
+      txData.partnerId ?? null,
+      (txData.partnerMatchedBy as PartnerMatchedBy) ?? null,
+      txData.partnerMatchConfidence ?? null
+    );
+
+    if (!resolution.shouldSync || resolution.source !== "file") {
+      continue;
+    }
+
+    await txRef.update({
+      partnerId: fileData.partnerId,
+      partnerType: fileData.partnerType ?? null,
+      partnerMatchedBy: fileData.partnerMatchedBy === "manual" ? "manual" : "auto",
+      partnerMatchConfidence: fileData.partnerMatchConfidence ?? null,
+      updatedAt: now,
+    });
+
+    console.log(
+      `[PartnerMatch] Synced partner ${fileData.partnerId} from file ${fileId} to transaction ${transactionId}`
+    );
+  }
 }
 
 /**
@@ -471,41 +601,6 @@ async function createUserPartnerFromLookup(
 
   const docRef = await db.collection("partners").add(partnerData);
   console.log(`[PartnerMatch] Created new partner ${docRef.id} from lookup for "${originalExtractedName}"`);
-  return docRef.id;
-}
-
-/**
- * Create a local user partner copy from a global partner
- */
-async function createLocalPartnerFromGlobal(
-  userId: string,
-  globalPartnerId: string
-): Promise<string> {
-  const globalDoc = await db.collection("globalPartners").doc(globalPartnerId).get();
-  if (!globalDoc.exists) {
-    throw new Error(`Global partner ${globalPartnerId} not found`);
-  }
-
-  const globalData = globalDoc.data()!;
-
-  const partnerData: Record<string, unknown> = {
-    userId,
-    name: globalData.name,
-    aliases: globalData.aliases || [],
-    website: globalData.website || null,
-    vatId: globalData.vatId || null,
-    country: globalData.country || null,
-    ibans: globalData.ibans || [],
-    address: globalData.address || null,
-    isActive: true,
-    globalPartnerId: globalPartnerId, // Link to global
-    createdAt: Timestamp.now(),
-    updatedAt: Timestamp.now(),
-    createdBy: "auto_partner_match",
-  };
-
-  const docRef = await db.collection("partners").add(partnerData);
-  console.log(`[PartnerMatch] Created local partner ${docRef.id} from global ${globalPartnerId}`);
   return docRef.id;
 }
 
@@ -910,6 +1005,14 @@ export const matchFilePartner = onDocumentUpdated(
 
     // Skip if partner matching already done
     if (!extractionJustCompleted || after.partnerMatchComplete) {
+      if (
+        before.partnerId !== after.partnerId &&
+        after.partnerId &&
+        after.partnerMatchComplete === true &&
+        !extractionJustCompleted
+      ) {
+        await syncPartnerToConnectedTransactions(fileId, after);
+      }
       return;
     }
 

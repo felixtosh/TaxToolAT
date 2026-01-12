@@ -28,8 +28,14 @@ export function FilePreview({
   fullSize = false,
   active = false,
 }: FilePreviewProps) {
-  const isPdf = fileType === "application/pdf";
-  const isImage = fileType.startsWith("image/");
+  const lowerName = fileName.toLowerCase();
+  const isPdf =
+    fileType === "application/pdf" ||
+    (fileType === "application/octet-stream" && lowerName.endsWith(".pdf"));
+  const isImage =
+    fileType.startsWith("image/") ||
+    (fileType === "application/octet-stream" &&
+      /\.(png|jpe?g|gif|webp)$/.test(lowerName));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -85,6 +91,20 @@ export function FilePreview({
   // Get file extension for badge
   const getFileExtension = () => {
     if (isPdf) return "PDF";
+    if (isImage) {
+      if (fileType.startsWith("image/")) {
+        const ext = fileType.split("/")[1]?.toUpperCase();
+        return ext === "JPEG" ? "JPG" : ext;
+      }
+      if (/\.(png|jpe?g|gif|webp)$/.test(lowerName)) {
+        const ext = lowerName.split(".").pop()?.toUpperCase();
+        return ext === "JPEG" ? "JPG" : ext || "IMG";
+      }
+      return "IMG";
+    }
+    if (fileType === "application/octet-stream" && lowerName.endsWith(".pdf")) {
+      return "PDF";
+    }
     if (fileType.startsWith("image/")) {
       const ext = fileType.split("/")[1]?.toUpperCase();
       return ext === "JPEG" ? "JPG" : ext;

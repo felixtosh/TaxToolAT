@@ -678,39 +678,46 @@ export async function connectFileToTransaction(
   };
 
   // 4. Partner sync: Resolve conflict and sync partner bidirectionally
-  const resolution = resolvePartnerConflict(
-    file.partnerId,
-    file.partnerMatchedBy as PartnerMatchedBy,
-    file.partnerMatchConfidence,
-    txData.partnerId,
-    txData.partnerMatchedBy as PartnerMatchedBy,
-    txData.partnerMatchConfidence
-  );
+  // Defer partner sync until extraction completes so file partner is authoritative.
+  if (file.extractionComplete === true) {
+    const resolution = resolvePartnerConflict(
+      file.partnerId,
+      file.partnerMatchedBy as PartnerMatchedBy,
+      file.partnerMatchConfidence,
+      txData.partnerId,
+      txData.partnerMatchedBy as PartnerMatchedBy,
+      txData.partnerMatchConfidence
+    );
 
-  if (resolution.shouldSync && resolution.winnerId) {
-    if (resolution.source === "file") {
-      // File wins → sync file's partner to transaction
-      transactionUpdates.partnerId = file.partnerId;
-      transactionUpdates.partnerType = file.partnerType;
-      // Keep "auto" if syncing, unless file was manual
-      transactionUpdates.partnerMatchedBy = file.partnerMatchedBy === "manual" ? "manual" : "auto";
-      transactionUpdates.partnerMatchConfidence = file.partnerMatchConfidence ?? null;
-      console.log(
-        `[FileConnect] Synced partner ${file.partnerId} from file to transaction ${transactionId} ` +
-        `(file: ${file.partnerMatchConfidence ?? 0}% vs tx: ${txData.partnerMatchConfidence ?? 0}%)`
-      );
-    } else if (resolution.source === "transaction") {
-      // Transaction wins → sync transaction's partner to file
-      fileUpdates.partnerId = txData.partnerId;
-      fileUpdates.partnerType = txData.partnerType;
-      // Keep "auto" if syncing, unless transaction was manual
-      fileUpdates.partnerMatchedBy = txData.partnerMatchedBy === "manual" ? "manual" : "auto";
-      fileUpdates.partnerMatchConfidence = txData.partnerMatchConfidence ?? null;
-      console.log(
-        `[FileConnect] Synced partner ${txData.partnerId} from transaction to file ${fileId} ` +
-        `(tx: ${txData.partnerMatchConfidence ?? 0}% vs file: ${file.partnerMatchConfidence ?? 0}%)`
-      );
+    if (resolution.shouldSync && resolution.winnerId) {
+      if (resolution.source === "file") {
+        // File wins → sync file's partner to transaction
+        transactionUpdates.partnerId = file.partnerId;
+        transactionUpdates.partnerType = file.partnerType;
+        // Keep "auto" if syncing, unless file was manual
+        transactionUpdates.partnerMatchedBy = file.partnerMatchedBy === "manual" ? "manual" : "auto";
+        transactionUpdates.partnerMatchConfidence = file.partnerMatchConfidence ?? null;
+        console.log(
+          `[FileConnect] Synced partner ${file.partnerId} from file to transaction ${transactionId} ` +
+          `(file: ${file.partnerMatchConfidence ?? 0}% vs tx: ${txData.partnerMatchConfidence ?? 0}%)`
+        );
+      } else if (resolution.source === "transaction") {
+        // Transaction wins → sync transaction's partner to file
+        fileUpdates.partnerId = txData.partnerId;
+        fileUpdates.partnerType = txData.partnerType;
+        // Keep "auto" if syncing, unless transaction was manual
+        fileUpdates.partnerMatchedBy = txData.partnerMatchedBy === "manual" ? "manual" : "auto";
+        fileUpdates.partnerMatchConfidence = txData.partnerMatchConfidence ?? null;
+        console.log(
+          `[FileConnect] Synced partner ${txData.partnerId} from transaction to file ${fileId} ` +
+          `(tx: ${txData.partnerMatchConfidence ?? 0}% vs file: ${file.partnerMatchConfidence ?? 0}%)`
+        );
+      }
     }
+  } else {
+    console.log(
+      `[FileConnect] Deferred partner sync for file ${fileId} until extraction completes`
+    );
   }
 
   batch.update(fileRef, fileUpdates);

@@ -605,8 +605,7 @@ export async function pauseActiveSyncForIntegration(
     collection(ctx.db, GMAIL_SYNC_QUEUE_COLLECTION),
     where("integrationId", "==", integrationId),
     where("status", "in", ["pending", "processing"]),
-    orderBy("createdAt", "desc"),
-    limit(1)
+    orderBy("createdAt", "desc")
   );
 
   const snapshot = await getDocs(q);
@@ -614,17 +613,20 @@ export async function pauseActiveSyncForIntegration(
     return null;
   }
 
-  const docSnap = snapshot.docs[0];
-  const queueItem = { id: docSnap.id, ...docSnap.data() } as GmailSyncQueueItem;
+  const preferredDoc = snapshot.docs.find((docSnap) => docSnap.data().status === "processing")
+    || snapshot.docs[0];
+  const queueItem = { id: preferredDoc.id, ...preferredDoc.data() } as GmailSyncQueueItem;
 
-  // Mark as paused
-  await updateDoc(doc(ctx.db, GMAIL_SYNC_QUEUE_COLLECTION, docSnap.id), {
-    status: "paused",
-    completedAt: Timestamp.now(),
-  });
+  const pausedAt = Timestamp.now();
+  await Promise.all(
+    snapshot.docs.map((docSnap) => updateDoc(docSnap.ref, {
+      status: "paused",
+      completedAt: pausedAt,
+    }))
+  );
 
   console.log(
-    `[GmailSync] Paused sync ${docSnap.id} for integration ${integrationId} ` +
+    `[GmailSync] Paused sync ${queueItem.id} for integration ${integrationId} ` +
     `(${queueItem.filesCreated} files, ${queueItem.emailsProcessed} emails)`
   );
 

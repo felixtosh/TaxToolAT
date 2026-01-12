@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { format } from "date-fns";
+import { format, isValid } from "date-fns";
 import {
   Building2,
   FileText,
@@ -53,8 +53,8 @@ interface SearchHistoryEntry {
   totalFilesConnected: number;
   automationSource?: SearchStrategy;
   totalGeminiCalls?: number;
-  createdAt: { _seconds: number };
-  completedAt?: { _seconds: number };
+  createdAt: { _seconds?: number; seconds?: number };
+  completedAt?: { _seconds?: number; seconds?: number };
   attempts: SearchAttemptEntry[];
 }
 
@@ -66,10 +66,28 @@ interface SearchAttemptEntry {
   error?: string;
   searchParams?: {
     query?: string;
+    queries?: string[];
+    queryReasoning?: string;
+    transactionName?: string;
     partnerId?: string;
+    amount?: number;
     amountRange?: { min: number; max: number };
+    dateRange?: { from: string; to: string };
+    integrationIds?: string[];
   };
 }
+
+const PRECISION_STRATEGY_ORDER: SearchStrategy[] = [
+  "partner_files",
+  "amount_files",
+  "email_attachment",
+  "email_invoice",
+];
+
+const STEP_STRATEGY_MAP: Record<string, SearchStrategy[]> = {
+  "file-transaction-matching": ["partner_files", "amount_files"],
+  "file-gmail-search": ["email_attachment", "email_invoice"],
+};
 
 /**
  * Icon name to component mapping
@@ -346,6 +364,10 @@ function getOutcomeLabel(outcome: AutomationOutcome): string {
   }
 }
 
+function getTimestampSeconds(value?: { _seconds?: number; seconds?: number }) {
+  return value?._seconds ?? value?.seconds ?? null;
+}
+
 export function AutomationHistoryDialog({
   open,
   onClose,
@@ -422,6 +444,48 @@ export function AutomationHistoryDialog({
   const PipelineIcon = ICON_MAP[pipeline.icon] || Sparkles;
   const selectedStep = pipeline.steps.find(s => s.id === selectedStepId);
   const selectedResult = results.find(r => r.stepId === selectedStepId);
+  const selectedStrategies = selectedStepId
+    ? STEP_STRATEGY_MAP[selectedStepId] ?? []
+    : null;
+
+  const filteredSearchHistory = React.useMemo(() => {
+    if (pipelineId !== "find-file") return [];
+    if (selectedStrategies === null) {
+      return searchHistory;
+    }
+    if (selectedStrategies.length === 0) return [];
+
+    return searchHistory
+      .map((entry) => {
+        const attempts = entry.attempts.filter((attempt) =>
+          selectedStrategies.includes(attempt.strategy)
+        );
+        if (attempts.length === 0) return null;
+
+        const strategiesAttempted = entry.strategiesAttempted.filter((strategy) =>
+          selectedStrategies.includes(strategy)
+        );
+
+        const sortedAttempts = [...attempts].sort(
+          (a, b) =>
+            PRECISION_STRATEGY_ORDER.indexOf(a.strategy) -
+            PRECISION_STRATEGY_ORDER.indexOf(b.strategy)
+        );
+
+        const sortedStrategies = [...strategiesAttempted].sort(
+          (a, b) =>
+            PRECISION_STRATEGY_ORDER.indexOf(a) -
+            PRECISION_STRATEGY_ORDER.indexOf(b)
+        );
+
+        return {
+          ...entry,
+          attempts: sortedAttempts,
+          strategiesAttempted: sortedStrategies,
+        };
+      })
+      .filter((entry): entry is SearchHistoryEntry => entry !== null);
+  }, [pipelineId, searchHistory, selectedStrategies]);
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -644,14 +708,20 @@ export function AutomationHistoryDialog({
                             <Loader2 className="h-4 w-4 animate-spin" />
                             Loading history...
                           </div>
-                        ) : searchHistory.length === 0 ? (
+                        ) : filteredSearchHistory.length === 0 ? (
                           <p className="text-sm text-muted-foreground py-2">
                             No search runs recorded yet
                           </p>
                         ) : (
-                          searchHistory.map((entry) => {
+                          filteredSearchHistory.map((entry) => {
                             const isExpanded = expandedEntryId === entry.id;
-                            const entryDate = new Date(entry.createdAt._seconds * 1000);
+                            const entrySeconds = getTimestampSeconds(entry.createdAt);
+                            const entryDate = entrySeconds
+                              ? new Date(entrySeconds * 1000)
+                              : null;
+                            const entryDateLabel = entryDate && isValid(entryDate)
+                              ? format(entryDate, "MMM d, HH:mm")
+                              : "Unknown time";
 
                             return (
                               <div
@@ -672,7 +742,7 @@ export function AutomationHistoryDialog({
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2">
                                       <span className="text-sm font-medium">
-                                        {format(entryDate, "MMM d, HH:mm")}
+                                        {entryDateLabel}
                                       </span>
                                       <Badge
                                         variant={entry.status === "completed" ? "secondary" : "destructive"}
@@ -726,16 +796,67 @@ export function AutomationHistoryDialog({
                                           </div>
 
                                           {/* Search params (debug info) */}
-                                          {attempt.searchParams?.query && (
-                                            <div className="mt-1 p-1.5 bg-background/50 rounded font-mono text-xs break-all">
-                                              <span className="text-muted-foreground">Query: </span>
-                                              {attempt.searchParams.query}
-                                            </div>
-                                          )}
-
-                                          {attempt.searchParams?.amountRange && (
-                                            <div className="mt-1 text-muted-foreground">
-                                              Amount: €{(attempt.searchParams.amountRange.min / 100).toFixed(2)} - €{(attempt.searchParams.amountRange.max / 100).toFixed(2)}
+                                          {(attempt.searchParams?.query ||
+                                            attempt.searchParams?.queries?.length ||
+                                            attempt.searchParams?.queryReasoning ||
+                                            attempt.searchParams?.transactionName ||
+                                            attempt.searchParams?.partnerId ||
+                                            attempt.searchParams?.amount != null ||
+                                            attempt.searchParams?.amountRange ||
+                                            attempt.searchParams?.dateRange ||
+                                            attempt.searchParams?.integrationIds?.length) && (
+                                            <div className="mt-1 space-y-1">
+                                              {attempt.searchParams?.transactionName && (
+                                                <div className="text-muted-foreground">
+                                                  Transaction: {attempt.searchParams.transactionName}
+                                                </div>
+                                              )}
+                                              {attempt.searchParams?.partnerId && (
+                                                <div className="text-muted-foreground">
+                                                  Partner ID: {attempt.searchParams.partnerId}
+                                                </div>
+                                              )}
+                                              {attempt.searchParams?.amount != null && (
+                                                <div className="text-muted-foreground">
+                                                  Amount (cents): {attempt.searchParams.amount}
+                                                </div>
+                                              )}
+                                              {attempt.searchParams?.amountRange && (
+                                                <div className="text-muted-foreground">
+                                                  Amount range: €{(attempt.searchParams.amountRange.min / 100).toFixed(2)} - €{(attempt.searchParams.amountRange.max / 100).toFixed(2)}
+                                                </div>
+                                              )}
+                                              {attempt.searchParams?.dateRange && (
+                                                <div className="text-muted-foreground">
+                                                  Date range: {attempt.searchParams.dateRange.from} - {attempt.searchParams.dateRange.to}
+                                                </div>
+                                              )}
+                                              {attempt.searchParams?.integrationIds?.length && (
+                                                <div className="text-muted-foreground">
+                                                  Integrations: {attempt.searchParams.integrationIds.join(", ")}
+                                                </div>
+                                              )}
+                                              {attempt.searchParams?.queryReasoning && (
+                                                <div className="text-muted-foreground">
+                                                  Reasoning: {attempt.searchParams.queryReasoning}
+                                                </div>
+                                              )}
+                                              {attempt.searchParams?.query && (
+                                                <div className="p-1.5 bg-background/50 rounded font-mono text-xs break-all">
+                                                  <span className="text-muted-foreground">Query: </span>
+                                                  {attempt.searchParams.query}
+                                                </div>
+                                              )}
+                                              {attempt.searchParams?.queries?.length && (
+                                                <div className="p-1.5 bg-background/50 rounded font-mono text-xs break-all space-y-1">
+                                                  <span className="text-muted-foreground">Queries:</span>
+                                                  {attempt.searchParams.queries.map((query, queryIndex) => (
+                                                    <div key={`${attempt.strategy}-query-${queryIndex}`}>
+                                                      {query}
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
                                             </div>
                                           )}
 

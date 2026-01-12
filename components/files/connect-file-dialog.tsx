@@ -42,7 +42,7 @@ import {
   TransactionInfo,
 } from "@/hooks/use-unified-file-search";
 import { usePartners } from "@/hooks/use-partners";
-import { learnFileSourcePattern } from "@/lib/operations";
+import { addEmailDomainToPartner, learnFileSourcePattern } from "@/lib/operations";
 import { db, functions } from "@/lib/firebase/config";
 import { httpsCallable } from "firebase/functions";
 import { GmailAttachmentsTab } from "./connect-transaction-tabs/gmail-attachments-tab";
@@ -143,11 +143,15 @@ export function ConnectFileDialog({
     }
   );
 
-  // Get best learned file source pattern for this partner
+  // Get best learned local file source pattern for this partner
   const bestLearnedPattern = useMemo(() => {
     if (!partner?.fileSourcePatterns?.length) return null;
+    const localPatterns = partner.fileSourcePatterns.filter(
+      (pattern) => pattern.sourceType === "local"
+    );
+    if (localPatterns.length === 0) return null;
     // Sort by usage count (most used first), then by confidence
-    const sorted = [...partner.fileSourcePatterns].sort((a, b) => {
+    const sorted = [...localPatterns].sort((a, b) => {
       if (b.usageCount !== a.usageCount) return b.usageCount - a.usageCount;
       return b.confidence - a.confidence;
     });
@@ -373,6 +377,22 @@ export function ConnectFileDialog({
             );
           } catch (err) {
             console.error("Failed to learn file source pattern:", err);
+          }
+        }
+
+        if (partner && selectedResult.emailFrom) {
+          const match = selectedResult.emailFrom.toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
+          const domain = match ? match[1] : null;
+          if (domain) {
+            try {
+              await addEmailDomainToPartner(
+                { db, userId: MOCK_USER_ID },
+                partner.id,
+                domain
+              );
+            } catch (err) {
+              console.error("Failed to learn email domain:", err);
+            }
           }
         }
       }

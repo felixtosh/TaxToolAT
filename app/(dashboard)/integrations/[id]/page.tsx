@@ -1,7 +1,7 @@
 "use client";
 
-import { use, useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { use, useState, useEffect, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   ArrowLeft,
@@ -50,6 +50,7 @@ interface IntegrationDetailPageProps {
 export default function IntegrationDetailPage({ params }: IntegrationDetailPageProps) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { integrations, loading, disconnect, refresh, pauseSync, resumeSync } = useEmailIntegrations();
   const { history, loading: historyLoading } = useSyncHistory(id);
   const { stats, loading: statsLoading } = useIntegrationFileStats(id);
@@ -62,6 +63,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
   const [refreshing, setRefreshing] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const reconnectTriggeredRef = useRef(false);
 
   // Clear syncKnownInProgress when activeSync becomes inactive
   useEffect(() => {
@@ -73,44 +75,6 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
   }, [activeSync.isActive, syncKnownInProgress]);
 
   const integration = integrations.find((i) => i.id === id);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (!integration) {
-    return (
-      <div className="text-center py-12">
-        <p className="text-muted-foreground">Integration not found</p>
-        <Button
-          variant="link"
-          onClick={() => router.push("/integrations")}
-          className="mt-2"
-        >
-          Back to integrations
-        </Button>
-      </div>
-    );
-  }
-
-  const needsReauth = integration.needsReauth;
-  const tokenExpiry = integration.tokenExpiresAt?.toDate();
-  const isExpired = tokenExpiry && tokenExpiry < new Date();
-  const isPaused = integration.isPaused;
-  const lastSyncAt = integration.lastSyncAt?.toDate();
-  const lastSyncStatus = integration.lastSyncStatus;
-  const lastSyncFileCount = integration.lastSyncFileCount;
-  const initialSyncComplete = integration.initialSyncComplete;
-  const initialSyncStartedAt = integration.initialSyncStartedAt?.toDate();
-  const syncedRange = integration.syncedDateRange;
-  const syncedFrom = syncedRange?.from?.toDate();
-  const syncedTo = syncedRange?.to?.toDate();
-
-  const isSyncingNow = activeSync.isActive || syncKnownInProgress || (!initialSyncComplete && initialSyncStartedAt);
 
   const handlePullFiles = async () => {
     setSyncing(true);
@@ -161,16 +125,64 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
     }
   };
 
-  const handleRefresh = async () => {
+  const handleRefresh = async (returnTo?: string) => {
     setRefreshing(true);
     try {
-      await refresh(id);
+      await refresh(id, returnTo);
     } catch {
       // Error handled by hook
     } finally {
       setRefreshing(false);
     }
   };
+
+  useEffect(() => {
+    if (!integration || reconnectTriggeredRef.current) return;
+    const shouldReconnect = searchParams?.get("toggleReconnect") === "true";
+    if (!shouldReconnect) return;
+    reconnectTriggeredRef.current = true;
+    const returnTo = searchParams?.get("returnTo") || undefined;
+    handleRefresh(returnTo);
+  }, [integration, searchParams, handleRefresh]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!integration) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-muted-foreground">Integration not found</p>
+        <Button
+          variant="link"
+          onClick={() => router.push("/integrations")}
+          className="mt-2"
+        >
+          Back to integrations
+        </Button>
+      </div>
+    );
+  }
+
+  const needsReauth = integration.needsReauth;
+  const tokenExpiry = integration.tokenExpiresAt?.toDate();
+  const isExpired = tokenExpiry && tokenExpiry < new Date();
+  const isPaused = integration.isPaused;
+  const lastSyncAt = integration.lastSyncAt?.toDate();
+  const lastSyncStatus = integration.lastSyncStatus;
+  const lastSyncFileCount = integration.lastSyncFileCount;
+  const initialSyncComplete = integration.initialSyncComplete;
+  const initialSyncStartedAt = integration.initialSyncStartedAt?.toDate();
+  const syncedRange = integration.syncedDateRange;
+  const syncedFrom = syncedRange?.from?.toDate();
+  const syncedTo = syncedRange?.to?.toDate();
+
+  const isSyncingNow =
+    activeSync.isActive || syncKnownInProgress || (!initialSyncComplete && initialSyncStartedAt);
 
   const handlePause = async () => {
     setPausing(true);

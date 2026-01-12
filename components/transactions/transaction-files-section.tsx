@@ -68,6 +68,8 @@ interface TransactionFilesSectionProps {
   onTriggerSearch?: () => void;
   /** Open the connect file overlay (lifted to page level) */
   onOpenConnectFile?: () => void;
+  /** Whether the connect overlay is currently open */
+  isConnectFileOpen?: boolean;
 }
 
 function formatAmount(
@@ -135,6 +137,7 @@ export function TransactionFilesSection({
   searchLabel,
   onTriggerSearch,
   onOpenConnectFile,
+  isConnectFileOpen = false,
 }: TransactionFilesSectionProps) {
   const [isReceiptLostDialogOpen, setIsReceiptLostDialogOpen] = useState(false);
   const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false);
@@ -304,6 +307,7 @@ export function TransactionFilesSection({
   }, [triggerPrecisionSearch]);
 
   const loading = filesLoading || categoriesLoading;
+  const connectButtonVariant = isConnectFileOpen ? "secondary" : "outline";
 
   return (
     <TooltipProvider>
@@ -361,11 +365,12 @@ export function TransactionFilesSection({
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Receipt</span>
                 <Button
-                  variant="outline"
+                  variant={connectButtonVariant}
                   size="sm"
                   onClick={onOpenConnectFile}
                   className="h-7 px-3"
                   disabled={hasCategory || !onOpenConnectFile}
+                  aria-pressed={isConnectFileOpen}
                 >
                   <Plus className="h-3 w-3 mr-1" />
                   Add
@@ -385,11 +390,12 @@ export function TransactionFilesSection({
           ) : (
             <FieldRow label="Receipt">
               <Button
-                variant="outline"
+                variant={connectButtonVariant}
                 size="sm"
                 onClick={onOpenConnectFile}
                 className="h-7 px-3"
                 disabled={hasCategory || !onOpenConnectFile}
+                aria-pressed={isConnectFileOpen}
               >
                 <Plus className="h-3 w-3 mr-1" />
                 Connect

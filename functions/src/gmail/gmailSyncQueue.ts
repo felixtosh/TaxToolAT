@@ -363,7 +363,9 @@ async function processQueueItem(
 
   // Get integration email for storing on files
   const integrationDoc = await db.collection("emailIntegrations").doc(queueItem.integrationId).get();
-  const integrationEmail = integrationDoc.exists ? (integrationDoc.data()?.email as string) : undefined;
+  const integrationData = integrationDoc.data();
+  const integrationEmail = integrationDoc.exists ? (integrationData?.email as string) : undefined;
+  const integrationPaused = Boolean(integrationData?.isPaused);
 
   // Get access token
   const tokenDoc = await db.collection("emailTokens").doc(queueItem.integrationId).get();
@@ -418,7 +420,38 @@ async function processQueueItem(
   let timedOut = false;
   const processedMessageIds = new Set(queueItem.processedMessageIds || []);
 
+  const markPausedAndExit = async () => {
+    await db.collection("gmailSyncQueue").doc(queueItem.id).update({
+      status: "paused",
+      emailsProcessed,
+      filesCreated,
+      attachmentsSkipped,
+      errors,
+      nextPageToken: nextPageToken || null,
+      processedMessageIds: Array.from(processedMessageIds),
+      completedAt: Timestamp.now(),
+    });
+    console.log(`[GmailSync] Paused queue item ${queueItem.id}`);
+  };
+
+  const isPauseRequested = async () => {
+    const [queueSnap, latestIntegrationSnap] = await Promise.all([
+      db.collection("gmailSyncQueue").doc(queueItem.id).get(),
+      db.collection("emailIntegrations").doc(queueItem.integrationId).get(),
+    ]);
+    const queueStatus = queueSnap.exists ? queueSnap.data()?.status : null;
+    const latestIntegrationPaused = latestIntegrationSnap.exists
+      ? Boolean(latestIntegrationSnap.data()?.isPaused)
+      : false;
+    return queueStatus === "paused" || latestIntegrationPaused;
+  };
+
   try {
+    if (integrationPaused || await isPauseRequested()) {
+      await markPausedAndExit();
+      return;
+    }
+
     // Search for messages
     const searchResult = await client.searchMessages(query, nextPageToken);
     const messageIds = searchResult.messages;
@@ -426,10 +459,20 @@ async function processQueueItem(
 
     console.log(`[GmailSync] Found ${messageIds.length} messages, nextPageToken: ${nextPageToken ? "yes" : "no"}`);
 
+    let pauseChecks = 0;
     for (const { id: messageId } of messageIds) {
       // Skip already processed messages (from previous runs)
       if (processedMessageIds.has(messageId)) {
         continue;
+      }
+
+      pauseChecks++;
+      if (pauseChecks >= PAUSE_CHECK_INTERVAL) {
+        pauseChecks = 0;
+        if (await isPauseRequested()) {
+          await markPausedAndExit();
+          return;
+        }
       }
 
       // Check timeout - this is the only batch limiter now
@@ -592,6 +635,11 @@ async function processQueueItem(
         console.error(`[GmailSync] ${errorMsg}`);
         errors.push(errorMsg);
       }
+    }
+
+    if (await isPauseRequested()) {
+      await markPausedAndExit();
+      return;
     }
 
     // Determine if we need to continue processing
@@ -835,6 +883,17 @@ export const processGmailSyncQueue = onSchedule(
 
     const queueDoc = pendingSnapshot.docs[0];
     const queueItem = { id: queueDoc.id, ...queueDoc.data() } as GmailSyncQueueItem;
+    const integrationDoc = await db.collection("emailIntegrations").doc(queueItem.integrationId).get();
+    const integrationPaused = Boolean(integrationDoc.data()?.isPaused);
+
+    if (integrationPaused) {
+      await queueDoc.ref.update({
+        status: "paused",
+        completedAt: Timestamp.now(),
+      });
+      console.log(`[GmailSync] Integration ${queueItem.integrationId} is paused, skipping queue item ${queueItem.id}`);
+      return;
+    }
 
     // Mark as processing
     await queueDoc.ref.update({
@@ -880,6 +939,17 @@ export const onSyncQueueCreated = onDocumentCreated(
     }
 
     const queueItem = { id: event.params.queueId, ...data } as GmailSyncQueueItem;
+    const integrationDoc = await db.collection("emailIntegrations").doc(queueItem.integrationId).get();
+    const integrationPaused = Boolean(integrationDoc.data()?.isPaused);
+
+    if (integrationPaused) {
+      await event.data?.ref.update({
+        status: "paused",
+        completedAt: Timestamp.now(),
+      });
+      console.log(`[GmailSync] Integration ${queueItem.integrationId} is paused, skipping queue item ${queueItem.id}`);
+      return;
+    }
 
     // Mark as processing
     await event.data?.ref.update({

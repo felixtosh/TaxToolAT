@@ -16,21 +16,33 @@ interface UseGmailSearchQueriesOptions {
 }
 
 /**
- * Generate simple search suggestions from transaction/partner data.
- * Fast client-side extraction - no AI needed for this simple task.
+ * Generate search suggestions from transaction/partner data.
+ * Prioritize partner-local matching criteria before transaction-derived tokens.
  */
 function generateQueries(
   transaction: Transaction,
   partner?: UserPartner | null
 ): string[] {
-  const suggestions: string[] = [];
-  const seen = new Set<string>();
+  const suggestions = new Map<
+    string,
+    { query: string; score: number; order: number }
+  >();
+  let order = 0;
 
-  const addSuggestion = (s: string) => {
-    const cleaned = s.trim().toLowerCase();
-    if (cleaned && cleaned.length >= 2 && !seen.has(cleaned)) {
-      seen.add(cleaned);
-      suggestions.push(cleaned);
+  const normalizeQuery = (s: string) =>
+    s.trim().replace(/\s+/g, " ").toLowerCase();
+
+  const addSuggestion = (s: string, score: number) => {
+    const cleaned = normalizeQuery(s);
+    if (!cleaned || cleaned.length < 2) return;
+
+    const existing = suggestions.get(cleaned);
+    if (!existing || score > existing.score) {
+      suggestions.set(cleaned, {
+        query: cleaned,
+        score,
+        order: existing?.order ?? order++,
+      });
     }
   };
 
@@ -110,32 +122,81 @@ function generateQueries(
     return results;
   };
 
-  // 1. Partner name (most reliable if we have a linked partner)
+  // 1. Partner-local strongest criteria
+  if (partner?.ibans?.length) {
+    for (const iban of partner.ibans) {
+      addSuggestion(iban.replace(/\s+/g, ""), 100);
+    }
+  }
+
+  if (partner?.vatId) {
+    addSuggestion(partner.vatId, 95);
+  }
+
+  if (partner?.emailDomains?.length) {
+    for (const domain of partner.emailDomains) {
+      addSuggestion(`from:${domain}`, 90);
+      addSuggestion(domain, 88);
+    }
+  }
+
+  if (partner?.website) {
+    const website = partner.website.replace(/^www\./i, "");
+    addSuggestion(`from:${website}`, 88);
+    addSuggestion(website, 85);
+  }
+
+  if (partner?.fileSourcePatterns?.length) {
+    const sortedPatterns = [...partner.fileSourcePatterns].sort((a, b) => {
+      if (b.usageCount !== a.usageCount) return b.usageCount - a.usageCount;
+      return b.confidence - a.confidence;
+    });
+
+    for (const pattern of sortedPatterns.slice(0, 5)) {
+      const usageBoost = Math.min(5, Math.floor(pattern.usageCount / 2));
+      const patternScore = Math.min(95, Math.max(60, pattern.confidence + usageBoost));
+      const normalized =
+        pattern.sourceType === "local"
+          ? pattern.pattern.replace(/\*/g, " ").replace(/\s+/g, " ").trim()
+          : pattern.pattern;
+      if (normalized) {
+        addSuggestion(normalized, patternScore);
+      }
+    }
+  }
+
   if (partner?.name) {
     const cleaned = cleanText(partner.name);
-    addSuggestion(cleaned);
-    // Also add first word if multi-word
+    addSuggestion(cleaned, 80);
     const firstWord = extractFirstWord(partner.name);
     if (firstWord && firstWord !== cleaned.toLowerCase()) {
-      addSuggestion(firstWord);
+      addSuggestion(firstWord, 78);
     }
   }
 
-  // 2. Transaction partner field
+  if (partner?.aliases?.length) {
+    for (const alias of partner.aliases.filter((a) => !a.includes("*"))) {
+      const cleaned = cleanText(alias);
+      if (cleaned) {
+        addSuggestion(cleaned, 72);
+      }
+    }
+  }
+
+  // 2. Transaction-derived tokens
   if (transaction.partner) {
     const cleaned = cleanText(transaction.partner);
-    addSuggestion(cleaned);
+    addSuggestion(cleaned, 68);
     const firstWord = extractFirstWord(transaction.partner);
     if (firstWord && firstWord.length >= 3) {
-      addSuggestion(firstWord);
+      addSuggestion(firstWord, 66);
     }
   }
 
-  // 3. Transaction name (if different)
   if (transaction.name && transaction.name !== transaction.partner) {
     const firstWord = extractFirstWord(transaction.name);
     if (firstWord && firstWord.length >= 3) {
-      addSuggestion(firstWord);
+      addSuggestion(firstWord, 62);
     }
   }
 
@@ -148,21 +209,23 @@ function generateQueries(
 
   // Add all unique invoice numbers (most specific/formatted ones first from description)
   for (const invoiceNum of allInvoiceNumbers) {
-    addSuggestion(invoiceNum);
+    addSuggestion(invoiceNum, 70);
   }
 
-  // 5. Add "rechnung" variant for German invoices (only if we have a company name and no invoice numbers)
-  if (suggestions.length > 0 && allInvoiceNumbers.length === 0) {
-    addSuggestion(`${suggestions[0]} rechnung`);
+  // Add "rechnung" variant for German invoices (only if we have a name and no invoice numbers)
+  if (allInvoiceNumbers.length === 0 && partner?.name) {
+    const cleanedName = cleanText(partner.name);
+    if (cleanedName) {
+      addSuggestion(`${cleanedName} rechnung`, 55);
+    }
   }
 
-  // 6. Add from: filter if partner has known email domain
-  if (partner?.emailDomains?.length) {
-    addSuggestion(`from:${partner.emailDomains[0]}`);
-  }
+  const sorted = [...suggestions.values()].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.order - b.order;
+  });
 
-  // Return more suggestions since invoice numbers are highly valuable for search
-  return suggestions.slice(0, 8);
+  return sorted.slice(0, 8).map((entry) => entry.query);
 }
 
 export function useGmailSearchQueries({

@@ -47,6 +47,8 @@ interface TransactionDetailPanelProps {
   onCreatePartner: (data: PartnerFormData) => Promise<string>;
   /** Open the connect file overlay (managed at page level) */
   onOpenConnectFile?: () => void;
+  /** Whether the connect file overlay is open */
+  isConnectFileOpen?: boolean;
 }
 
 export function TransactionDetailPanel({
@@ -64,6 +66,7 @@ export function TransactionDetailPanel({
   onRemovePartner,
   onCreatePartner,
   onOpenConnectFile,
+  isConnectFileOpen = false,
 }: TransactionDetailPanelProps) {
   // Handler for assigning a partner to the transaction
   const handleAssignPartner = useCallback(
@@ -292,6 +295,7 @@ export function TransactionDetailPanel({
               searchLabel={strategyLabel}
               onTriggerSearch={triggerSearch}
               onOpenConnectFile={onOpenConnectFile}
+              isConnectFileOpen={isConnectFileOpen}
             />
           </div>
         </div>

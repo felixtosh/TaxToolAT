@@ -155,6 +155,12 @@ export const scheduledGmailSync = onSchedule(
       const integration = { id: integrationDoc.id, ...integrationDoc.data() } as EmailIntegration;
 
       try {
+        if (integration.isPaused) {
+          console.log(`[GmailSync] Integration ${integration.id} is paused, skipping`);
+          skipped++;
+          continue;
+        }
+
         // Check if there's already a pending/processing sync for this integration
         const existingSync = await db
           .collection("gmailSyncQueue")

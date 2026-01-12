@@ -252,9 +252,12 @@ function TransactionsContent() {
 
   // Select transaction (update URL)
   const handleSelectTransaction = useCallback(
-    (transaction: Transaction) => {
+    (transaction: Transaction, options?: { keepConnect?: boolean }) => {
       const params = new URLSearchParams(searchParams.toString());
       params.set("id", transaction.id);
+      if (!options?.keepConnect) {
+        params.delete("connect");
+      }
       router.push(`/transactions?${params.toString()}`, { scroll: false });
     },
     [router, searchParams]
@@ -264,6 +267,7 @@ function TransactionsContent() {
   const handleCloseDetail = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("id");
+    params.delete("connect");
     const newUrl = params.toString()
       ? `/transactions?${params.toString()}`
       : "/transactions";
@@ -283,7 +287,7 @@ function TransactionsContent() {
   const handleNavigatePrevious = useCallback(() => {
     if (currentIndex > 0) {
       const prevTransaction = filteredTransactions[currentIndex - 1];
-      handleSelectTransaction(prevTransaction);
+      handleSelectTransaction(prevTransaction, { keepConnect: true });
     }
   }, [currentIndex, filteredTransactions, handleSelectTransaction]);
 
@@ -291,7 +295,7 @@ function TransactionsContent() {
   const handleNavigateNext = useCallback(() => {
     if (currentIndex >= 0 && currentIndex < filteredTransactions.length - 1) {
       const nextTransaction = filteredTransactions[currentIndex + 1];
-      handleSelectTransaction(nextTransaction);
+      handleSelectTransaction(nextTransaction, { keepConnect: true });
     }
   }, [currentIndex, filteredTransactions, handleSelectTransaction]);
 
@@ -419,6 +423,7 @@ function TransactionsContent() {
               onRemovePartner={removeFromTransaction}
               onCreatePartner={createPartner}
               onOpenConnectFile={toggleConnectFileOverlay}
+              isConnectFileOpen={isConnectFileOpen}
             />
           </div>
         </div>
