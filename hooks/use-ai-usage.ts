@@ -10,11 +10,12 @@ import {
   getAIUsageDailyStats,
   getAIUsageByFunction,
 } from "@/lib/operations";
+import { useAuth } from "@/components/auth";
 
-const MOCK_USER_ID = "dev-user-123";
 const MAX_RECORDS = 100;
 
 export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all" }) {
+  const { userId } = useAuth();
   const [records, setRecords] = useState<AIUsageRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -25,9 +26,9 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all" }) {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Calculate date filter
@@ -42,11 +43,17 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all" }) {
 
   // Real-time listener for recent usage records
   useEffect(() => {
+    if (!userId) {
+      setRecords([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
     let q = query(
       collection(db, "aiUsage"),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       orderBy("createdAt", "desc"),
       limit(MAX_RECORDS)
     );
@@ -54,7 +61,7 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all" }) {
     if (dateFrom) {
       q = query(
         collection(db, "aiUsage"),
-        where("userId", "==", MOCK_USER_ID),
+        where("userId", "==", userId),
         where("createdAt", ">=", Timestamp.fromDate(dateFrom)),
         orderBy("createdAt", "desc"),
         limit(MAX_RECORDS)
@@ -80,7 +87,7 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all" }) {
     );
 
     return () => unsubscribe();
-  }, [dateFrom]);
+  }, [userId, dateFrom]);
 
   // Calculate summary from records
   const summary: AIUsageSummary = useMemo(() => {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { doc, setDoc, Timestamp } from "firebase/firestore";
-import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import {
   createEmailIntegration,
   getEmailIntegrationByEmail,
@@ -40,7 +41,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const userId = await getServerUserIdWithFallback(request);
+    const ctx = { db, userId };
 
     // 1. Check if this email is already connected (active)
     const existing = await getEmailIntegrationByEmail(ctx, email);
@@ -106,7 +108,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Store tokens in secure server-side collection
-    await storeTokens(integrationId, accessToken, "", new Date(expiresAt));
+    await storeTokens(integrationId, accessToken, "", new Date(expiresAt), userId);
 
     // Auto-add email to user's own emails list
     if (email) {
@@ -144,12 +146,13 @@ async function storeTokens(
   integrationId: string,
   accessToken: string,
   refreshToken: string,
-  expiresAt: Date
+  expiresAt: Date,
+  userId: string
 ): Promise<void> {
   const tokenDoc = doc(db, TOKENS_COLLECTION, integrationId);
   await setDoc(tokenDoc, {
     integrationId,
-    userId: MOCK_USER_ID,
+    userId,
     provider: "gmail",
     accessToken, // In production, encrypt this
     refreshToken, // In production, encrypt this

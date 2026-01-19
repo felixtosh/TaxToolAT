@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { doc, getDoc, addDoc, collection, Timestamp, updateDoc, arrayUnion } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { getServerDb, getServerStorage, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb, getServerStorage } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import { getEmailIntegration, markIntegrationNeedsReauth } from "@/lib/operations";
 import { GmailClient } from "@/lib/email-providers/gmail-client";
 import { createHash } from "crypto";
@@ -23,6 +24,21 @@ function normalizeMimeType(mimeType: string, filename: string): string {
   return mimeType;
 }
 
+function parseFromHeader(fromValue?: string | null): { email?: string; name?: string } {
+  if (!fromValue) return {};
+  const match = fromValue.match(/(?:"?([^"]*)"?\s)?<?([^<>@\s]+@[^<>]+\.[^<>]+)>?/);
+  if (!match) return {};
+  const name = match[1]?.trim();
+  const email = match[2]?.trim();
+  return { email, name };
+}
+
+function extractDomain(email?: string | null): string | null {
+  if (!email) return null;
+  const match = email.toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
+  return match ? match[1] : null;
+}
+
 /**
  * GET /api/gmail/attachment
  * Download attachment for preview
@@ -31,6 +47,7 @@ function normalizeMimeType(mimeType: string, filename: string): string {
  */
 export async function GET(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const { searchParams } = request.nextUrl;
     const integrationId = searchParams.get("integrationId");
     const messageId = searchParams.get("messageId");
@@ -45,7 +62,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
 
     // Verify integration
     const integration = await getEmailIntegration(ctx, integrationId);
@@ -123,8 +140,21 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
-    const { integrationId, messageId, attachmentId, mimeType, filename, transactionId, gmailMessageSubject } = body;
+    const {
+      integrationId,
+      messageId,
+      attachmentId,
+      mimeType,
+      filename,
+      transactionId,
+      gmailMessageSubject,
+      gmailMessageFrom,
+      gmailMessageFromName,
+      searchPattern,
+      resultType,
+    } = body;
 
     if (!integrationId || !messageId || !attachmentId) {
       return NextResponse.json(
@@ -133,7 +163,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
 
     // Verify integration
     const integration = await getEmailIntegration(ctx, integrationId);
@@ -184,7 +214,7 @@ export async function POST(request: NextRequest) {
     // Upload to Firebase Storage
     const timestamp = Date.now();
     const sanitizedFilename = attachment.filename.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const storagePath = `files/${MOCK_USER_ID}/${timestamp}_${sanitizedFilename}`;
+    const storagePath = `files/${userId}/${timestamp}_${sanitizedFilename}`;
     const storageRef = ref(storage, storagePath);
 
     await uploadBytes(storageRef, attachment.data, {
@@ -198,10 +228,15 @@ export async function POST(request: NextRequest) {
 
     const downloadUrl = await getDownloadURL(storageRef);
 
+    const parsedFrom = parseFromHeader(gmailMessageFrom);
+    const senderEmail = parsedFrom.email;
+    const senderName = gmailMessageFromName || parsedFrom.name;
+    const senderDomain = extractDomain(senderEmail);
+
     // Create file document
     const now = Timestamp.now();
     const fileData = {
-      userId: MOCK_USER_ID,
+      userId,
       fileName: attachment.filename,
       fileType: normalizedMimeType,
       fileSize: attachment.size,
@@ -213,10 +248,16 @@ export async function POST(request: NextRequest) {
       updatedAt: now,
       // Gmail-specific fields
       sourceType: "gmail" as const,
+      sourceSearchPattern: searchPattern || null,
+      sourceResultType: resultType || "gmail_attachment",
       gmailMessageId: messageId,
       gmailThreadId: messageId, // We don't have thread ID here
       gmailIntegrationId: integrationId,
+      gmailIntegrationEmail: integration.email || null,
       gmailSubject: gmailMessageSubject || null,
+      gmailSenderEmail: senderEmail || null,
+      gmailSenderName: senderName || null,
+      gmailSenderDomain: senderDomain || null,
       // These will be populated by AI extraction
       extractionComplete: false,
       transactionIds: transactionId ? [transactionId] : [],
@@ -238,7 +279,7 @@ export async function POST(request: NextRequest) {
       await addDoc(collection(db, "fileConnections"), {
         fileId,
         transactionId,
-        userId: MOCK_USER_ID,
+        userId,
         connectionType: "gmail_import",
         createdAt: now,
       });

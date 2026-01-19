@@ -14,6 +14,7 @@ interface EmailIntegration {
   email: string;
   isActive: boolean;
   needsReauth: boolean;
+  isPaused?: boolean;
   initialSyncComplete?: boolean;
   lastSyncAt?: Timestamp;
   syncedDateRange?: {

@@ -9,6 +9,39 @@
       ]
     },
     {
+      "collectionGroup": "inboundEmailAddresses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "inboundEmailLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "inboundAddressId", "order": "ASCENDING" },
+        { "fieldPath": "receivedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "inboundEmailAddresses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "emailPrefix", "order": "ASCENDING" },
+        { "fieldPath": "isActive", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "inboundEmailLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "inboundAddressId", "order": "ASCENDING" },
+        { "fieldPath": "messageId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "transactions",
       "queryScope": "COLLECTION",
       "fields": [

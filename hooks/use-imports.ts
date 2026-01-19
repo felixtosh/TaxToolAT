@@ -14,17 +14,18 @@ import {
 import { db } from "@/lib/firebase/config";
 import { ImportRecord } from "@/types/import";
 import { deleteImport as deleteImportOp } from "@/lib/operations";
+import { useAuth } from "@/components/auth";
 
 const IMPORTS_COLLECTION = "imports";
-const MOCK_USER_ID = "dev-user-123";
 
 export function useImports(sourceId?: string) {
+  const { userId } = useAuth();
   const [imports, setImports] = useState<ImportRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    if (!sourceId) {
+    if (!sourceId || !userId) {
       setImports([]);
       setLoading(false);
       return;
@@ -35,7 +36,7 @@ export function useImports(sourceId?: string) {
     const q = query(
       collection(db, IMPORTS_COLLECTION),
       where("sourceId", "==", sourceId),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       orderBy("createdAt", "desc")
     );
 
@@ -58,7 +59,7 @@ export function useImports(sourceId?: string) {
     );
 
     return () => unsubscribe();
-  }, [sourceId]);
+  }, [sourceId, userId]);
 
   /**
    * Create a new import record with a specific ID
@@ -70,16 +71,17 @@ export function useImports(sourceId?: string) {
       data: Omit<ImportRecord, "id" | "createdAt" | "userId">
     ): Promise<void> => {
       const docRef = doc(db, IMPORTS_COLLECTION, importId);
+      if (!userId) return;
       await setDoc(docRef, {
         ...data,
-        userId: MOCK_USER_ID,
+        userId,
         createdAt: Timestamp.now(),
       });
     },
-    []
+    [userId]
   );
 
-  const ctx = useMemo(() => ({ db, userId: MOCK_USER_ID }), []);
+  const ctx = useMemo(() => ({ db, userId: userId ?? "" }), [userId]);
 
   /**
    * Delete an import and all its associated transactions

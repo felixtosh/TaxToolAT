@@ -79,6 +79,7 @@ export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) 
               e.stopPropagation();
               onImportClick();
             }}
+            data-onboarding="import-transactions"
           >
             <Upload className="h-4 w-4 mr-2" />
             Import

@@ -13,8 +13,7 @@ import {
   OperationsContext,
 } from "@/lib/operations";
 import { parseCSV } from "@/lib/import/csv-parser";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 
 export type RemapStep = "loading" | "mapping" | "preview" | "applying" | "complete" | "error";
 
@@ -36,6 +35,7 @@ export interface RemapState {
 }
 
 export function useRemapping(importId: string, source: TransactionSource | null) {
+  const { userId } = useAuth();
   const [state, setState] = useState<RemapState>({
     step: "loading",
     importRecord: null,
@@ -50,8 +50,8 @@ export function useRemapping(importId: string, source: TransactionSource | null)
   });
 
   const ctx: OperationsContext = useMemo(
-    () => ({ db, userId: MOCK_USER_ID }),
-    []
+    () => ({ db, userId: userId ?? "" }),
+    [userId]
   );
 
   // Load import record and CSV on mount

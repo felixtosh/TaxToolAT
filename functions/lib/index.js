@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.onGmailSyncComplete = exports.onPrecisionSearchQueueCreated = exports.processPrecisionSearchQueue = exports.onTransactionsImported = exports.onGmailConnected = exports.scheduledGmailSync = exports.onSyncQueueCreated = exports.processGmailSyncQueue = exports.lookupByVatId = exports.lookupCompany = exports.generateFileSearchQuery = exports.processOrphanedFiles = exports.matchFilesForPartner = exports.matchFileTransactions = exports.matchFilePartner = exports.retryFileExtraction = exports.extractFileData = exports.sendReauthReminders = exports.triggerGoCardlessSync = exports.scheduledGoCardlessSync = exports.matchColumns = exports.generatePromotionCandidates = exports.applyPatternsToTransactions = exports.triggerLearningNow = exports.processLearningQueue = exports.queuePartnerForLearning = exports.onUserDataUpdate = exports.onTransactionPartnerChange = exports.onCategoryUpdate = exports.onCategoryCreate = exports.matchCategories = exports.searchExternalPartners = exports.learnPartnerPatterns = exports.matchPartners = exports.onPartnerUpdate = exports.onPartnerCreate = void 0;
+exports.checkMigrationStatus = exports.migrateUserData = exports.markInviteUsed = exports.validateRegistration = exports.listAdmins = exports.beforeUserCreatedHandler = exports.setAdminClaim = exports.resetInboundDailyLimits = exports.testInboundEmail = exports.receiveInboundEmail = exports.onGmailSyncComplete = exports.onPrecisionSearchQueueCreated = exports.processPrecisionSearchQueue = exports.onTransactionsImported = exports.onGmailConnected = exports.scheduledGmailSync = exports.onSyncQueueCreated = exports.processGmailSyncQueue = exports.lookupByVatId = exports.lookupCompany = exports.generateFileSearchQuery = exports.processOrphanedFiles = exports.matchFilesForPartner = exports.matchFileTransactions = exports.matchFilePartner = exports.retryFileExtraction = exports.extractFileData = exports.sendReauthReminders = exports.triggerGoCardlessSync = exports.scheduledGoCardlessSync = exports.matchColumns = exports.generatePromotionCandidates = exports.applyPatternsToTransactions = exports.triggerLearningNow = exports.processLearningQueue = exports.queuePartnerForLearning = exports.onUserDataUpdate = exports.onTransactionPartnerChange = exports.onCategoryUpdate = exports.onCategoryCreate = exports.matchCategories = exports.searchExternalPartners = exports.learnPartnerPatterns = exports.matchPartners = exports.onPartnerUpdate = exports.onPartnerCreate = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize Firebase Admin
 (0, app_1.initializeApp)();
@@ -84,4 +84,21 @@ Object.defineProperty(exports, "processPrecisionSearchQueue", { enumerable: true
 Object.defineProperty(exports, "onPrecisionSearchQueueCreated", { enumerable: true, get: function () { return precisionSearchQueue_1.onPrecisionSearchQueueCreated; } });
 var onGmailSyncComplete_1 = require("./precision-search/onGmailSyncComplete");
 Object.defineProperty(exports, "onGmailSyncComplete", { enumerable: true, get: function () { return onGmailSyncComplete_1.onGmailSyncComplete; } });
+// Export inbound email functions
+var receiveEmail_1 = require("./email-inbound/receiveEmail");
+Object.defineProperty(exports, "receiveInboundEmail", { enumerable: true, get: function () { return receiveEmail_1.receiveInboundEmail; } });
+Object.defineProperty(exports, "testInboundEmail", { enumerable: true, get: function () { return receiveEmail_1.testInboundEmail; } });
+var resetDailyLimits_1 = require("./email-inbound/resetDailyLimits");
+Object.defineProperty(exports, "resetInboundDailyLimits", { enumerable: true, get: function () { return resetDailyLimits_1.resetInboundDailyLimits; } });
+// Export auth functions
+var setAdminClaim_1 = require("./auth/setAdminClaim");
+Object.defineProperty(exports, "setAdminClaim", { enumerable: true, get: function () { return setAdminClaim_1.setAdminClaim; } });
+Object.defineProperty(exports, "beforeUserCreatedHandler", { enumerable: true, get: function () { return setAdminClaim_1.beforeUserCreatedHandler; } });
+Object.defineProperty(exports, "listAdmins", { enumerable: true, get: function () { return setAdminClaim_1.listAdmins; } });
+var validateRegistration_1 = require("./auth/validateRegistration");
+Object.defineProperty(exports, "validateRegistration", { enumerable: true, get: function () { return validateRegistration_1.validateRegistration; } });
+Object.defineProperty(exports, "markInviteUsed", { enumerable: true, get: function () { return validateRegistration_1.markInviteUsed; } });
+var migrateUserData_1 = require("./auth/migrateUserData");
+Object.defineProperty(exports, "migrateUserData", { enumerable: true, get: function () { return migrateUserData_1.migrateUserData; } });
+Object.defineProperty(exports, "checkMigrationStatus", { enumerable: true, get: function () { return migrateUserData_1.checkMigrationStatus; } });
 //# sourceMappingURL=index.js.map

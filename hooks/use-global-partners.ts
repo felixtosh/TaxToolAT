@@ -16,14 +16,15 @@ import {
   getPresetPartnersStatus,
   togglePresetPartners,
 } from "@/lib/operations";
+import { useAuth } from "@/components/auth";
 
 const GLOBAL_PARTNERS_COLLECTION = "globalPartners";
-const MOCK_USER_ID = "dev-user-123";
 
 /**
  * Hook for managing global partners (admin functionality)
  */
 export function useGlobalPartners() {
+  const { userId } = useAuth();
   const [globalPartners, setGlobalPartners] = useState<GlobalPartner[]>([]);
   const [promotionCandidates, setPromotionCandidates] = useState<PromotionCandidate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,9 +35,9 @@ export function useGlobalPartners() {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Check preset partners status on mount

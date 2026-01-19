@@ -13,6 +13,7 @@ import { UserNoReceiptCategory, CategorySuggestion } from "@/types/no-receipt-ca
 import { PipelineId } from "@/types/automation";
 import { getCategoryTemplate } from "@/lib/data/no-receipt-category-templates";
 import { Pill } from "@/components/ui/pill";
+import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { SortableHeader, AutomationHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
@@ -22,13 +23,20 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
+export interface FileAmountData {
+  totalAmount: number;
+  fileCount: number;
+  amounts: Array<{ amount: number; currency: string }>;
+  hasExtractingFiles: boolean;
+}
+
 export interface TransactionColumnOptions {
   sources: TransactionSource[];
   userPartners?: UserPartner[];
   globalPartners?: GlobalPartner[];
   categories?: UserNoReceiptCategory[];
   categorySuggestions?: Map<string, CategorySuggestion>;
-  fileAmountsMap?: Map<string, { amount: number; currency: string }>;
+  fileAmountsMap?: Map<string, FileAmountData>;
   onAutomationClick?: (pipelineId: PipelineId) => void;
 }
 
@@ -38,7 +46,7 @@ export function getTransactionColumns(
   globalPartners: GlobalPartner[] = [],
   categories: UserNoReceiptCategory[] = [],
   categorySuggestions?: Map<string, CategorySuggestion>,
-  fileAmountsMap?: Map<string, { amount: number; currency: string }>,
+  fileAmountsMap?: Map<string, FileAmountData>,
   onAutomationClick?: (pipelineId: PipelineId) => void
 ): ColumnDef<Transaction>[] {
   const sourceMap = new Map(sources.map((s) => [s.id, s]));
@@ -191,17 +199,19 @@ export function getTransactionColumns(
         const txId = row.original.id;
 
         if (hasFile) {
-          // Show file amount if available, otherwise show count
-          const fileAmount = fileAmountsMap?.get(txId);
-          if (fileAmount) {
-            const formatted = new Intl.NumberFormat("de-DE", {
-              style: "currency",
-              currency: fileAmount.currency || "EUR",
-            }).format(fileAmount.amount / 100);
-            return <Pill label={formatted} icon={FileText} />;
-          }
-          const label = fileCount === 1 ? "1 file" : `${fileCount} files`;
-          return <Pill label={label} icon={FileText} />;
+          const fileData = fileAmountsMap?.get(txId);
+          const txDate = row.original.date?.toDate?.() || undefined;
+          return (
+            <AmountMatchDisplay
+              count={fileCount}
+              countType="file"
+              primaryAmount={row.original.amount}
+              primaryCurrency={row.original.currency || "EUR"}
+              secondaryAmounts={fileData?.amounts || []}
+              conversionDate={txDate}
+              isExtracting={fileData?.hasExtractingFiles}
+            />
+          );
         }
 
         if (hasNoReceiptCategory) {

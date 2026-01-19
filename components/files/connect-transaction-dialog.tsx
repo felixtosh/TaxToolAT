@@ -320,7 +320,7 @@ export function ConnectTransactionDialog({
 
         <div className="flex flex-1 overflow-hidden">
           {/* Left column: Transaction search and list */}
-          <div className="w-[350px] border-r flex flex-col">
+          <div className="w-[420px] border-r flex flex-col">
             {/* Search */}
             <div className="p-4 border-b">
               <div className="relative">
@@ -360,7 +360,7 @@ export function ConnectTransactionDialog({
                           disabled={isConnected}
                           onClick={() => toggleSelection(transaction)}
                           className={cn(
-                            "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors",
+                            "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors overflow-hidden",
                             isSelected && "bg-primary/10",
                             isPreviewing && "ring-1 ring-primary",
                             !isSelected && !isConnected && "hover:bg-muted",
@@ -385,9 +385,9 @@ export function ConnectTransactionDialog({
                           </div>
 
                           {/* Transaction info */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-medium truncate">
+                          <div className="flex-1 min-w-0 overflow-hidden">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <p className="text-sm font-medium truncate flex-1 min-w-0">
                                 {transaction.partner || transaction.name}
                               </p>
                               {isConnected && (

@@ -6,6 +6,7 @@ import {
   createSourceFromGoCardless,
   linkGoCardlessToExistingSource,
 } from "@/lib/operations";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -21,14 +22,13 @@ const appName = "gocardless-accounts";
 const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
 const db = getFirestore(app);
 
-const MOCK_USER_ID = "dev-user-123";
-
 /**
  * GET /api/gocardless/accounts?requisitionId={id}
  * List accounts available in a requisition
  */
 export async function GET(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const requisitionId = request.nextUrl.searchParams.get("requisitionId");
 
     if (!requisitionId) {
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
     const accounts = await getRequisitionAccounts(ctx, requisitionId);
 
     return NextResponse.json({ accounts });
@@ -61,6 +61,7 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
     const { requisitionId, accountId, name, sourceId } = body;
 
@@ -71,7 +72,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
 
     // If sourceId is provided, link to existing source
     if (sourceId) {

@@ -8,6 +8,7 @@ import {
   deleteRequisition,
   refreshRequisitionStatus,
 } from "@/lib/operations";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -23,8 +24,6 @@ const appName = "gocardless-requisitions";
 const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
 const db = getFirestore(app);
 
-const MOCK_USER_ID = "dev-user-123";
-
 /**
  * POST /api/gocardless/requisitions
  * Create a new requisition (bank connection request)
@@ -34,6 +33,7 @@ const MOCK_USER_ID = "dev-user-123";
  */
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
     const { institutionId, sourceId } = body;
 
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
     const result = await createRequisition(ctx, institutionId, sourceId);
 
     return NextResponse.json({
@@ -81,7 +81,8 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    const ctx = { db, userId: MOCK_USER_ID };
+    const userId = await getServerUserIdWithFallback(request);
+    const ctx = { db, userId };
     const requisitionId = request.nextUrl.searchParams.get("id");
     const refresh = request.nextUrl.searchParams.get("refresh") === "true";
 
@@ -121,6 +122,7 @@ export async function GET(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const requisitionId = request.nextUrl.searchParams.get("id");
 
     if (!requisitionId) {
@@ -130,7 +132,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
     await deleteRequisition(ctx, requisitionId);
 
     return NextResponse.json({ success: true });

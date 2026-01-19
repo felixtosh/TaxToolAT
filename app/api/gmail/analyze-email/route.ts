@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { doc, getDoc } from "firebase/firestore";
-import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import { getEmailIntegration, markIntegrationNeedsReauth } from "@/lib/operations";
 import { VertexAI } from "@google-cloud/vertexai";
 
@@ -50,6 +51,7 @@ interface GmailMessage {
  */
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
     const { integrationId, messageId, transaction } = body;
 
@@ -60,7 +62,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
 
     // Verify integration
     const integration = await getEmailIntegration(ctx, integrationId);

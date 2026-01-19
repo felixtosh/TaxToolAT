@@ -11,18 +11,18 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { GmailSyncHistoryRecord, IntegrationSyncStats } from "@/types/gmail-sync";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 
 /**
  * Hook to fetch sync history for an integration
  */
 export function useSyncHistory(integrationId: string | null, maxItems: number = 10) {
+  const { userId } = useAuth();
   const [history, setHistory] = useState<GmailSyncHistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!integrationId) {
+    if (!integrationId || !userId) {
       setHistory([]);
       setLoading(false);
       return;
@@ -33,7 +33,7 @@ export function useSyncHistory(integrationId: string | null, maxItems: number = 
     const q = query(
       collection(db, "gmailSyncHistory"),
       where("integrationId", "==", integrationId),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       orderBy("completedAt", "desc"),
       limit(maxItems)
     );
@@ -49,7 +49,7 @@ export function useSyncHistory(integrationId: string | null, maxItems: number = 
     });
 
     return () => unsubscribe();
-  }, [integrationId, maxItems]);
+  }, [integrationId, maxItems, userId]);
 
   return { history, loading };
 }
@@ -61,11 +61,12 @@ export function useIntegrationFileStats(integrationId: string | null): {
   stats: IntegrationSyncStats | null;
   loading: boolean;
 } {
+  const { userId } = useAuth();
   const [stats, setStats] = useState<IntegrationSyncStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!integrationId) {
+    if (!integrationId || !userId) {
       setStats(null);
       setLoading(false);
       return;
@@ -76,7 +77,7 @@ export function useIntegrationFileStats(integrationId: string | null): {
     // Listen to files from this Gmail integration
     const q = query(
       collection(db, "files"),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       where("gmailIntegrationId", "==", integrationId)
     );
 
@@ -120,7 +121,7 @@ export function useIntegrationFileStats(integrationId: string | null): {
     });
 
     return () => unsubscribe();
-  }, [integrationId]);
+  }, [integrationId, userId]);
 
   return { stats, loading };
 }

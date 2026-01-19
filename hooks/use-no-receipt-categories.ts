@@ -23,13 +23,14 @@ import {
   triggerCategoryMatchingForAll,
 } from "@/lib/operations";
 import { CategoryLearnedPattern } from "@/types/no-receipt-category";
+import { useAuth } from "@/components/auth";
 // Category suggestions now come from transaction.categorySuggestions (computed on backend)
 // No client-side matching functions needed
 
 const CATEGORIES_COLLECTION = "noReceiptCategories";
-const MOCK_USER_ID = "dev-user-123";
 
 export function useNoReceiptCategories() {
+  const { userId } = useAuth();
   const [categories, setCategories] = useState<UserNoReceiptCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -38,18 +39,24 @@ export function useNoReceiptCategories() {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Realtime listener for user categories
   useEffect(() => {
+    if (!userId) {
+      setCategories([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
     const q = query(
       collection(db, CATEGORIES_COLLECTION),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       where("isActive", "==", true),
       orderBy("name", "asc")
     );
@@ -73,7 +80,7 @@ export function useNoReceiptCategories() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   // Auto-initialize categories if none exist
   useEffect(() => {

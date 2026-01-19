@@ -230,7 +230,7 @@ export function EmailInvoiceTab({
   return (
     <div className="flex h-full">
       {/* Left: Search and results */}
-      <div className="w-[350px] border-r flex flex-col">
+      <div className="w-[420px] border-r flex flex-col">
         {/* Suggested Searches */}
         {suggestedQueries.length > 0 && (
           <div className="p-4 border-b">
@@ -309,7 +309,7 @@ export function EmailInvoiceTab({
                   type="button"
                   onClick={() => handleSelectEmail(email)}
                   className={cn(
-                    "w-full flex items-start gap-3 p-3 rounded-md transition-colors text-left",
+                    "w-full flex items-start gap-3 p-3 rounded-md transition-colors text-left overflow-hidden",
                     selectedEmail?.messageId === email.messageId && "bg-primary/10 ring-1 ring-primary",
                     selectedEmail?.messageId !== email.messageId && "hover:bg-muted"
                   )}
@@ -317,7 +317,7 @@ export function EmailInvoiceTab({
                   <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
                     <Mail className="h-5 w-5 text-muted-foreground" />
                   </div>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 overflow-hidden">
                     <p className="text-sm font-medium truncate">{email.subject}</p>
                     <p className="text-xs text-muted-foreground truncate">
                       {email.fromName || email.from}
@@ -386,7 +386,7 @@ export function EmailInvoiceTab({
                 ) : (
                   <FileDown className="h-4 w-4 mr-2" />
                 )}
-                Convert to PDF & Connect
+                To PDF and Connect
               </Button>
             </div>
           </>

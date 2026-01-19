@@ -36,6 +36,17 @@ export function useFilteredTransactions(
       result = result.filter((t) => t.sourceId === filters.sourceId);
     }
 
+    const partnerIds = filters.partnerIds && filters.partnerIds.length > 0
+      ? filters.partnerIds
+      : filters.partnerId
+        ? [filters.partnerId]
+        : [];
+
+    if (partnerIds.length > 0) {
+      const allowedPartners = new Set(partnerIds);
+      result = result.filter((t) => t.partnerId && allowedPartners.has(t.partnerId));
+    }
+
     // File filter
     if (filters.hasFile !== undefined) {
       result = result.filter((t) =>

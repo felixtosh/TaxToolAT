@@ -13,6 +13,8 @@ import { registerFileTools, fileToolDefinitions } from "./tools/files.js";
 import { registerGocardlessTools, gocardlessToolDefinitions } from "./tools/gocardless.js";
 import { registerCategoryTools, categoryToolDefinitions } from "./tools/categories.js";
 import { registerAutomationTools, automationToolDefinitions } from "./tools/automations.js";
+import { registerBrowserDebugTools, browserDebugToolDefinitions } from "./tools/browser-debug.js";
+import { registerEmailInboundTools, emailInboundToolDefinitions } from "./tools/email-inbound.js";
 
 async function main() {
   const server = new Server(
@@ -39,6 +41,8 @@ async function main() {
     ...gocardlessToolDefinitions,
     ...categoryToolDefinitions,
     ...automationToolDefinitions,
+    ...browserDebugToolDefinitions,
+    ...emailInboundToolDefinitions,
   ];
 
   // Register tool listing handler
@@ -78,6 +82,14 @@ async function main() {
       // Try automation tools
       const automationResult = await registerAutomationTools(ctx, name, args);
       if (automationResult !== null) return automationResult;
+
+      // Try browser debug tools
+      const browserDebugResult = await registerBrowserDebugTools(ctx, name, args);
+      if (browserDebugResult !== null) return browserDebugResult;
+
+      // Try email inbound tools
+      const emailInboundResult = await registerEmailInboundTools(ctx, name, args);
+      if (emailInboundResult !== null) return emailInboundResult;
 
       throw new Error(`Unknown tool: ${name}`);
     } catch (error) {

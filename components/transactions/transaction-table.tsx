@@ -176,21 +176,49 @@ export function TransactionTable({
     return map;
   }, [transactions]);
 
-  // Create a map of transactionId -> total file amount for the file pill
+  // Create a map of transactionId -> file amounts data for AmountMatchDisplay
   const fileAmountsMap = useMemo(() => {
-    const map = new Map<string, { amount: number; currency: string }>();
+    const map = new Map<string, {
+      totalAmount: number;
+      fileCount: number;
+      amounts: Array<{ amount: number; currency: string }>;
+      hasExtractingFiles: boolean;
+    }>();
     for (const file of files) {
-      if (file.extractedAmount != null && file.transactionIds.length > 0) {
+      if (file.transactionIds.length > 0) {
         for (const txId of file.transactionIds) {
           const existing = map.get(txId);
-          if (existing) {
-            // Sum amounts for transactions with multiple files
-            existing.amount += file.extractedAmount;
-          } else {
-            map.set(txId, {
+          const isExtracting = !file.extractionComplete && !file.isNotInvoice;
+
+          if (file.extractedAmount != null) {
+            const fileEntry = {
               amount: file.extractedAmount,
               currency: file.extractedCurrency || "EUR",
-            });
+            };
+            if (existing) {
+              existing.totalAmount += file.extractedAmount;
+              existing.amounts.push(fileEntry);
+              existing.hasExtractingFiles = existing.hasExtractingFiles || isExtracting;
+            } else {
+              map.set(txId, {
+                totalAmount: file.extractedAmount,
+                fileCount: 1,
+                amounts: [fileEntry],
+                hasExtractingFiles: isExtracting,
+              });
+            }
+          } else if (isExtracting) {
+            // File connected but not yet extracted
+            if (existing) {
+              existing.hasExtractingFiles = true;
+            } else {
+              map.set(txId, {
+                totalAmount: 0,
+                fileCount: 0,
+                amounts: [],
+                hasExtractingFiles: true,
+              });
+            }
           }
         }
       }
@@ -233,6 +261,7 @@ export function TransactionTable({
         onSearchChange={onSearchChange}
         filters={filters}
         onFiltersChange={handleFiltersChange}
+        userPartners={userPartners}
       />
 
       {/* Scrollable table area */}

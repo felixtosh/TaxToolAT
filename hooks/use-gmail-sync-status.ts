@@ -10,8 +10,7 @@ import {
   limit,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 
 export interface GmailSyncStatus {
   isActive: boolean;
@@ -27,13 +26,19 @@ export interface GmailSyncStatus {
  * Returns sync info when a sync is in progress
  */
 export function useGmailSyncStatus(): GmailSyncStatus {
+  const { userId } = useAuth();
   const [status, setStatus] = useState<GmailSyncStatus>({ isActive: false });
 
   useEffect(() => {
+    if (!userId) {
+      setStatus({ isActive: false });
+      return;
+    }
+
     // Listen for processing queue items
     const queueQuery = query(
       collection(db, "gmailSyncQueue"),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       where("status", "in", ["pending", "processing"]),
       orderBy("createdAt", "desc"),
       limit(1)
@@ -85,7 +90,7 @@ export function useGmailSyncStatus(): GmailSyncStatus {
     return () => {
       unsubscribeQueue();
     };
-  }, []);
+  }, [userId]);
 
   return status;
 }

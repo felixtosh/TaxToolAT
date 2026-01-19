@@ -47,10 +47,11 @@ ${partnerInfo ? `Partner Info:
 - Website: ${partnerInfo.website || "unknown"}` : ""}
 
 Generate 2-4 Gmail search queries to find this invoice. Consider:
-1. If email domain known, use "from:domain.com"
+1. If email domain known, use "from:domain.com" in at least one query, but include at least one query without any from: constraint.
 2. Include keywords: Rechnung, Invoice, Receipt, Beleg, Quittung
-3. Include date range: after:YYYY/MM/DD before:YYYY/MM/DD (±7 days)
+3. Include date range: after:YYYY/MM/DD before:YYYY/MM/DD (±7 days) in most queries, but include one broader query (±90 days) or no date filter.
 4. Try amount if exact: "${amount}"
+5. If an invoice number is present in the transaction name, include a query using "filename:INVOICE_NUMBER"
 
 Return JSON only:
 {

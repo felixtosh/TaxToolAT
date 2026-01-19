@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { AuthProvider } from "@/components/auth";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -16,7 +17,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="overflow-hidden">
-      <body className={`${inter.className} overflow-hidden`}>{children}</body>
+      <body className={`${inter.className} overflow-hidden`}>
+        <AuthProvider>{children}</AuthProvider>
+      </body>
     </html>
   );
 }

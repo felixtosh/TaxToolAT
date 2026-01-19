@@ -6,6 +6,7 @@ import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { SYSTEM_PROMPT } from "@/lib/chat/system-prompt";
 import { requiresConfirmation } from "@/lib/chat/confirmation-config";
 import { logAIUsageToFirestore } from "@/lib/ai/usage-logger";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import {
   listSources,
   getSourceById,
@@ -45,11 +46,11 @@ if (process.env.NODE_ENV === "development" && !emulatorConnected) {
   }
 }
 
-// Mock user for development
-const MOCK_USER_ID = "dev-user-123";
+// User ID will be set per request
+let currentUserId: string = "";
 
 function createContext(): OperationsContext {
-  return { db, userId: MOCK_USER_ID };
+  return { db, userId: currentUserId };
 }
 
 export const maxDuration = 60;
@@ -158,6 +159,7 @@ function convertMessages(uiMessages: UIMessage[]): any[] {
 }
 
 export async function POST(req: Request) {
+  currentUserId = await getServerUserIdWithFallback(req);
   const { messages: rawMessages } = await req.json();
   const messages = convertMessages(rawMessages);
   const ctx = createContext();
@@ -187,7 +189,7 @@ export async function POST(req: Request) {
 
       // Log AI usage to Firestore
       if (usage && usage.inputTokens !== undefined && usage.outputTokens !== undefined) {
-        await logAIUsageToFirestore(db, MOCK_USER_ID, {
+        await logAIUsageToFirestore(db, currentUserId, {
           function: "chat",
           model: "claude-sonnet-4-20250514",
           inputTokens: usage.inputTokens,

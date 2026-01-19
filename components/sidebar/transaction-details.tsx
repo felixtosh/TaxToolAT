@@ -11,21 +11,12 @@ import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
 import { Button } from "@/components/ui/button";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
+import { FieldRow } from "@/components/ui/detail-panel-primitives";
 import { usePartnerSuggestions, useAssignedPartner } from "@/hooks/use-partner-suggestions";
 import { Plus, ExternalLink, Loader2 } from "lucide-react";
 import { ShowMoreButton } from "@/components/ui/show-more-button";
 import { cn } from "@/lib/utils";
 import { functions } from "@/lib/firebase/config";
-
-// Consistent field row component
-function FieldRow({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
-  return (
-    <div className={cn("flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4", className)}>
-      <span className="text-sm text-muted-foreground shrink-0 sm:w-32">{label}</span>
-      <div className="text-sm w-0 flex-1">{children}</div>
-    </div>
-  );
-}
 
 interface TransactionDetailsProps {
   transaction: Transaction;
@@ -142,40 +133,40 @@ export function TransactionDetails({
 
   return (
     <div className="space-y-3">
-      <FieldRow label="Date">
+      <FieldRow label="Date" labelWidth="w-32">
         {format(transaction.date.toDate(), "MMM d, yyyy")}
       </FieldRow>
 
-      <FieldRow label="Amount">
+      <FieldRow label="Amount" labelWidth="w-32">
         <span className={cn("tabular-nums", transaction.amount < 0 ? "text-red-600" : "text-green-600")}>
           {formattedAmount}
         </span>
       </FieldRow>
 
       {transaction.partner && (
-        <FieldRow label="Counterparty">
+        <FieldRow label="Counterparty" labelWidth="w-32">
           {transaction.partner}
         </FieldRow>
       )}
 
       {transaction.partnerIban && (
-        <FieldRow label="IBAN">
+        <FieldRow label="IBAN" labelWidth="w-32">
           <span className="font-mono text-xs">{transaction.partnerIban}</span>
         </FieldRow>
       )}
 
-      <FieldRow label="Description">
+      <FieldRow label="Description" labelWidth="w-32">
         {transaction.name}
       </FieldRow>
 
       {transaction.reference && (
-        <FieldRow label="Reference">
+        <FieldRow label="Reference" labelWidth="w-32">
           <span className="font-mono text-xs">{transaction.reference}</span>
         </FieldRow>
       )}
 
       {source && (
-        <FieldRow label="Account">
+        <FieldRow label="Account" labelWidth="w-32">
           <Link
             href={`/sources/${source.id}`}
             className="text-primary hover:underline inline-flex items-center gap-1"
@@ -187,7 +178,7 @@ export function TransactionDetails({
       )}
 
       {/* Show More / Metadata Toggle */}
-      <FieldRow label="">
+      <FieldRow label="" labelWidth="w-32">
         <ShowMoreButton
           expanded={showMetadata}
           onToggle={() => setShowMetadata(!showMetadata)}
@@ -197,35 +188,35 @@ export function TransactionDetails({
       {/* Metadata Section (collapsible) */}
       {showMetadata && (
         <div className="space-y-3 pt-2 pb-1 animate-in slide-in-from-top-2 duration-200">
-          <FieldRow label="Dedupe Hash">
+          <FieldRow label="Dedupe Hash" labelWidth="w-32">
             <span className="font-mono text-xs truncate max-w-[200px]" title={transaction.dedupeHash}>
               {transaction.dedupeHash.slice(0, 16)}...
             </span>
           </FieldRow>
 
           {transaction.importJobId && (
-            <FieldRow label="Import Job">
+            <FieldRow label="Import Job" labelWidth="w-32">
               <span className="font-mono text-xs">
                 {transaction.importJobId.slice(0, 8)}...
               </span>
             </FieldRow>
           )}
 
-          <FieldRow label="Created">
+          <FieldRow label="Created" labelWidth="w-32">
             {format(transaction.createdAt.toDate(), "MMM d, yyyy HH:mm")}
           </FieldRow>
 
-          <FieldRow label="Updated">
+          <FieldRow label="Updated" labelWidth="w-32">
             {format(transaction.updatedAt.toDate(), "MMM d, yyyy HH:mm")}
           </FieldRow>
         </div>
       )}
 
       {/* Partner section */}
-      <div className="border-t pt-3 mt-3 -mx-4 px-4">
+      <div className="border-t pt-3 mt-3 -mx-4 px-4" data-onboarding="partner-section">
         <h3 className="text-sm font-medium mb-2">Partner</h3>
 
-        <FieldRow label="Connect">
+        <FieldRow label="Connect" labelWidth="w-32">
           {assignedPartner ? (
             <PartnerPill
               name={assignedPartner.name}
@@ -252,7 +243,7 @@ export function TransactionDetails({
 
         {/* Partner suggestions when no match */}
         {!assignedPartner && !isLoadingSuggestions && suggestions.length > 0 && (
-          <FieldRow label="Suggestions" className="mt-1">
+          <FieldRow label="Suggestions" labelWidth="w-32" className="mt-1">
             <div className="flex flex-wrap gap-1.5">
               {suggestions.slice(0, 3).map((suggestion) => (
                 <PartnerPill

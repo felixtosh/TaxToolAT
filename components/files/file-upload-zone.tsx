@@ -9,8 +9,7 @@ import { createFile, checkFileDuplicate, OperationsContext } from "@/lib/operati
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ACCEPTED_TYPES = {
   "image/jpeg": [".jpg", ".jpeg"],
@@ -25,14 +24,15 @@ interface FileUploadZoneProps {
 }
 
 export function FileUploadZone({ onUploadComplete, className }: FileUploadZoneProps) {
+  const { userId } = useAuth();
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [currentFileName, setCurrentFileName] = useState<string | null>(null);
 
   const ctx: OperationsContext = useMemo(
-    () => ({ db, userId: MOCK_USER_ID }),
-    []
+    () => ({ db, userId }),
+    [userId]
   );
 
   // Calculate SHA-256 hash of file content
@@ -64,7 +64,7 @@ export function FileUploadZone({ onUploadComplete, className }: FileUploadZonePr
         // Create storage path
         const timestamp = Date.now();
         const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-        const storagePath = `files/${MOCK_USER_ID}/${timestamp}_${sanitizedName}`;
+        const storagePath = `files/${userId}/${timestamp}_${sanitizedName}`;
 
         // Upload to Firebase Storage
         const storageRef = ref(storage, storagePath);

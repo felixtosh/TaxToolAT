@@ -3,6 +3,7 @@ import { initializeApp, getApps } from "firebase/app";
 import { getFirestore, connectFirestoreEmulator, collection, addDoc, Timestamp } from "firebase/firestore";
 import { getTrueLayerClient } from "@/lib/truelayer";
 import { TrueLayerConnection } from "@/types/truelayer";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -28,7 +29,6 @@ if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_USE_EMULAT
   }
 }
 
-const MOCK_USER_ID = "dev-user-123";
 const CONNECTIONS_COLLECTION = "truelayerConnections";
 
 /**
@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const formData = await request.formData();
     const code = formData.get("code") as string;
     const state = formData.get("state") as string;
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
       refreshToken: tokens.refresh_token,
       tokenExpiresAt: Timestamp.fromDate(expiresAt),
       accountIds,
-      userId: MOCK_USER_ID,
+      userId,
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
       ...(sourceId && { linkToSourceId: sourceId }),

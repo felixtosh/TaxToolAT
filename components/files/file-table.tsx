@@ -9,6 +9,11 @@ import { TaxFile, FileFilters } from "@/types/file";
 import { UserPartner, GlobalPartner } from "@/types/partner";
 import { useGmailSyncStatus } from "@/hooks/use-gmail-sync-status";
 
+export interface TransactionAmountData {
+  amount: number;
+  currency: string;
+}
+
 interface FileTableProps {
   files: TaxFile[];
   onSelectFile: (file: TaxFile) => void;
@@ -19,6 +24,7 @@ interface FileTableProps {
   onFiltersChange: (filters: FileFilters) => void;
   userPartners: UserPartner[];
   globalPartners: GlobalPartner[];
+  transactionAmountsMap?: Map<string, TransactionAmountData[]>;
   // Multi-select props
   enableMultiSelect?: boolean;
   selectedRowIds?: Set<string>;
@@ -37,6 +43,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
       onFiltersChange,
       userPartners,
       globalPartners,
+      transactionAmountsMap,
       enableMultiSelect,
       selectedRowIds,
       onSelectionChange,
@@ -44,8 +51,8 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     ref
   ) {
     const columns = useMemo(
-      () => getFileColumns(userPartners, globalPartners),
-      [userPartners, globalPartners]
+      () => getFileColumns(userPartners, globalPartners, transactionAmountsMap),
+      [userPartners, globalPartners, transactionAmountsMap]
     );
 
     const syncStatus = useGmailSyncStatus();

@@ -32,10 +32,10 @@ export const matchPartners = onCall<MatchPartnersRequest>(
     memory: "512MiB",
   },
   async (request): Promise<MatchPartnersResponse> => {
-    // TODO: Use real auth when ready for multi-user
-    // For now, always use mock user during development
-    // (Auth is only used for Gmail OAuth, not data ownership)
-    const userId = "dev-user-123";
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
     const { transactionIds, matchAll } = request.data;
 
     console.log(`Manual matching triggered by user ${userId}`, { transactionIds, matchAll });
@@ -73,6 +73,7 @@ export const matchPartners = onCall<MatchPartnersRequest>(
         website: data.website,
         vatId: data.vatId,
         learnedPatterns: data.learnedPatterns || [],
+        globalPartnerId: data.globalPartnerId || null,
       };
     });
 
@@ -88,6 +89,14 @@ export const matchPartners = onCall<MatchPartnersRequest>(
         patterns: data.patterns || [],
       };
     });
+    const localizedGlobalIds = new Set(
+      userPartners
+        .map((partner) => (partner as { globalPartnerId?: string | null }).globalPartnerId)
+        .filter(Boolean) as string[]
+    );
+    const filteredGlobalPartners = globalPartners.filter(
+      (partner) => !localizedGlobalIds.has(partner.id)
+    );
 
     // Get transactions to match
     let transactionsSnapshot;
@@ -135,6 +144,13 @@ export const matchPartners = onCall<MatchPartnersRequest>(
       if (!txDoc.exists) continue;
 
       const txData = txDoc.data()!;
+      const existingPartnerId = txData.partnerId as string | null | undefined;
+
+      if (existingPartnerId) {
+        // Avoid overriding any existing assignment (manual/suggestion/auto/legacy).
+        continue;
+      }
+
       const transaction: TransactionData = {
         id: txDoc.id,
         partner: txData.partner || null,
@@ -143,7 +159,7 @@ export const matchPartners = onCall<MatchPartnersRequest>(
         reference: txData.reference || null,
       };
 
-      const matches = matchTransaction(transaction, userPartners, globalPartners);
+      const matches = matchTransaction(transaction, userPartners, filteredGlobalPartners);
       processed++;
       processedTransactionIds.push(txDoc.id);
 

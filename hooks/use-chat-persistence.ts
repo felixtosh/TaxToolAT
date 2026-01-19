@@ -12,8 +12,7 @@ import {
   listChatSessions,
   serializeMessagesForSDK,
 } from "@/lib/operations";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 
 export interface ChatPersistenceState {
   currentSessionId: string | null;
@@ -22,6 +21,7 @@ export interface ChatPersistenceState {
 }
 
 export function useChatPersistence() {
+  const { userId } = useAuth();
   const [state, setState] = useState<ChatPersistenceState>({
     currentSessionId: null,
     isLoading: true,
@@ -32,13 +32,18 @@ export function useChatPersistence() {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Load initial session on mount
   useEffect(() => {
+    if (!userId) {
+      setState({ currentSessionId: null, isLoading: false, sessions: [] });
+      return;
+    }
+
     const loadInitialSession = async () => {
       try {
         const sessionId = await getOrCreateActiveSession(ctx);
@@ -55,7 +60,7 @@ export function useChatPersistence() {
     };
 
     loadInitialSession();
-  }, [ctx]);
+  }, [ctx, userId]);
 
   // Load messages for a session
   const loadSessionMessages = useCallback(

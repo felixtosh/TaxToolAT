@@ -293,7 +293,7 @@ export function EmailSearchPanel({
   return (
     <div className="flex h-full">
       {/* Left: Search and results */}
-      <div className="w-[350px] border-r flex flex-col">
+      <div className="w-[420px] border-r flex flex-col">
         {/* Search */}
         <div className="p-4 border-b space-y-3">
           {/* Connected accounts info */}
@@ -499,7 +499,7 @@ function AttachmentResultCard({ attachment, message, isSelected, onSelect }: Att
       type="button"
       onClick={onSelect}
       className={cn(
-        "w-full flex items-start gap-3 p-3 rounded-md transition-colors text-left",
+        "w-full flex items-start gap-3 p-3 rounded-md transition-colors text-left overflow-hidden",
         isSelected && "bg-primary/10 ring-1 ring-primary",
         !isSelected && "hover:bg-muted"
       )}
@@ -511,7 +511,7 @@ function AttachmentResultCard({ attachment, message, isSelected, onSelect }: Att
           <Image className="h-5 w-5 text-blue-500" />
         )}
       </div>
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 overflow-hidden">
         <p className="text-sm font-medium truncate">{attachment.filename}</p>
         <p className="text-xs text-muted-foreground truncate">
           {message.fromName || message.from}

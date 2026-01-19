@@ -5,6 +5,7 @@ const firestore_1 = require("firebase-functions/v2/firestore");
 const firestore_2 = require("firebase-admin/firestore");
 const partner_matcher_1 = require("../utils/partner-matcher");
 const matchCategories_1 = require("./matchCategories");
+const createLocalPartnerFromGlobal_1 = require("./createLocalPartnerFromGlobal");
 const db = (0, firestore_2.getFirestore)();
 /**
  * Triggered when a new user partner is created
@@ -21,6 +22,10 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
     const partnerId = snapshot.id;
     const userId = partnerData.userId;
     console.log(`New partner created: ${partnerData.name} (${partnerId}) for user ${userId}`);
+    if (partnerData.globalPartnerId && partnerData.createdBy === "auto_partner_match") {
+        console.log(`Skipping re-match for localized partner ${partnerId} (global ${partnerData.globalPartnerId})`);
+        return;
+    }
     try {
         // Get unmatched transactions for this user (no partnerId set)
         const unmatchedSnapshot = await db
@@ -74,6 +79,10 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
                 patterns: data.patterns || [],
             };
         });
+        const localizedGlobalIds = new Set(userPartnersSnapshot.docs
+            .map((doc) => doc.data().globalPartnerId)
+            .filter(Boolean));
+        const filteredGlobalPartners = globalPartners.filter((partner) => !localizedGlobalIds.has(partner.id));
         // Process each unmatched transaction
         const batch = db.batch();
         let batchCount = 0;
@@ -90,7 +99,7 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
                 name: txData.name || "",
                 reference: txData.reference || null,
             };
-            const matches = (0, partner_matcher_1.matchTransaction)(transaction, userPartners, globalPartners);
+            const matches = (0, partner_matcher_1.matchTransaction)(transaction, userPartners, filteredGlobalPartners);
             processedTransactionIds.push(txDoc.id);
             if (matches.length > 0) {
                 // Filter out matches where user explicitly removed this transaction from the partner
@@ -117,8 +126,20 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
                     updatedAt: firestore_2.FieldValue.serverTimestamp(),
                 };
                 if ((0, partner_matcher_1.shouldAutoApply)(topMatch.confidence)) {
-                    updates.partnerId = topMatch.partnerId;
-                    updates.partnerType = topMatch.partnerType;
+                    let assignedPartnerId = topMatch.partnerId;
+                    let assignedPartnerType = topMatch.partnerType;
+                    if (topMatch.partnerType === "global") {
+                        try {
+                            assignedPartnerId = await (0, createLocalPartnerFromGlobal_1.createLocalPartnerFromGlobal)(userId, topMatch.partnerId);
+                            assignedPartnerType = "user";
+                        }
+                        catch (error) {
+                            console.error(`[PartnerMatch] Failed to create local partner from global:`, error);
+                            // Fall back to assigning global if localization fails
+                        }
+                    }
+                    updates.partnerId = assignedPartnerId;
+                    updates.partnerType = assignedPartnerType;
                     updates.partnerMatchConfidence = topMatch.confidence;
                     updates.partnerMatchedBy = "auto";
                     autoMatched++;

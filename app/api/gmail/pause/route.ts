@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { collection, addDoc, doc, getDoc } from "firebase/firestore";
 import { Timestamp } from "firebase/firestore";
-import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import {
   getEmailIntegration,
   pauseEmailIntegration,
@@ -20,6 +21,7 @@ const db = getServerDb();
  */
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
     const { integrationId } = body;
 
@@ -30,7 +32,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
 
     // Verify integration exists and belongs to user
     const integration = await getEmailIntegration(ctx, integrationId);
@@ -62,7 +64,7 @@ export async function POST(request: NextRequest) {
       );
 
       await addDoc(collection(db, "gmailSyncHistory"), {
-        userId: MOCK_USER_ID,
+        userId,
         integrationId,
         integrationEmail: integration.email,
         type: pausedQueueItem.type,

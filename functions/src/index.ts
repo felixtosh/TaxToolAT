@@ -75,3 +75,16 @@ export {
   onPrecisionSearchQueueCreated,
 } from "./precision-search/precisionSearchQueue";
 export { onGmailSyncComplete } from "./precision-search/onGmailSyncComplete";
+
+// Export inbound email functions
+export { receiveInboundEmail, testInboundEmail } from "./email-inbound/receiveEmail";
+export { resetInboundDailyLimits } from "./email-inbound/resetDailyLimits";
+
+// Export auth functions
+export {
+  setAdminClaim,
+  beforeUserCreatedHandler,
+  listAdmins,
+} from "./auth/setAdminClaim";
+export { validateRegistration, markInviteUsed } from "./auth/validateRegistration";
+export { migrateUserData, checkMigrationStatus } from "./auth/migrateUserData";

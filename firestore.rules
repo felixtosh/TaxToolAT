@@ -1,104 +1,142 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Development mode - allow all for now
-    // TODO: Add proper auth rules before production
-    // The rules below show the intended structure for production
-
-    match /{document=**} {
-      allow read, write: if true;
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
     }
 
-    // ============================================
-    // PRODUCTION RULES (currently disabled)
-    // Uncomment and remove the above rule for production
-    // ============================================
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
 
-    // // Helper function to check if user is authenticated
-    // function isAuthenticated() {
-    //   return request.auth != null;
-    // }
+    function isSuperAdmin() {
+      return request.auth != null && request.auth.token.email == "felix@i7v6.com";
+    }
 
-    // // Helper function to check if user owns the document
-    // function isOwner(userId) {
-    //   return isAuthenticated() && request.auth.uid == userId;
-    // }
+    // User-scoped collections - users can only access their own data
+    // Pattern: read allows non-existent docs, create checks request.resource, update/delete check resource
+    match /sources/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
 
-    // // Helper function to check if user is admin
-    // function isAdmin() {
-    //   return isAuthenticated() && request.auth.token.admin == true;
-    // }
+    match /transactions/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
 
-    // // User partners - owned by user
-    // match /partners/{partnerId} {
-    //   allow read: if isAuthenticated() &&
-    //     resource.data.userId == request.auth.uid;
-    //   allow create: if isAuthenticated() &&
-    //     request.resource.data.userId == request.auth.uid;
-    //   allow update, delete: if isAuthenticated() &&
-    //     resource.data.userId == request.auth.uid;
-    // }
+    match /files/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
 
-    // // Global partners - read by all authenticated, write by admin only
-    // match /globalPartners/{partnerId} {
-    //   allow read: if isAuthenticated();
-    //   allow write: if isAdmin();
-    // }
+    match /partners/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
 
-    // // Promotion candidates - admin only
-    // match /promotionCandidates/{candidateId} {
-    //   allow read, write: if isAdmin();
-    // }
+    match /emailIntegrations/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
 
-    // // Transactions - owned by user
-    // match /transactions/{transactionId} {
-    //   allow read: if isAuthenticated() &&
-    //     resource.data.userId == request.auth.uid;
-    //   allow create: if isAuthenticated() &&
-    //     request.resource.data.userId == request.auth.uid;
-    //   allow update: if isAuthenticated() &&
-    //     resource.data.userId == request.auth.uid;
-    //   // Delete not allowed - maintain transaction history
-    // }
+    match /emailTokens/{docId} {
+      // Tokens should only be accessible via Cloud Functions (admin SDK)
+      allow read, write: if false;
+    }
 
-    // // Sources - owned by user
-    // match /sources/{sourceId} {
-    //   allow read: if isAuthenticated() &&
-    //     resource.data.userId == request.auth.uid;
-    //   allow create: if isAuthenticated() &&
-    //     request.resource.data.userId == request.auth.uid;
-    //   allow update, delete: if isAuthenticated() &&
-    //     resource.data.userId == request.auth.uid;
-    // }
+    match /imports/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
 
-    // // Imports - owned by user
-    // match /imports/{importId} {
-    //   allow read: if isAuthenticated() &&
-    //     resource.data.userId == request.auth.uid;
-    //   allow create: if isAuthenticated() &&
-    //     request.resource.data.userId == request.auth.uid;
-    //   allow delete: if isAuthenticated() &&
-    //     resource.data.userId == request.auth.uid;
-    // }
+    match /noReceiptCategories/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
 
-    // // Receipts - owned by user
-    // match /receipts/{receiptId} {
-    //   allow read: if isAuthenticated() &&
-    //     resource.data.userId == request.auth.uid;
-    //   allow create: if isAuthenticated() &&
-    //     request.resource.data.userId == request.auth.uid;
-    //   allow update, delete: if isAuthenticated() &&
-    //     resource.data.userId == request.auth.uid;
-    // }
+    match /aiUsage/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      // No update/delete - usage records are immutable
+    }
 
-    // // Categories - system defaults readable by all, user custom owned by user
-    // match /categories/{categoryId} {
-    //   allow read: if isAuthenticated() &&
-    //     (resource.data.userId == null || resource.data.userId == request.auth.uid);
-    //   allow create: if isAuthenticated() &&
-    //     request.resource.data.userId == request.auth.uid;
-    //   allow update, delete: if isAuthenticated() &&
-    //     resource.data.userId == request.auth.uid;
-    // }
+    match /fileConnections/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /gmailSyncQueue/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      // Write handled by Cloud Functions
+    }
+
+    match /gmailSyncHistory/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      // Write handled by Cloud Functions
+    }
+
+    match /inboundEmailAddresses/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /inboundEmailLogs/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      // Write handled by Cloud Functions (email webhook)
+    }
+
+    // User document and subcollections
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      match /settings/{settingId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      match /notifications/{notificationId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      match /chatSessions/{sessionId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+
+        match /messages/{messageId} {
+          allow read, write: if request.auth != null && request.auth.uid == userId;
+        }
+      }
+    }
+
+    // Admin-only collections
+    match /allowedEmails/{docId} {
+      allow read, write: if isAdmin() || isSuperAdmin();
+    }
+
+    match /globalPartners/{docId} {
+      // Everyone can read global partners, only admins can write
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isSuperAdmin();
+    }
+
+    match /promotionCandidates/{docId} {
+      allow read, write: if isAdmin() || isSuperAdmin();
+    }
+
+    // Precision search queue - user read, Cloud Functions write
+    match /precisionSearchQueue/{docId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      // Updates handled by Cloud Functions
+    }
   }
 }

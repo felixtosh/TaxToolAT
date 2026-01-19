@@ -5,6 +5,7 @@ const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
 const partner_matcher_1 = require("../utils/partner-matcher");
 const matchCategories_1 = require("./matchCategories");
+const createLocalPartnerFromGlobal_1 = require("./createLocalPartnerFromGlobal");
 const db = (0, firestore_1.getFirestore)();
 /**
  * Callable function to manually trigger partner matching
@@ -46,6 +47,7 @@ exports.matchPartners = (0, https_1.onCall)({
             website: data.website,
             vatId: data.vatId,
             learnedPatterns: data.learnedPatterns || [],
+            globalPartnerId: data.globalPartnerId || null,
         };
     });
     const globalPartners = globalPartnersSnapshot.docs.map((doc) => {
@@ -60,6 +62,10 @@ exports.matchPartners = (0, https_1.onCall)({
             patterns: data.patterns || [],
         };
     });
+    const localizedGlobalIds = new Set(userPartners
+        .map((partner) => partner.globalPartnerId)
+        .filter(Boolean));
+    const filteredGlobalPartners = globalPartners.filter((partner) => !localizedGlobalIds.has(partner.id));
     // Get transactions to match
     let transactionsSnapshot;
     if (!matchAll && transactionIds && transactionIds.length > 0) {
@@ -99,6 +105,11 @@ exports.matchPartners = (0, https_1.onCall)({
         if (!txDoc.exists)
             continue;
         const txData = txDoc.data();
+        const existingPartnerId = txData.partnerId;
+        if (existingPartnerId) {
+            // Avoid overriding any existing assignment (manual/suggestion/auto/legacy).
+            continue;
+        }
         const transaction = {
             id: txDoc.id,
             partner: txData.partner || null,
@@ -106,7 +117,7 @@ exports.matchPartners = (0, https_1.onCall)({
             name: txData.name || "",
             reference: txData.reference || null,
         };
-        const matches = (0, partner_matcher_1.matchTransaction)(transaction, userPartners, globalPartners);
+        const matches = (0, partner_matcher_1.matchTransaction)(transaction, userPartners, filteredGlobalPartners);
         processed++;
         processedTransactionIds.push(txDoc.id);
         if (matches.length > 0) {
@@ -134,8 +145,20 @@ exports.matchPartners = (0, https_1.onCall)({
                 updatedAt: firestore_1.FieldValue.serverTimestamp(),
             };
             if ((0, partner_matcher_1.shouldAutoApply)(topMatch.confidence)) {
-                updates.partnerId = topMatch.partnerId;
-                updates.partnerType = topMatch.partnerType;
+                let assignedPartnerId = topMatch.partnerId;
+                let assignedPartnerType = topMatch.partnerType;
+                if (topMatch.partnerType === "global") {
+                    try {
+                        assignedPartnerId = await (0, createLocalPartnerFromGlobal_1.createLocalPartnerFromGlobal)(userId, topMatch.partnerId);
+                        assignedPartnerType = "user";
+                    }
+                    catch (error) {
+                        console.error(`[PartnerMatch] Failed to create local partner from global:`, error);
+                        // Fall back to assigning global if localization fails
+                    }
+                }
+                updates.partnerId = assignedPartnerId;
+                updates.partnerType = assignedPartnerType;
                 updates.partnerMatchConfidence = topMatch.confidence;
                 updates.partnerMatchedBy = "auto";
                 autoMatched++;

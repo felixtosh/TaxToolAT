@@ -12,8 +12,7 @@ import {
 } from "firebase/firestore";
 import { storage, db } from "@/lib/firebase/config";
 import { Receipt } from "@/types/receipt";
-
-const MOCK_USER_ID = "dev-user-123"; // Mock user for development
+import { useAuth } from "@/components/auth";
 
 interface UploadState {
   progress: number;
@@ -32,6 +31,7 @@ const MOCK_AI_SUGGESTIONS = [
 ];
 
 export function useFileUpload() {
+  const { userId } = useAuth();
   const [uploadState, setUploadState] = useState<UploadState>({
     progress: 0,
     isUploading: false,
@@ -40,13 +40,18 @@ export function useFileUpload() {
 
   const uploadFile = useCallback(
     async (file: File, transactionId: string): Promise<Receipt | null> => {
+      if (!userId) {
+        setUploadState({ progress: 0, isUploading: false, error: new Error("Not authenticated") });
+        return null;
+      }
+
       setUploadState({ progress: 0, isUploading: true, error: null });
 
       try {
         // Generate unique filename
         const timestamp = Date.now();
         const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-        const storagePath = `receipts/${MOCK_USER_ID}/${transactionId}/${timestamp}_${sanitizedName}`;
+        const storagePath = `receipts/${userId}/${transactionId}/${timestamp}_${sanitizedName}`;
         const storageRef = ref(storage, storagePath);
 
         // Upload with progress tracking
@@ -84,7 +89,7 @@ export function useFileUpload() {
                   downloadUrl,
                   aiSuggestedDescription,
                   uploadedAt: Timestamp.now(),
-                  userId: MOCK_USER_ID,
+                  userId,
                   createdAt: Timestamp.now(),
                 };
 
@@ -127,7 +132,7 @@ export function useFileUpload() {
         return null;
       }
     },
-    []
+    [userId]
   );
 
   return {

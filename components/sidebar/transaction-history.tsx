@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { TransactionHistoryEntry } from "@/types/transaction-history";
 import { getTransactionHistory, rollbackTransaction } from "@/lib/operations/transaction-history-ops";
 import { db } from "@/lib/firebase/config";
+import { useAuth } from "@/components/auth";
 
 interface TransactionHistoryProps {
   transactionId: string;
@@ -20,9 +21,8 @@ interface TransactionHistoryProps {
   expandedByDefault?: boolean;
 }
 
-const MOCK_USER_ID = "dev-user-123";
-
 export function TransactionHistory({ transactionId, onRollback, expandedByDefault = false }: TransactionHistoryProps) {
+  const { userId } = useAuth();
   const [history, setHistory] = useState<TransactionHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isRollingBack, setIsRollingBack] = useState<string | null>(null);
@@ -37,7 +37,7 @@ export function TransactionHistory({ transactionId, onRollback, expandedByDefaul
       setIsLoading(true);
       setError(null);
       try {
-        const ctx = { db, userId: MOCK_USER_ID };
+        const ctx = { db, userId };
         const entries = await getTransactionHistory(ctx, transactionId);
         setHistory(entries);
       } catch (err) {
@@ -49,15 +49,15 @@ export function TransactionHistory({ transactionId, onRollback, expandedByDefaul
     }
 
     loadHistory();
-  }, [isOpen, transactionId]);
+  }, [isOpen, transactionId, userId]);
 
   const handleRollback = async (historyId: string) => {
     setIsRollingBack(historyId);
     try {
-      const ctx = { db, userId: MOCK_USER_ID };
+      const ctx = { db, userId };
       await rollbackTransaction(ctx, transactionId, historyId, {
         type: "user",
-        userId: MOCK_USER_ID,
+        userId,
       });
 
       // Reload history after rollback

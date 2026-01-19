@@ -42,13 +42,12 @@ import {
   TransactionInfo,
 } from "@/hooks/use-unified-file-search";
 import { usePartners } from "@/hooks/use-partners";
-import { addEmailDomainToPartner, learnFileSourcePattern } from "@/lib/operations";
+import { addEmailDomainToPartner } from "@/lib/operations";
 import { db, functions } from "@/lib/firebase/config";
 import { httpsCallable } from "firebase/functions";
 import { GmailAttachmentsTab } from "./connect-transaction-tabs/gmail-attachments-tab";
 import { EmailInvoiceTab } from "./connect-transaction-tabs/email-invoice-tab";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 
 interface ConnectFileDialogProps {
   open: boolean;
@@ -60,7 +59,11 @@ interface ConnectFileDialogProps {
       sourceType: "local" | "gmail";
       searchPattern?: string;
       gmailIntegrationId?: string;
+      gmailIntegrationEmail?: string;
       gmailMessageId?: string;
+      gmailMessageFrom?: string;
+      gmailMessageFromName?: string;
+      resultType?: "local_file" | "gmail_attachment" | "gmail_html_invoice" | "gmail_invoice_link";
     }
   ) => Promise<void>;
   /** File IDs that are already connected (to show as disabled) */
@@ -90,6 +93,7 @@ export function ConnectFileDialog({
   connectedFileIds = [],
   transactionInfo,
 }: ConnectFileDialogProps) {
+  const { userId } = useAuth();
   const [selectedResult, setSelectedResult] = useState<UnifiedSearchResult | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
@@ -314,24 +318,8 @@ export function ConnectFileDialog({
         await onSelect(selectedResult.fileId, {
           sourceType: "local",
           searchPattern: searchQuery || undefined,
+          resultType: "local_file",
         });
-
-        // Learn pattern if partner assigned (only if partner exists locally)
-        if (partner && searchQuery && transactionInfo?.transactionId) {
-          try {
-            await learnFileSourcePattern(
-              { db, userId: MOCK_USER_ID },
-              partner.id,
-              transactionInfo.transactionId,
-              {
-                sourceType: "local",
-                searchPattern: searchQuery,
-              }
-            );
-          } catch (err) {
-            console.error("Failed to learn file source pattern:", err);
-          }
-        }
       } else if (selectedResult.type === "gmail") {
         // Gmail attachment - save it first, then connect
         const response = await fetch("/api/gmail/attachment", {
@@ -344,6 +332,9 @@ export function ConnectFileDialog({
             mimeType: selectedResult.mimeType,
             filename: selectedResult.filename,
             gmailMessageSubject: selectedResult.emailSubject,
+            gmailMessageFrom: selectedResult.emailFrom,
+            searchPattern: searchQuery || undefined,
+            resultType: "gmail_attachment",
           }),
         });
 
@@ -360,25 +351,9 @@ export function ConnectFileDialog({
           searchPattern: searchQuery || undefined,
           gmailIntegrationId: selectedResult.integrationId,
           gmailMessageId: selectedResult.messageId,
+          gmailMessageFrom: selectedResult.emailFrom,
+          resultType: "gmail_attachment",
         });
-
-        // Learn pattern if partner assigned (only if partner exists locally)
-        if (partner && searchQuery && transactionInfo?.transactionId) {
-          try {
-            await learnFileSourcePattern(
-              { db, userId: MOCK_USER_ID },
-              partner.id,
-              transactionInfo.transactionId,
-              {
-                sourceType: "gmail",
-                searchPattern: searchQuery,
-                integrationId: selectedResult.integrationId,
-              }
-            );
-          } catch (err) {
-            console.error("Failed to learn file source pattern:", err);
-          }
-        }
 
         if (partner && selectedResult.emailFrom) {
           const match = selectedResult.emailFrom.toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
@@ -386,7 +361,7 @@ export function ConnectFileDialog({
           if (domain) {
             try {
               await addEmailDomainToPartner(
-                { db, userId: MOCK_USER_ID },
+                { db, userId },
                 partner.id,
                 domain
               );
@@ -461,7 +436,7 @@ export function ConnectFileDialog({
           <TabsContent value="files" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden data-[state=active]:flex data-[state=active]:flex-col" forceMount>
             <div className="flex flex-1 min-h-0">
               {/* Left column: Search and results */}
-              <div className="w-[350px] shrink-0 border-r flex flex-col min-h-0">
+              <div className="w-[420px] shrink-0 border-r flex flex-col min-h-0">
             {/* Search */}
             <div className="p-4 border-b space-y-3">
               {/* Query source indicator */}
@@ -610,7 +585,7 @@ export function ConnectFileDialog({
                         disabled={isConnected}
                         onClick={() => setSelectedResult(result)}
                         className={cn(
-                          "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors",
+                          "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors overflow-hidden",
                           isSelected && "bg-primary/10 ring-1 ring-primary",
                           !isSelected && !isConnected && "hover:bg-muted",
                           isConnected && "opacity-50 cursor-not-allowed"
@@ -639,9 +614,9 @@ export function ConnectFileDialog({
                         </div>
 
                         {/* File info */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium truncate">{result.filename}</p>
+                        <div className="flex-1 min-w-0 overflow-hidden">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <p className="text-sm font-medium truncate flex-1 min-w-0">{result.filename}</p>
                             {isConnected && (
                               <Badge variant="secondary" className="text-xs">
                                 <Link2 className="h-3 w-3 mr-1" />
@@ -798,7 +773,10 @@ export function ConnectFileDialog({
                   partnerId: transactionInfo.partnerId,
                 } : undefined}
                 onFileCreated={async (fileId) => {
-                  await onSelect(fileId, { sourceType: "gmail" });
+                  await onSelect(fileId, {
+                    sourceType: "gmail",
+                    resultType: "gmail_attachment",
+                  });
                   onClose();
                 }}
               />
@@ -817,7 +795,10 @@ export function ConnectFileDialog({
                   partnerId: transactionInfo.partnerId,
                 } : undefined}
                 onFileCreated={async (fileId) => {
-                  await onSelect(fileId, { sourceType: "gmail" });
+                  await onSelect(fileId, {
+                    sourceType: "gmail",
+                    resultType: "gmail_html_invoice",
+                  });
                   onClose();
                 }}
               />

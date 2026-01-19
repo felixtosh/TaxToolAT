@@ -4,6 +4,7 @@ import { initializeApp, getApps } from "firebase/app";
 import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { getStorage, connectStorageEmulator } from "firebase/storage";
 import { getFunctions, connectFunctionsEmulator } from "firebase/functions";
+import { getAuth, connectAuthEmulator } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDhxXMbHgaD1z9n0bkuVaSRmmiCrbNL-l4",
@@ -20,9 +21,11 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app, "europe-west1");
+export const auth = getAuth(app);
 
 // Emulator configuration
 const EMULATOR_CONFIG = {
+  auth: { host: "localhost", port: 9099 },
   firestore: { host: "localhost", port: 8080 },
   storage: { host: "localhost", port: 9199 },
   functions: { host: "localhost", port: 5001 },
@@ -57,12 +60,13 @@ export function connectEmulators() {
   if (process.env.NODE_ENV !== "development") return;
 
   try {
+    connectAuthEmulator(auth, `http://${EMULATOR_CONFIG.auth.host}:${EMULATOR_CONFIG.auth.port}`);
     connectFirestoreEmulator(db, EMULATOR_CONFIG.firestore.host, EMULATOR_CONFIG.firestore.port);
     connectStorageEmulator(storage, EMULATOR_CONFIG.storage.host, EMULATOR_CONFIG.storage.port);
     connectFunctionsEmulator(functions, EMULATOR_CONFIG.functions.host, EMULATOR_CONFIG.functions.port);
     emulatorsConnected = true;
     console.log(
-      "%c[Firebase] Connected to emulators (Firestore:8080, Storage:9199, Functions:5001)",
+      "%c[Firebase] Connected to emulators (Auth:9099, Firestore:8080, Storage:9199, Functions:5001)",
       "color: #4CAF50; font-weight: bold"
     );
   } catch (e) {

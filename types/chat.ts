@@ -2,6 +2,7 @@ import { Timestamp } from "firebase/firestore";
 import { AutoActionNotification } from "./notification";
 
 export type ChatTab = "notifications" | "chat";
+export type SidebarMode = "chat" | "onboarding";
 
 /**
  * A part of a message - either text or a tool call (in chronological order)
@@ -119,4 +120,8 @@ export interface ChatContextValue {
   markNotificationRead: (id: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   startConversationFromNotification: (notification: AutoActionNotification) => void;
+
+  // Sidebar mode (chat vs onboarding)
+  sidebarMode: SidebarMode;
+  setSidebarMode: (mode: SidebarMode) => void;
 }

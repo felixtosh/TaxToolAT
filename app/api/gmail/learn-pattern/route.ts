@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import {
   addEmailPatternToPartner,
   getEmailIntegration,
@@ -20,6 +21,7 @@ const db = getServerDb();
  */
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
     const { partnerId, pattern, integrationId, transactionId } = body;
 
@@ -39,7 +41,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
 
     // Verify the integration belongs to the user
     const integration = await getEmailIntegration(ctx, integrationId);

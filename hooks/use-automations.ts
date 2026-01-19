@@ -2,6 +2,7 @@
 
 import { useMemo, useCallback, useState } from "react";
 import { useEmailIntegrations } from "./use-email-integrations";
+import { useBrowserExtensionStatus } from "./use-browser-extension";
 import {
   getAllPipelines,
   getPipelineById,
@@ -25,6 +26,10 @@ export interface UseAutomationsResult {
   integrationStatuses: Map<string, IntegrationStatus>;
   /** Check if a specific integration is connected */
   isIntegrationConnected: (integrationId: string | null) => boolean;
+  /** Get integrations that need attention (not connected, needs reauth, or paused) */
+  integrationIssues: IntegrationStatus[];
+  /** Whether any integrations have issues */
+  hasIntegrationIssues: boolean;
   /** Loading state for integration data */
   loading: boolean;
   /** Currently open automation dialog pipeline ID */
@@ -33,13 +38,22 @@ export interface UseAutomationsResult {
   openAutomationDialog: (pipelineId: PipelineId) => void;
   /** Close the automation dialog */
   closeAutomationDialog: () => void;
+  /** Browser extension status */
+  browserExtensionStatus: "checking" | "installed" | "not_installed";
+  /** Check browser extension status manually */
+  checkBrowserExtension: () => void;
+  /** Whether Gmail is connected */
+  hasGmailIntegration: boolean;
+  /** Connect Gmail handler */
+  connectGmail: () => Promise<void>;
 }
 
 export function useAutomations(): UseAutomationsResult {
-  const { integrations, loading } = useEmailIntegrations();
+  const { integrations, loading, hasGmailIntegration, connectGmail } = useEmailIntegrations();
+  const { status: browserExtensionStatus, checkNow: checkBrowserExtension } = useBrowserExtensionStatus();
   const [openPipelineId, setOpenPipelineId] = useState<PipelineId | null>(null);
 
-  // Build integration statuses from email integrations
+  // Build integration statuses from email integrations and browser extension
   const integrationStatuses = useMemo(() => {
     const statuses = new Map<string, IntegrationStatus>();
 
@@ -65,6 +79,15 @@ export function useAutomations(): UseAutomationsResult {
       isPaused: outlookIntegration?.isPaused,
     });
 
+    // Browser extension status
+    statuses.set("browser", {
+      integrationId: "browser",
+      displayName: "Browser Extension",
+      isConnected: browserExtensionStatus === "installed",
+      needsReauth: false,
+      isPaused: false,
+    });
+
     // GoCardless/Open Banking (would need to check sources collection)
     // For now, set as always available since it's a system feature
     statuses.set("gocardless", {
@@ -75,7 +98,7 @@ export function useAutomations(): UseAutomationsResult {
     });
 
     return statuses;
-  }, [integrations]);
+  }, [integrations, browserExtensionStatus]);
 
   // Get all pipelines
   const pipelines = useMemo(() => getAllPipelines(), []);
@@ -99,6 +122,17 @@ export function useAutomations(): UseAutomationsResult {
     [integrationStatuses]
   );
 
+  // Get integrations that need attention
+  const integrationIssues = useMemo(() => {
+    const issues: IntegrationStatus[] = [];
+    integrationStatuses.forEach((status) => {
+      if (!status.isConnected || status.needsReauth || status.isPaused) {
+        issues.push(status);
+      }
+    });
+    return issues;
+  }, [integrationStatuses]);
+
   // Dialog controls
   const openAutomationDialog = useCallback((pipelineId: PipelineId) => {
     setOpenPipelineId(pipelineId);
@@ -114,9 +148,15 @@ export function useAutomations(): UseAutomationsResult {
     getStep,
     integrationStatuses,
     isIntegrationConnected,
+    integrationIssues,
+    hasIntegrationIssues: integrationIssues.length > 0,
     loading,
     openPipelineId,
     openAutomationDialog,
     closeAutomationDialog,
+    browserExtensionStatus,
+    checkBrowserExtension,
+    hasGmailIntegration,
+    connectGmail,
   };
 }

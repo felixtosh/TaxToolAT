@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "TaxStudio Browser Plugin (Dev)",
+  "version": "0.0.1",
+  "description": "Development build for TaxStudio invoice pulls.",
+  "host_permissions": ["<all_urls>"],
+  "permissions": ["tabs", "scripting", "downloads", "storage", "webRequest", "webNavigation", "notifications"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "all_frames": true,
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "TaxStudio Browser Plugin"
+  },
+  "sandbox": {
+    "pages": ["sandbox.html"]
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'",
+    "sandbox": "sandbox allow-scripts allow-forms; script-src 'self' 'unsafe-eval'; child-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["sandbox.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

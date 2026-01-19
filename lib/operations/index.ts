@@ -57,3 +57,15 @@ export * from "./user-data-ops";
 
 // Precision search operations (for automated receipt matching)
 export * from "./precision-search-ops";
+
+// Invoice source operations (for browser extension invoice fetching)
+export * from "./invoice-source-ops";
+
+// Inbound email operations (for email forwarding integration)
+export * from "./email-inbound-ops";
+
+// Invite operations (for user invitations)
+export * from "./invite-ops";
+
+// Onboarding operations (for new user onboarding flow)
+export * from "./onboarding-ops";

@@ -16,7 +16,6 @@ import * as crypto from "crypto";
 const SOURCES_COLLECTION = "sources";
 const TRANSACTIONS_COLLECTION = "transactions";
 const TEST_SOURCE_ID = "test-source-001";
-const MOCK_USER_ID = "dev-user-123";
 
 // Input schemas
 const toggleTestDataSchema = z.object({
@@ -50,7 +49,7 @@ export const testDataToolDefinitions: Tool[] = [
 ];
 
 // Generate deterministic test transactions
-function generateTestTransactions() {
+function generateTestTransactions(userId: string) {
   const transactions: Array<Record<string, unknown>> = [];
   const now = new Date();
 
@@ -111,7 +110,7 @@ function generateTestTransactions() {
       partnerMatchConfidence: null,
       partnerSuggestions: [],
       importJobId: "test-import",
-      userId: MOCK_USER_ID,
+      userId: userId,
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
       _original: {
@@ -157,7 +156,7 @@ function generateTestTransactions() {
       partnerMatchConfidence: null,
       partnerSuggestions: [],
       importJobId: "test-import",
-      userId: MOCK_USER_ID,
+      userId: userId,
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
       _original: { date: "", amount: "", rawRow: {} },
@@ -168,7 +167,7 @@ function generateTestTransactions() {
 }
 
 // Generate test source
-function generateTestSource() {
+function generateTestSource(userId: string) {
   return {
     name: "Test Bank Account",
     iban: "DE89370400440532013000",
@@ -177,7 +176,7 @@ function generateTestSource() {
     type: "csv",
     currency: "EUR",
     isActive: true,
-    userId: MOCK_USER_ID,
+    userId,
     createdAt: Timestamp.now(),
     updatedAt: Timestamp.now(),
   };
@@ -229,8 +228,8 @@ export async function registerTestDataTools(
 
       if (enable) {
         // Activate test data
-        const testSource = generateTestSource();
-        const testTransactions = generateTestTransactions();
+        const testSource = generateTestSource(ctx.userId);
+        const testTransactions = generateTestTransactions(ctx.userId);
 
         const batch = writeBatch(ctx.db);
 

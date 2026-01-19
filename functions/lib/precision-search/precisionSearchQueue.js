@@ -67,6 +67,36 @@ const INVOICE_MIME_TYPES = [
     "image/png",
     "image/webp",
 ];
+function buildFilenameQueries(transactionName) {
+    const tokens = new Set();
+    const addMatches = (regex) => {
+        const matches = transactionName.match(regex);
+        if (!matches)
+            return;
+        for (const match of matches) {
+            const cleaned = match.replace(/[^A-Za-z0-9._-]/g, "");
+            if (cleaned.length > 0) {
+                tokens.add(cleaned);
+            }
+        }
+    };
+    // Invoice-like tokens (e.g., R-2024.014) and long numeric IDs.
+    addMatches(/\b[A-Za-z]{0,5}-?\d{3,}(?:[./]\d+)?\b/g);
+    addMatches(/\b\d{8,}\b/g);
+    return Array.from(tokens).map((token) => `filename:${token}`);
+}
+function mergeQueries(base, extras) {
+    const seen = new Set();
+    const merged = [];
+    for (const query of [...base, ...extras]) {
+        const normalized = query.trim();
+        if (!normalized || seen.has(normalized))
+            continue;
+        seen.add(normalized);
+        merged.push(normalized);
+    }
+    return merged;
+}
 // Strategy execution order (used when creating queue items)
 exports.DEFAULT_STRATEGIES = [
     "partner_files",
@@ -628,19 +658,21 @@ async function executeEmailAttachmentStrategy(transaction, userId) {
         attempt.geminiCalls = (attempt.geminiCalls || 0) + 1;
         attempt.geminiTokensUsed =
             (attempt.geminiTokensUsed || 0) + queryResult.usage.inputTokens + queryResult.usage.outputTokens;
-        if (queryResult.queries.length === 0) {
+        const filenameQueries = buildFilenameQueries(transaction.name);
+        const queries = mergeQueries(queryResult.queries, filenameQueries);
+        if (queries.length === 0) {
             attempt.completedAt = firestore_2.Timestamp.now();
             return attempt;
         }
         attempt.searchParams = {
             ...attempt.searchParams,
-            queries: queryResult.queries,
+            queries,
             queryReasoning: queryResult.reasoning,
         };
         // Search each Gmail account with each query
         const processedMessageIds = new Set();
         for (const { client, integration } of clients) {
-            for (const query of queryResult.queries) {
+            for (const query of queries) {
                 try {
                     // Add has:attachment to the query if not present
                     const fullQuery = query.includes("has:attachment")
@@ -757,19 +789,21 @@ async function executeEmailInvoiceStrategy(transaction, userId) {
         attempt.geminiCalls = (attempt.geminiCalls || 0) + 1;
         attempt.geminiTokensUsed =
             (attempt.geminiTokensUsed || 0) + queryResult.usage.inputTokens + queryResult.usage.outputTokens;
-        if (queryResult.queries.length === 0) {
+        const filenameQueries = buildFilenameQueries(transaction.name);
+        const queries = mergeQueries(queryResult.queries, filenameQueries);
+        if (queries.length === 0) {
             attempt.completedAt = firestore_2.Timestamp.now();
             return attempt;
         }
         attempt.searchParams = {
             ...attempt.searchParams,
-            queries: queryResult.queries,
+            queries,
             queryReasoning: queryResult.reasoning,
         };
         // Search each Gmail account with each query (exclude attachment requirement)
         const processedMessageIds = new Set();
         for (const { client, integration } of clients) {
-            for (const query of queryResult.queries) {
+            for (const query of queries) {
                 try {
                     // Remove has:attachment if present, we want emails without attachments too
                     const cleanQuery = query.replace(/has:attachment/gi, "").trim();

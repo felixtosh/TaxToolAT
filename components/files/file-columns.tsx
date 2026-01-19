@@ -2,13 +2,18 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
-import { Link2, Upload, Mail, Loader2 } from "lucide-react";
+import { Upload, Mail, Loader2 } from "lucide-react";
 import { TaxFile } from "@/types/file";
 import { UserPartner, GlobalPartner } from "@/types/partner";
-import { Badge } from "@/components/ui/badge";
 import { SortableHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
+import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { cn } from "@/lib/utils";
+
+export interface TransactionAmountInfo {
+  amount: number;
+  currency: string;
+}
 
 // Map currency symbols to ISO codes
 const CURRENCY_SYMBOL_MAP: Record<string, string> = {
@@ -30,7 +35,8 @@ function normalizeCurrency(currency: string | null | undefined): string {
 
 export function getFileColumns(
   userPartners: UserPartner[] = [],
-  globalPartners: GlobalPartner[] = []
+  globalPartners: GlobalPartner[] = [],
+  transactionAmountsMap?: Map<string, TransactionAmountInfo[]>
 ): ColumnDef<TaxFile>[] {
   const userPartnerMap = new Map(userPartners.map((p) => [p.id, p]));
   const globalPartnerMap = new Map(globalPartners.map((p) => [p.id, p]));
@@ -214,24 +220,33 @@ export function getFileColumns(
     },
     {
       id: "connections",
-      size: 100,
+      size: 140,
       header: "Transactions",
       cell: ({ row }) => {
         const {
+          id: fileId,
           transactionIds,
+          extractedAmount,
+          extractedCurrency,
           partnerMatchComplete,
           transactionMatchComplete,
           isNotInvoice,
         } = row.original;
         const count = transactionIds.length;
 
-        // Show connected count if any
+        // Show connected count with amount matching info
         if (count > 0) {
+          const txAmounts = transactionAmountsMap?.get(fileId) || [];
+          const fileDate = row.original.extractedDate?.toDate?.() || undefined;
           return (
-            <Badge variant="secondary" className="gap-1">
-              <Link2 className="h-3 w-3" />
-              {count}
-            </Badge>
+            <AmountMatchDisplay
+              count={count}
+              countType="tx"
+              primaryAmount={extractedAmount ?? null}
+              primaryCurrency={normalizeCurrency(extractedCurrency)}
+              secondaryAmounts={txAmounts}
+              conversionDate={fileDate}
+            />
           );
         }
 
@@ -255,7 +270,7 @@ export function getFileColumns(
       cell: ({ row }) => {
         const sourceType = row.original.sourceType;
 
-        if (sourceType === "gmail") {
+        if (sourceType?.startsWith("gmail")) {
           return (
             <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <Mail className="h-3.5 w-3.5" />

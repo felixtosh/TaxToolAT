@@ -16,10 +16,13 @@ import {
   ArrowUpDown,
   X,
   CalendarIcon,
+  Check,
 } from "lucide-react";
 import { SearchButton } from "@/components/ui/search-button";
+import { SearchInput } from "@/components/ui/search-input";
 import { TransactionFilters } from "@/types/transaction";
 import { cn } from "@/lib/utils";
+import { UserPartner } from "@/types/partner";
 
 interface TransactionToolbarProps {
   searchValue: string;
@@ -27,6 +30,7 @@ interface TransactionToolbarProps {
   filters: TransactionFilters;
   onFiltersChange: (filters: TransactionFilters) => void;
   importFileName?: string;
+  userPartners?: UserPartner[];
 }
 
 export function TransactionToolbar({
@@ -35,16 +39,21 @@ export function TransactionToolbar({
   filters,
   onFiltersChange,
   importFileName,
+  userPartners = [],
 }: TransactionToolbarProps) {
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
   const [filePopoverOpen, setFilePopoverOpen] = useState(false);
   const [typePopoverOpen, setTypePopoverOpen] = useState(false);
+  const [partnerPopoverOpen, setPartnerPopoverOpen] = useState(false);
+  const [partnerSearch, setPartnerSearch] = useState("");
   const [showFromCalendar, setShowFromCalendar] = useState(false);
   const [showToCalendar, setShowToCalendar] = useState(false);
 
   const hasDateFilter = filters.dateFrom || filters.dateTo;
   const hasFileFilter = filters.hasFile !== undefined;
   const hasAmountFilter = filters.amountType && filters.amountType !== "all";
+  const selectedPartnerIds = filters.partnerIds || [];
+  const hasPartnerFilter = selectedPartnerIds.length > 0;
 
   const handleDatePresetClick = (preset: string) => {
     const now = new Date();
@@ -96,6 +105,11 @@ export function TransactionToolbar({
     onFiltersChange({ ...filters, amountType: undefined });
   };
 
+  const clearPartnerFilter = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onFiltersChange({ ...filters, partnerIds: undefined });
+  };
+
   const getDateLabel = () => {
     if (!hasDateFilter) return "Date";
     if (filters.dateFrom && filters.dateTo) {
@@ -116,6 +130,38 @@ export function TransactionToolbar({
     if (filters.amountType === "income") return "Income";
     if (filters.amountType === "expense") return "Expenses";
     return "Type";
+  };
+
+  const partnerNameMap = new Map(userPartners.map((partner) => [partner.id, partner.name]));
+  const selectedPartnerNames = selectedPartnerIds
+    .map((id) => partnerNameMap.get(id))
+    .filter(Boolean) as string[];
+  const partnerLabel = hasPartnerFilter
+    ? selectedPartnerNames.length === 1
+      ? selectedPartnerNames[0]
+      : `Partner (${selectedPartnerIds.length})`
+    : "Partner";
+
+  const filteredPartners = userPartners.filter((partner) => {
+    if (!partnerSearch.trim()) return true;
+    const search = partnerSearch.toLowerCase();
+    return (
+      partner.name.toLowerCase().includes(search) ||
+      partner.aliases?.some((alias) => alias.toLowerCase().includes(search)) ||
+      partner.vatId?.toLowerCase().includes(search) ||
+      partner.website?.toLowerCase().includes(search)
+    );
+  });
+
+  const togglePartner = (partnerId: string) => {
+    const next = new Set(selectedPartnerIds);
+    if (next.has(partnerId)) {
+      next.delete(partnerId);
+    } else {
+      next.add(partnerId);
+    }
+    const nextIds = Array.from(next);
+    onFiltersChange({ ...filters, partnerIds: nextIds.length > 0 ? nextIds : undefined });
   };
 
   return (
@@ -386,6 +432,69 @@ export function TransactionToolbar({
             >
               Expenses
             </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      {/* Partner filter */}
+      <Popover open={partnerPopoverOpen} onOpenChange={setPartnerPopoverOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant={hasPartnerFilter ? "secondary" : "outline"}
+            size="sm"
+            className="h-9 gap-2"
+          >
+            <span>{partnerLabel}</span>
+            {hasPartnerFilter && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={clearPartnerFilter}
+                onKeyDown={(e) => e.key === "Enter" && clearPartnerFilter(e as unknown as React.MouseEvent)}
+                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </span>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72 p-3" align="start">
+          <div className="space-y-3">
+            <SearchInput
+              placeholder="Search partners..."
+              value={partnerSearch}
+              onChange={setPartnerSearch}
+            />
+            <div className="max-h-56 overflow-y-auto space-y-1">
+              {filteredPartners.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2 text-center">No partners found</p>
+              ) : (
+                filteredPartners.map((partner) => {
+                  const checked = selectedPartnerIds.includes(partner.id);
+                  return (
+                    <button
+                      key={partner.id}
+                      type="button"
+                      onClick={() => togglePartner(partner.id)}
+                      className={cn(
+                        "w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-sm",
+                        checked ? "bg-muted" : "hover:bg-muted/50"
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "h-4 w-4 rounded border flex items-center justify-center",
+                          checked ? "border-primary text-primary" : "border-muted-foreground/40 text-transparent"
+                        )}
+                      >
+                        <Check className="h-3 w-3" />
+                      </span>
+                      <span className="truncate">{partner.name}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
         </PopoverContent>
       </Popover>

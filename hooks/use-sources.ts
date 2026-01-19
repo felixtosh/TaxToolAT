@@ -11,11 +11,12 @@ import {
   deleteSource as deleteSourceOp,
   saveFieldMappings as saveFieldMappingsOp,
 } from "@/lib/operations";
+import { useAuth } from "@/components/auth";
 
 const SOURCES_COLLECTION = "sources";
-const MOCK_USER_ID = "dev-user-123"; // Mock user for development
 
 export function useSources() {
+  const { userId } = useAuth();
   const [sources, setSources] = useState<TransactionSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -24,18 +25,24 @@ export function useSources() {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Realtime listener for sources - this stays in the hook
   useEffect(() => {
+    if (!userId) {
+      setSources([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
     const q = query(
       collection(db, SOURCES_COLLECTION),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       where("isActive", "==", true),
       orderBy("name", "asc")
     );
@@ -59,7 +66,7 @@ export function useSources() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   // Mutations now call the operations layer
   const addSource = useCallback(

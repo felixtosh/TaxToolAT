@@ -397,8 +397,10 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
     secrets: [anthropicApiKey],
   },
   async (request): Promise<LearnPatternsResponse> => {
-    // TODO: Use real auth when ready for multi-user
-    const userId = "dev-user-123";
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
     const { partnerId, transactionId } = request.data;
 
     if (!partnerId) {
@@ -498,13 +500,19 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
         .limit(500)
         .get();
 
+      const currentGlobalPartnerId = partnerData.globalPartnerId || null;
+
       // Get partner names for collision transactions
       const partnerIds = new Set<string>();
       allAssignedSnapshot.docs.forEach((doc) => {
-        const pid = doc.data().partnerId;
-        if (pid && pid !== partnerId) {
-          partnerIds.add(pid);
+        const data = doc.data();
+        const pid = data.partnerId;
+        if (!pid || pid === partnerId) return;
+        if (currentGlobalPartnerId && pid === currentGlobalPartnerId) return;
+        if (data.partnerType === "global" && data.partnerMatchedBy !== "manual" && data.partnerMatchedBy !== "suggestion") {
+          return;
         }
+        partnerIds.add(pid);
       });
 
       // Fetch partner names in bulk
@@ -519,12 +527,30 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
           }
         });
       }
+      if (partnerIds.size > 0) {
+        const globalDocs = await Promise.all(
+          Array.from(partnerIds).slice(0, 50).map((pid) =>
+            db.collection("globalPartners").doc(pid).get()
+          )
+        );
+        globalDocs.forEach((doc) => {
+          if (doc.exists) {
+            partnerNameMap.set(doc.id, doc.data()!.name || "Unknown");
+          }
+        });
+      }
 
       // Build collision set
       const collisionTransactions: CollisionTransaction[] = allAssignedSnapshot.docs
         .filter((doc) => {
-          const pid = doc.data().partnerId;
-          return pid && pid !== partnerId;
+          const data = doc.data();
+          const pid = data.partnerId;
+          if (!pid || pid === partnerId) return false;
+          if (currentGlobalPartnerId && pid === currentGlobalPartnerId) return false;
+          if (data.partnerType === "global" && data.partnerMatchedBy !== "manual" && data.partnerMatchedBy !== "suggestion") {
+            return false;
+          }
+          return true;
         })
         .map((doc) => {
           const data = doc.data();
@@ -598,19 +624,6 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
       const now = Timestamp.now();
       const transactionIds = assignedTransactions.map((tx) => tx.id);
 
-      // Helper to check collision with other partners
-      const hasCollision = (pattern: string): CollisionTransaction | null => {
-        for (const tx of collisionTransactions) {
-          const textToMatch = [tx.name, tx.partner]
-            .filter(Boolean)
-            .join(" ")
-            .toLowerCase();
-          if (textToMatch && globMatch(pattern, textToMatch)) {
-            return tx;
-          }
-        }
-        return null;
-      };
 
       // Helper to check collision with manual removals (false positives)
       const matchesFalsePositive = (pattern: string): ManualRemovalRecord | null => {
@@ -641,13 +654,6 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
             return false;
           }
 
-          // Server-side validation: reject patterns matching other partners
-          const collision = hasCollision(normalizedPattern);
-          if (collision) {
-            console.log(`REJECTED pattern "${normalizedPattern}" - collides with "${collision.assignedPartnerName}" (tx: ${collision.partner || collision.name})`);
-            return false;
-          }
-
           return true;
         })
         .map((p) => ({
@@ -657,76 +663,74 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
           sourceTransactionIds: transactionIds,
         }));
 
-      // 5. Update the partner with learned patterns
-      if (learnedPatterns.length > 0) {
-        await partnerDoc.ref.update({
-          learnedPatterns: learnedPatterns,
-          patternsUpdatedAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-        });
+      // 5. Update the partner with learned patterns (always overwrite)
+      await partnerDoc.ref.update({
+        learnedPatterns: learnedPatterns,
+        patternsUpdatedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
 
-        console.log(`Learned ${learnedPatterns.length} patterns for partner ${partnerId}:`,
-          learnedPatterns.map((p) => p.pattern));
+      console.log(`Learned ${learnedPatterns.length} patterns for partner ${partnerId}:`,
+        learnedPatterns.map((p) => p.pattern));
 
-        // 6. Cascade-unassign auto-matched transactions that no longer match
-        // This is important when patterns change (e.g., manual assignment removed)
-        const unassignedCount = await cascadeUnassignTransactions(userId, partnerId, learnedPatterns);
-        if (unassignedCount > 0) {
-          console.log(`Cascade-unassigned ${unassignedCount} transactions that no longer match updated patterns`);
-        }
+      // 6. Cascade-unassign auto-matched transactions that no longer match
+      // This is important when patterns change (e.g., manual assignment removed)
+      const unassignedCount = await cascadeUnassignTransactions(userId, partnerId, learnedPatterns);
+      if (unassignedCount > 0) {
+        console.log(`Cascade-unassigned ${unassignedCount} transactions that no longer match updated patterns`);
+      }
 
-        // 8. Re-match unassigned transactions with the new patterns
-        // IMPORTANT: Pass manualRemovalIds to prevent re-assigning transactions user explicitly removed
-        const manualRemovalIds = new Set(manualRemovals.map((r) => r.transactionId));
-        const { matchedCount: autoMatched, matchedTransactions } = await rematchUnassignedTransactions(
-          userId,
-          partnerId,
-          partnerName,
-          learnedPatterns,
-          manualRemovalIds
-        );
-        console.log(`Auto-matched ${autoMatched} additional transactions with new patterns`);
+      // 8. Re-match unassigned transactions with the new patterns
+      // IMPORTANT: Pass manualRemovalIds to prevent re-assigning transactions user explicitly removed
+      const manualRemovalIds = new Set(manualRemovals.map((r) => r.transactionId));
+      const { matchedCount: autoMatched, matchedTransactions } = await rematchUnassignedTransactions(
+        userId,
+        partnerId,
+        partnerName,
+        learnedPatterns,
+        manualRemovalIds
+      );
+      console.log(`Auto-matched ${autoMatched} additional transactions with new patterns`);
 
-        // 9. Create notification for pattern learning
-        if (autoMatched > 0) {
-          try {
-            console.log(`Creating notification for user ${userId} - ${autoMatched} transactions matched`);
-            const notifRef = await db.collection(`users/${userId}/notifications`).add({
-              type: "pattern_learned",
-              title: `Learned patterns for ${partnerName}`,
-              message: `I learned ${learnedPatterns.length} pattern${learnedPatterns.length !== 1 ? "s" : ""} from your assignment and automatically matched ${autoMatched} similar transaction${autoMatched !== 1 ? "s" : ""} to ${partnerName}.`,
-              createdAt: FieldValue.serverTimestamp(),
-              readAt: null,
-              context: {
-                partnerId,
-                partnerName,
-                patternsLearned: learnedPatterns.length,
-                transactionsMatched: autoMatched,
-              },
-              preview: {
-                transactions: matchedTransactions,
-              },
-            });
-            console.log(`Notification created: ${notifRef.id}`);
-          } catch (err) {
-            console.error("Failed to create pattern learning notification:", err);
-          }
-        }
-
-        // 10. Chain file matching for partner
-        // Always try file matching when patterns are learned or transactions are matched
-        // This ensures files are auto-connected when a partner is manually assigned
+      // 9. Create notification for pattern learning
+      if (autoMatched > 0) {
         try {
-          const { matchFilesForPartnerInternal } = await import("./matchFilesForPartner");
-          const fileResult = await matchFilesForPartnerInternal(userId, partnerId);
-          if (fileResult.autoMatched > 0 || fileResult.suggested > 0) {
-            console.log(
-              `File matching chained for ${partnerName}: ${fileResult.autoMatched} auto-matched, ${fileResult.suggested} suggested`
-            );
-          }
+          console.log(`Creating notification for user ${userId} - ${autoMatched} transactions matched`);
+          const notifRef = await db.collection(`users/${userId}/notifications`).add({
+            type: "pattern_learned",
+            title: `Learned patterns for ${partnerName}`,
+            message: `I learned ${learnedPatterns.length} pattern${learnedPatterns.length !== 1 ? "s" : ""} from your assignment and automatically matched ${autoMatched} similar transaction${autoMatched !== 1 ? "s" : ""} to ${partnerName}.`,
+            createdAt: FieldValue.serverTimestamp(),
+            readAt: null,
+            context: {
+              partnerId,
+              partnerName,
+              patternsLearned: learnedPatterns.length,
+              transactionsMatched: autoMatched,
+            },
+            preview: {
+              transactions: matchedTransactions,
+            },
+          });
+          console.log(`Notification created: ${notifRef.id}`);
         } catch (err) {
-          console.error("Failed to chain file matching:", err);
+          console.error("Failed to create pattern learning notification:", err);
         }
+      }
+
+      // 10. Chain file matching for partner
+      // Always try file matching when patterns are learned or transactions are matched
+      // This ensures files are auto-connected when a partner is manually assigned
+      try {
+        const { matchFilesForPartnerInternal } = await import("./matchFilesForPartner");
+        const fileResult = await matchFilesForPartnerInternal(userId, partnerId);
+        if (fileResult.autoMatched > 0 || fileResult.suggested > 0) {
+          console.log(
+            `File matching chained for ${partnerName}: ${fileResult.autoMatched} auto-matched, ${fileResult.suggested} suggested`
+          );
+        }
+      } catch (err) {
+        console.error("Failed to chain file matching:", err);
       }
 
       return {
@@ -826,18 +830,24 @@ export async function learnPatternsForPartnersBatch(
         .limit(500)
         .get();
 
-      const partnerIdsSet = new Set<string>();
+      const currentGlobalPartnerId = partnerData.globalPartnerId || null;
+
+      const partnerIds = new Set<string>();
       allAssignedSnapshot.docs.forEach((doc) => {
-        const pid = doc.data().partnerId;
-        if (pid && pid !== partnerId) {
-          partnerIdsSet.add(pid);
+        const data = doc.data();
+        const pid = data.partnerId;
+        if (!pid || pid === partnerId) return;
+        if (currentGlobalPartnerId && pid === currentGlobalPartnerId) return;
+        if (data.partnerType === "global" && data.partnerMatchedBy !== "manual" && data.partnerMatchedBy !== "suggestion") {
+          return;
         }
+        partnerIds.add(pid);
       });
 
       const partnerNameMap = new Map<string, string>();
-      if (partnerIdsSet.size > 0) {
+      if (partnerIds.size > 0) {
         const partnerDocs = await Promise.all(
-          Array.from(partnerIdsSet).slice(0, 50).map((pid) =>
+          Array.from(partnerIds).slice(0, 50).map((pid) =>
             db.collection("partners").doc(pid).get()
           )
         );
@@ -847,11 +857,29 @@ export async function learnPatternsForPartnersBatch(
           }
         });
       }
+      if (partnerIds.size > 0) {
+        const globalDocs = await Promise.all(
+          Array.from(partnerIds).slice(0, 50).map((pid) =>
+            db.collection("globalPartners").doc(pid).get()
+          )
+        );
+        globalDocs.forEach((doc) => {
+          if (doc.exists) {
+            partnerNameMap.set(doc.id, doc.data()!.name || "Unknown");
+          }
+        });
+      }
 
       const collisionTransactions: CollisionTransaction[] = allAssignedSnapshot.docs
         .filter((doc) => {
-          const pid = doc.data().partnerId;
-          return pid && pid !== partnerId;
+          const data = doc.data();
+          const pid = data.partnerId;
+          if (!pid || pid === partnerId) return false;
+          if (currentGlobalPartnerId && pid === currentGlobalPartnerId) return false;
+          if (data.partnerType === "global" && data.partnerMatchedBy !== "manual" && data.partnerMatchedBy !== "suggestion") {
+            return false;
+          }
+          return true;
         })
         .map((doc) => {
           const data = doc.data();
@@ -911,19 +939,6 @@ export async function learnPatternsForPartnersBatch(
       const now = Timestamp.now();
       const transactionIds = assignedTransactions.map((tx) => tx.id);
 
-      const hasCollision = (pattern: string): CollisionTransaction | null => {
-        for (const tx of collisionTransactions) {
-          const textToMatch = [tx.name, tx.partner]
-            .filter(Boolean)
-            .join(" ")
-            .toLowerCase();
-          if (textToMatch && globMatch(pattern, textToMatch)) {
-            return tx;
-          }
-        }
-        return null;
-      };
-
       const matchesFalsePositive = (pattern: string): ManualRemovalRecord | null => {
         for (const tx of manualRemovals) {
           const textToMatch = [tx.name, tx.partner]
@@ -951,11 +966,6 @@ export async function learnPatternsForPartnersBatch(
             return false;
           }
 
-          const collision = hasCollision(normalizedPattern);
-          if (collision) {
-            console.log(`REJECTED pattern "${normalizedPattern}" for ${partnerData.name} - collides with ${collision.assignedPartnerName}`);
-            return false;
-          }
           return true;
         })
         .map((p) => ({
@@ -965,16 +975,14 @@ export async function learnPatternsForPartnersBatch(
           sourceTransactionIds: transactionIds,
         }));
 
-      if (learnedPatterns.length > 0) {
-        await partnerDoc.ref.update({
-          learnedPatterns: learnedPatterns,
-          patternsUpdatedAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-        });
+      await partnerDoc.ref.update({
+        learnedPatterns: learnedPatterns,
+        patternsUpdatedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
 
-        console.log(`Learned ${learnedPatterns.length} patterns for ${partnerData.name}:`,
-          learnedPatterns.map((p) => p.pattern));
-      }
+      console.log(`Learned ${learnedPatterns.length} patterns for ${partnerData.name}:`,
+        learnedPatterns.map((p) => p.pattern));
     } catch (error) {
       console.error(`Error learning patterns for partner ${partnerId}:`, error);
       // Continue with next partner

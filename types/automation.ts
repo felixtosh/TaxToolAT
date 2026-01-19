@@ -7,7 +7,7 @@
 /**
  * Supported integration types that automations can depend on
  */
-export type IntegrationId = "gmail" | "outlook" | "gocardless" | null;
+export type IntegrationId = "gmail" | "outlook" | "gocardless" | "browser" | null;
 
 /**
  * Pipeline types for different automation flows
@@ -126,7 +126,7 @@ export interface AutomationPipeline {
  * Status of an integration required by an automation
  */
 export interface IntegrationStatus {
-  integrationId: IntegrationId;
+  integrationId: string;
   displayName: string;
   isConnected: boolean;
   needsReauth: boolean;

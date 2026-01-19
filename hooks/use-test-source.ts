@@ -8,10 +8,10 @@ import {
   activateTestData,
   deactivateTestData,
 } from "@/lib/operations";
-
-const MOCK_USER_ID = "dev-user-123"; // Mock user for development
+import { useAuth } from "@/components/auth";
 
 export function useTestSource() {
+  const { userId } = useAuth();
   const [isActive, setIsActive] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -20,9 +20,9 @@ export function useTestSource() {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Check if test source exists on mount

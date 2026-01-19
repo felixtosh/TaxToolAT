@@ -4,7 +4,7 @@
 import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useChat as useVercelChat } from "@ai-sdk/react";
-import { ChatContextValue, ChatTab, UIControlActions, ToolCall } from "@/types/chat";
+import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall } from "@/types/chat";
 import { AutoActionNotification } from "@/types/notification";
 import { requiresConfirmation, getConfirmationDetails } from "@/lib/chat/confirmation-config";
 import { useNotifications } from "@/hooks/use-notifications";
@@ -36,6 +36,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [pendingConfirmations, setPendingConfirmations] = useState<ToolCall[]>([]);
   const [activeTab, setActiveTab] = useState<ChatTab>("notifications");
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("chat");
 
   // Notifications hook
   const {
@@ -386,6 +387,9 @@ export function ChatProvider({ children }: ChatProviderProps) {
       markNotificationRead,
       markAllNotificationsRead,
       startConversationFromNotification,
+      // Sidebar mode
+      sidebarMode,
+      setSidebarMode,
     }),
     [
       messages,
@@ -407,6 +411,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
       markNotificationRead,
       markAllNotificationsRead,
       startConversationFromNotification,
+      sidebarMode,
     ]
   );
 

@@ -12,12 +12,18 @@ import {
   Check,
   Search,
   History,
+  Info,
 } from "lucide-react";
 import { Transaction } from "@/types/transaction";
 import { TaxFile } from "@/types/file";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { NoReceiptCategoryPopover } from "./no-receipt-category-popover";
 import { ReceiptLostDialog } from "./receipt-lost-dialog";
 import { useTransactionFiles, useFiles } from "@/hooks/use-files";
@@ -28,6 +34,8 @@ import {
   type LastRunOutcome,
   type AutomationOutcome,
 } from "@/components/automations/automation-history-dialog";
+import { AutomationDialog } from "@/components/automations/automation-dialog";
+import { useAutomations } from "@/hooks/use-automations";
 // Category suggestions now come from transaction.categorySuggestions (computed on backend)
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -90,6 +98,8 @@ interface FileRowProps {
 }
 
 function FileRow({ file, onDisconnect, disconnecting }: FileRowProps) {
+  const isExtracting = !file.extractionComplete && !file.isNotInvoice;
+
   return (
     <Link
       href={`/files?id=${file.id}`}
@@ -104,7 +114,9 @@ function FileRow({ file, onDisconnect, disconnecting }: FileRowProps) {
         </p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        {file.extractedAmount != null && (
+        {isExtracting ? (
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        ) : file.extractedAmount != null && (
           <span className="text-sm font-medium tabular-nums text-foreground">
             {formatAmount(file.extractedAmount, file.extractedCurrency)}
           </span>
@@ -131,6 +143,87 @@ function FileRow({ file, onDisconnect, disconnecting }: FileRowProps) {
   );
 }
 
+interface SuggestedFileRowProps {
+  file: TaxFile;
+  confidence: number;
+  matchSources: string[];
+  onConfirm: () => void;
+  onDecline: () => void;
+}
+
+function SuggestedFileRow({
+  file,
+  confidence,
+  matchSources,
+  onConfirm,
+  onDecline,
+}: SuggestedFileRowProps) {
+  return (
+    <div className="flex items-center justify-between gap-2 p-2 -mx-2 rounded bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/30 group overflow-hidden">
+      <div className="min-w-0 flex-1 overflow-hidden w-0">
+        <p className="text-sm truncate">{file.fileName}</p>
+        <p className="text-xs text-muted-foreground">
+          {file.extractedDate
+            ? format(file.extractedDate.toDate(), "MMM d, yyyy")
+            : format(file.uploadedAt.toDate(), "MMM d, yyyy")}
+        </p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {file.extractedAmount != null && (
+          <span className="text-sm font-medium tabular-nums text-foreground">
+            {formatAmount(file.extractedAmount, file.extractedCurrency)}
+          </span>
+        )}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-xs px-1.5 py-0 cursor-help",
+                confidence >= 85
+                  ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/50 dark:text-green-200 dark:border-green-700"
+                  : confidence >= 70
+                  ? "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200 dark:border-yellow-700"
+                  : "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600"
+              )}
+            >
+              {confidence}%
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[220px] text-xs">
+            <div className="font-medium mb-1">Match signals</div>
+            {matchSources.length > 0 ? (
+              <div className="space-y-0.5">
+                {matchSources.map((source, idx) => (
+                  <div key={idx}>{source}</div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-muted-foreground">No specific signals</div>
+            )}
+          </TooltipContent>
+        </Tooltip>
+        <button
+          type="button"
+          onClick={onDecline}
+          className="p-1 rounded hover:bg-destructive/10 transition-colors"
+          title="Decline suggestion"
+        >
+          <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          className="p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+          title="Connect file"
+        >
+          <Check className="h-4 w-4 text-muted-foreground hover:text-green-600" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function TransactionFilesSection({
   transaction,
   isSearching = false,
@@ -141,9 +234,14 @@ export function TransactionFilesSection({
 }: TransactionFilesSectionProps) {
   const [isReceiptLostDialogOpen, setIsReceiptLostDialogOpen] = useState(false);
   const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false);
+  const [isAutomationInfoDialogOpen, setIsAutomationInfoDialogOpen] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [runningStepId, setRunningStepId] = useState<string | null>(null);
   const [lastRunOutcome, setLastRunOutcome] = useState<LastRunOutcome | null>(null);
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set());
+
+  // Get integration statuses for the automation dialog
+  const { integrationStatuses } = useAutomations();
 
   const { files, loading: filesLoading, connectFile, disconnectFile } =
     useTransactionFiles(transaction.id);
@@ -181,10 +279,11 @@ export function TransactionFilesSection({
     },
   });
 
-  // Clear last run outcome when transaction changes
+  // Clear state when transaction changes
   useEffect(() => {
     setLastRunOutcome(null);
     setRunningStepId(null);
+    setDismissedSuggestions(new Set());
   }, [transaction.id]);
 
   // Check if transaction has a no-receipt category assigned
@@ -218,6 +317,8 @@ export function TransactionFilesSection({
       .filter(file => {
         // Skip already connected files
         if (connectedFileIds.has(file.id)) return false;
+        // Skip dismissed suggestions
+        if (dismissedSuggestions.has(file.id)) return false;
         // Check if file has this transaction in suggestions
         return file.transactionSuggestions?.some(
           s => s.transactionId === transaction.id
@@ -235,7 +336,7 @@ export function TransactionFilesSection({
       })
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, 3);
-  }, [allFiles, allFilesLoading, files, hasFiles, hasCategory, transaction.id]);
+  }, [allFiles, allFilesLoading, files, hasFiles, hasCategory, transaction.id, dismissedSuggestions]);
 
   const handleConnectFile = async (fileId: string) => {
     await connectFile(fileId);
@@ -243,6 +344,10 @@ export function TransactionFilesSection({
     if (hasCategory) {
       await removeFromTransaction(transaction.id);
     }
+  };
+
+  const handleDismissSuggestion = (fileId: string) => {
+    setDismissedSuggestions(prev => new Set([...prev, fileId]));
   };
 
   const handleDisconnectFile = async (fileId: string) => {
@@ -311,37 +416,59 @@ export function TransactionFilesSection({
 
   return (
     <TooltipProvider>
-      <div className="space-y-3">
+      <div className="space-y-3" data-onboarding="files-section">
         {/* Section Header with Search and History Buttons */}
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium">File</h3>
           <div className="flex items-center gap-1">
+            {/* Automation info button - explains Find Receipt pipeline */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setIsAutomationInfoDialogOpen(true)}
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>How file matching works</TooltipContent>
+            </Tooltip>
             {/* Automation history button */}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              onClick={() => setIsHistoryDialogOpen(true)}
-              title="Automation history"
-            >
-              <History className="h-3.5 w-3.5" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setIsHistoryDialogOpen(true)}
+                >
+                  <History className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Automation history</TooltipContent>
+            </Tooltip>
             {/* Show search button for incomplete transactions without files */}
             {!transaction.isComplete && !hasFiles && onTriggerSearch && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
-                onClick={onTriggerSearch}
-                disabled={isSearching}
-                title="Search for receipt"
-              >
-                {isSearching ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Search className="h-3.5 w-3.5" />
-                )}
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={onTriggerSearch}
+                    disabled={isSearching}
+                  >
+                    {isSearching ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Search className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Search for receipt</TooltipContent>
+              </Tooltip>
             )}
           </div>
         </div>
@@ -409,48 +536,18 @@ export function TransactionFilesSection({
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-              <span className="text-sm text-muted-foreground">Suggested</span>
+              <span className="text-sm text-muted-foreground">Suggested files</span>
             </div>
             <div className="space-y-1">
-              {fileSuggestions.map(({ file, confidence }) => (
-                <div
+              {fileSuggestions.map(({ file, confidence, matchSources }) => (
+                <SuggestedFileRow
                   key={file.id}
-                  className="flex items-center gap-2 p-2 -mx-2 rounded bg-muted/30 border border-dashed"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm truncate">{file.fileName}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {file.extractedDate
-                        ? format(file.extractedDate.toDate(), "MMM d, yyyy")
-                        : format(file.uploadedAt.toDate(), "MMM d, yyyy")}
-                      {file.extractedAmount != null && (
-                        <> · {formatAmount(file.extractedAmount, file.extractedCurrency)}</>
-                      )}
-                    </p>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "shrink-0 text-xs px-1.5 py-0",
-                      confidence >= 85
-                        ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-                        : confidence >= 70
-                        ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
-                        : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200"
-                    )}
-                  >
-                    {confidence}%
-                  </Badge>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 w-7 p-0 hover:bg-green-100 hover:text-green-700"
-                    onClick={() => handleConnectFile(file.id)}
-                  >
-                    <Check className="h-4 w-4" />
-                    <span className="sr-only">Connect</span>
-                  </Button>
-                </div>
+                  file={file}
+                  confidence={confidence}
+                  matchSources={matchSources}
+                  onConfirm={() => handleConnectFile(file.id)}
+                  onDecline={() => handleDismissSuggestion(file.id)}
+                />
               ))}
             </div>
           </div>
@@ -536,6 +633,14 @@ export function TransactionFilesSection({
           onTriggerStep={handleTriggerStep}
           isRunning={runningStepId || (isPrecisionSearching ? "file-transaction-matching" : null)}
           lastRunOutcome={lastRunOutcome}
+        />
+
+        {/* Automation info dialog - explains Find Receipt pipeline */}
+        <AutomationDialog
+          open={isAutomationInfoDialogOpen}
+          onClose={() => setIsAutomationInfoDialogOpen(false)}
+          pipelineId="find-file"
+          integrationStatuses={integrationStatuses}
         />
       </div>
     </TooltipProvider>

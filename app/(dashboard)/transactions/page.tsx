@@ -86,8 +86,8 @@ function TransactionsContent() {
 
   // Restore filters from localStorage on initial mount if no URL params
   const hasRestoredRef = useRef(false);
-  // Track pattern count to detect when new patterns are learned
-  const lastPatternCountRef = useRef(0);
+  // Track latest patternsUpdatedAt to detect when new patterns are learned
+  const lastPatternsUpdatedAtRef = useRef(0);
   useEffect(() => {
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
@@ -193,9 +193,12 @@ function TransactionsContent() {
 
   // Handle connect file from overlay
   const handleConnectFile = useCallback(
-    async (fileId: string) => {
+    async (
+      fileId: string,
+      sourceInfo?: Parameters<typeof connectFile>[1]
+    ) => {
       if (!selectedTransaction) return;
-      await connectFile(fileId);
+      await connectFile(fileId, sourceInfo);
       closeConnectFileOverlay();
     },
     [selectedTransaction, connectFile, closeConnectFileOverlay]
@@ -303,26 +306,33 @@ function TransactionsContent() {
   useEffect(() => {
     if (loading || !transactions.length || !partners.length) return;
 
-    // Count total learned patterns across all partners
+    const currentPatternsUpdatedAt = partners.reduce((max, p) => {
+      const millis = typeof p.patternsUpdatedAt?.toMillis === "function"
+        ? p.patternsUpdatedAt.toMillis()
+        : 0;
+      return Math.max(max, millis);
+    }, 0);
+    const hasPatternsUpdatedAt = partners.some((p) => !!p.patternsUpdatedAt);
     const currentPatternCount = partners.reduce(
       (sum, p) => sum + (p.learnedPatterns?.length || 0),
       0
     );
+    const patternSignal = hasPatternsUpdatedAt ? currentPatternsUpdatedAt : currentPatternCount;
 
-    // Skip if pattern count hasn't changed (already processed this state)
-    if (currentPatternCount === lastPatternCountRef.current) return;
+    // Skip if pattern signal hasn't changed (already processed this state)
+    if (patternSignal === lastPatternsUpdatedAtRef.current) return;
 
     // Check if there are unassigned transactions
     const unassignedCount = transactions.filter(t => !t.partnerId).length;
     if (unassignedCount === 0) {
-      lastPatternCountRef.current = currentPatternCount;
+      lastPatternsUpdatedAtRef.current = patternSignal;
       return;
     }
 
-    console.log(`[Partner Matching] Pattern count changed: ${lastPatternCountRef.current} → ${currentPatternCount}, unassigned: ${unassignedCount}`);
+    console.log(`[Partner Matching] Pattern signal changed: ${lastPatternsUpdatedAtRef.current} → ${patternSignal}, unassigned: ${unassignedCount}`);
 
     // Update ref to prevent duplicate calls for same pattern count
-    lastPatternCountRef.current = currentPatternCount;
+    lastPatternsUpdatedAtRef.current = patternSignal;
 
     // Call backend to match all unassigned transactions
     const matchPartnersFunc = httpsCallable(functions, "matchPartners");
@@ -334,7 +344,7 @@ function TransactionsContent() {
       .catch((error) => {
         console.error("Background partner matching failed:", error);
         // Reset to allow retry
-        lastPatternCountRef.current = 0;
+        lastPatternsUpdatedAtRef.current = 0;
       });
   }, [loading, transactions, partners]);
 

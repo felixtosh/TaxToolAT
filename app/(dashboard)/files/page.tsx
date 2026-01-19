@@ -17,6 +17,7 @@ import { FilesDataTableHandle } from "@/components/files/files-data-table";
 import { useFiles } from "@/hooks/use-files";
 import { usePartners } from "@/hooks/use-partners";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
+import { useTransactions } from "@/hooks/use-transactions";
 import { TaxFile, FileFilters } from "@/types/file";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -29,8 +30,7 @@ import {
 } from "@/components/ui/dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ACCEPTED_TYPES = {
   "image/jpeg": [".jpg", ".jpeg"],
@@ -82,11 +82,12 @@ function FileTableFallback() {
 function FilesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { userId } = useAuth();
 
   // Operations context for file creation
   const ctx: OperationsContext = useMemo(
-    () => ({ db, userId: MOCK_USER_ID }),
-    []
+    () => ({ db, userId }),
+    [userId]
   );
 
   // Parse filters from URL
@@ -115,6 +116,24 @@ function FilesContent() {
   // Partner hooks for partner assignment
   const { partners: userPartners, createPartner } = usePartners();
   const { globalPartners } = useGlobalPartners();
+
+  // Transactions for amount matching display
+  const { transactions } = useTransactions();
+
+  // Create a map of fileId -> transaction amounts for AmountMatchDisplay
+  const transactionAmountsMap = useMemo(() => {
+    const map = new Map<string, Array<{ amount: number; currency: string }>>();
+    for (const tx of transactions) {
+      if (tx.fileIds && tx.fileIds.length > 0) {
+        for (const fileId of tx.fileIds) {
+          const existing = map.get(fileId) || [];
+          existing.push({ amount: tx.amount, currency: tx.currency });
+          map.set(fileId, existing);
+        }
+      }
+    }
+    return map;
+  }, [transactions]);
 
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH);
@@ -200,7 +219,7 @@ function FilesContent() {
         // Create storage path
         const timestamp = Date.now();
         const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-        const storagePath = `files/${MOCK_USER_ID}/${timestamp}_${sanitizedName}`;
+        const storagePath = `files/${userId}/${timestamp}_${sanitizedName}`;
 
         // Upload to Firebase Storage
         const storageRef = ref(storage, storagePath);
@@ -480,7 +499,7 @@ function FilesContent() {
 
   const handleDelete = useCallback(async () => {
     if (!selectedFile) return;
-    const isGmailFile = selectedFile.sourceType === "gmail";
+    const isGmailFile = selectedFile.sourceType?.startsWith("gmail");
     const message = isGmailFile
       ? `Delete "${selectedFile.fileName}"? It will be hidden but won't be re-imported from Gmail.`
       : `Permanently delete "${selectedFile.fileName}"? This will also remove all connections.`;
@@ -576,7 +595,7 @@ function FilesContent() {
       const fileIds = Array.from(allSelectedIds);
       for (const fileId of fileIds) {
         const file = files.find((f) => f.id === fileId);
-        const isGmailFile = file?.sourceType === "gmail";
+        const isGmailFile = file?.sourceType?.startsWith("gmail");
         await remove(fileId, isGmailFile);
       }
       // Clear additional selections and primary
@@ -679,6 +698,7 @@ function FilesContent() {
             onFiltersChange={handleFiltersChange}
             userPartners={userPartners}
             globalPartners={globalPartners}
+            transactionAmountsMap={transactionAmountsMap}
             enableMultiSelect={true}
             selectedRowIds={allSelectedIds}
             onSelectionChange={handleSelectionChange}

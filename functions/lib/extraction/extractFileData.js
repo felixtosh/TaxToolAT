@@ -29,8 +29,17 @@ exports.extractFileData = (0, firestore_1.onDocumentCreated)({
         console.log(`File ${fileId} already processed, skipping`);
         return;
     }
+    if (fileData.deletedAt) {
+        console.log(`File ${fileId} is soft-deleted, skipping extraction`);
+        return;
+    }
     console.log(`[${new Date().toISOString()}] Starting extraction for file: ${fileData.fileName} (${fileId})`);
     try {
+        const latestDoc = await db.collection("files").doc(fileId).get();
+        if (latestDoc.exists && latestDoc.data()?.deletedAt) {
+            console.log(`File ${fileId} was soft-deleted before extraction, skipping`);
+            return;
+        }
         await (0, extractionCore_1.runExtraction)(fileId, fileData, {
             anthropicApiKey: anthropicApiKey.value(),
             skipClassification: false,

@@ -13,6 +13,7 @@ import {
 import { getTrueLayerClient, getAccountIban } from "@/lib/truelayer";
 import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { normalizeIban } from "@/lib/import/deduplication";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -38,7 +39,6 @@ if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_USE_EMULAT
   }
 }
 
-const MOCK_USER_ID = "dev-user-123";
 const CONNECTIONS_COLLECTION = "truelayerConnections";
 
 /**
@@ -47,6 +47,7 @@ const CONNECTIONS_COLLECTION = "truelayerConnections";
  */
 export async function GET(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const connectionId = request.nextUrl.searchParams.get("connectionId");
 
     if (!connectionId) {
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest) {
 
     const connection = connectionSnap.data() as TrueLayerConnection;
 
-    if (connection.userId !== MOCK_USER_ID) {
+    if (connection.userId !== userId) {
       return NextResponse.json(
         { error: "Connection not found" },
         { status: 404 }
@@ -117,6 +118,7 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
     const { connectionId, accountId, name, sourceId } = body;
 
@@ -143,7 +145,7 @@ export async function POST(request: NextRequest) {
 
     const connection = connectionSnap.data() as TrueLayerConnection;
 
-    if (connection.userId !== MOCK_USER_ID) {
+    if (connection.userId !== userId) {
       return NextResponse.json(
         { error: "Connection not found" },
         { status: 404 }
@@ -192,7 +194,7 @@ export async function POST(request: NextRequest) {
       });
 
       // Trigger initial sync in background
-      triggerInitialSync(sourceId, connection.accessToken, accountId, sourceIban).catch(
+      triggerInitialSync(sourceId, connection.accessToken, accountId, sourceIban, userId).catch(
         (err) => console.error("Initial sync failed:", err)
       );
 
@@ -217,7 +219,7 @@ export async function POST(request: NextRequest) {
       type: "api" as const,
       apiConfig,
       isActive: true,
-      userId: MOCK_USER_ID,
+      userId,
       createdAt: now,
       updatedAt: now,
     };
@@ -228,7 +230,7 @@ export async function POST(request: NextRequest) {
     console.log("[TrueLayer Accounts POST] Source created with ID:", docRef.id);
 
     // Trigger initial sync in background (don't wait)
-    triggerInitialSync(docRef.id, connection.accessToken, accountId, sourceData.iban).catch(
+    triggerInitialSync(docRef.id, connection.accessToken, accountId, sourceData.iban, userId).catch(
       (err) => console.error("Initial sync failed:", err)
     );
 
@@ -249,7 +251,8 @@ async function triggerInitialSync(
   sourceId: string,
   accessToken: string,
   accountId: string,
-  sourceIban: string
+  sourceIban: string,
+  userId: string
 ) {
   try {
     const client = getTrueLayerClient();
@@ -286,7 +289,7 @@ async function triggerInitialSync(
       const transactionDoc = {
         sourceId,
         importJobId: null,
-        userId: MOCK_USER_ID,
+        userId,
         date: Timestamp.fromDate(txDate),
         amount,
         currency: tx.currency,

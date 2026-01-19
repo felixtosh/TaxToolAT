@@ -27,6 +27,7 @@ import {
   ManualRemoval,
   FileSourcePattern,
   FileSourceType,
+  FileSourceResultType,
 } from "@/types/partner";
 import { normalizeIban } from "@/lib/import/deduplication";
 import { normalizeUrl } from "@/lib/matching/url-normalizer";
@@ -614,6 +615,7 @@ export async function removePartnerFromTransaction(
 
   const txData = txSnapshot.data();
   const partnerId = txData.partnerId;
+  const partnerType = txData.partnerType as "global" | "user" | null | undefined;
   const matchedBy = txData.partnerMatchedBy;
 
   // Determine if this was a system-recommended assignment (auto or suggestion)
@@ -633,10 +635,22 @@ export async function removePartnerFromTransaction(
     updatedAt: Timestamp.now(),
   });
 
-  // If this was a system-recommended assignment, track as false positive
-  if (wasSystemRecommended && partnerId) {
+  let removalPartnerId = partnerId;
+
+  if (partnerId && partnerType === "global") {
     try {
-      const partnerDocRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
+      const { localPartnerId } = await createLocalPartnerFromGlobal(ctx, partnerId);
+      removalPartnerId = localPartnerId;
+    } catch (error) {
+      console.error("Failed to localize global partner on removal:", error);
+      removalPartnerId = partnerId;
+    }
+  }
+
+  // If this was a system-recommended assignment, track as false positive
+  if (wasSystemRecommended && removalPartnerId) {
+    try {
+      const partnerDocRef = doc(ctx.db, PARTNERS_COLLECTION, removalPartnerId);
       const partnerSnapshot = await getDoc(partnerDocRef);
 
       if (partnerSnapshot.exists()) {
@@ -660,7 +674,7 @@ export async function removePartnerFromTransaction(
             updatedAt: Timestamp.now(),
           });
 
-          console.log(`[Manual Removal] Stored false positive for partner ${partnerId}: tx ${transactionId}`);
+          console.log(`[Manual Removal] Stored false positive for partner ${removalPartnerId}: tx ${transactionId}`);
         } else {
           console.log(`[Manual Removal] Tx ${transactionId} already in manualRemovals, skipping`);
         }
@@ -671,14 +685,14 @@ export async function removePartnerFromTransaction(
     }
 
     // Trigger pattern re-learning with the new false positive
-    triggerPatternLearning(partnerId).catch((error) => {
+    triggerPatternLearning(removalPartnerId).catch((error) => {
       console.error("Failed to trigger pattern re-learning on removal:", error);
     });
   }
 
   // For pure manual assignments, still trigger re-learning (existing behavior)
-  if (wasManual && partnerId) {
-    triggerPatternLearning(partnerId).catch((error) => {
+  if (wasManual && removalPartnerId) {
+    triggerPatternLearning(removalPartnerId).catch((error) => {
       console.error("Failed to trigger pattern re-learning on removal:", error);
     });
   }
@@ -946,6 +960,8 @@ export interface LearnFileSourcePatternInput {
   searchPattern: string;
   /** For Gmail: which integration (account) */
   integrationId?: string;
+  /** What kind of result this pattern came from */
+  resultType?: FileSourceResultType;
 }
 
 /**
@@ -969,7 +985,10 @@ export async function learnFileSourcePattern(
   // Get the partner
   const partner = await getUserPartner(ctx, partnerId);
   if (!partner) {
-    throw new Error(`Partner ${partnerId} not found or access denied`);
+    console.warn(
+      `[FileSourcePattern] Skipping learn: partner ${partnerId} not found or access denied`
+    );
+    return { isNew: false, patternIndex: -1 };
   }
 
   const now = Timestamp.now();
@@ -977,12 +996,17 @@ export async function learnFileSourcePattern(
 
   // Check if a similar pattern already exists
   // For now, consider patterns "similar" if they have the same sourceType and exact pattern
-  const existingIndex = existingPatterns.findIndex(
-    (p) =>
-      p.sourceType === sourceInfo.sourceType &&
-      p.pattern.toLowerCase() === sourceInfo.searchPattern.toLowerCase() &&
-      (sourceInfo.sourceType === "local" || p.integrationId === sourceInfo.integrationId)
-  );
+  const existingIndex = existingPatterns.findIndex((p) => {
+    if (p.sourceType !== sourceInfo.sourceType) return false;
+    if (p.pattern.toLowerCase() !== sourceInfo.searchPattern.toLowerCase()) return false;
+    if (sourceInfo.sourceType === "gmail" && p.integrationId !== sourceInfo.integrationId) {
+      return false;
+    }
+    if (sourceInfo.resultType && p.resultType && p.resultType !== sourceInfo.resultType) {
+      return false;
+    }
+    return true;
+  });
 
   let updatedPatterns: FileSourcePattern[];
   let isNew: boolean;
@@ -1025,6 +1049,7 @@ export async function learnFileSourcePattern(
       sourceType: sourceInfo.sourceType,
       pattern: sourceInfo.searchPattern,
       integrationId: sourceInfo.integrationId,
+      resultType: sourceInfo.resultType,
       confidence: 70, // Start with moderate confidence
       usageCount: 1,
       sourceTransactionIds: [transactionId],
@@ -1048,6 +1073,70 @@ export async function learnFileSourcePattern(
   });
 
   return { isNew, patternIndex };
+}
+
+/**
+ * Decrease usage for a file source pattern when a connection is removed.
+ * Removes the pattern entirely if no usages remain.
+ */
+export async function decrementFileSourcePatternUsage(
+  ctx: OperationsContext,
+  partnerId: string,
+  transactionId: string,
+  sourceInfo: LearnFileSourcePatternInput
+): Promise<void> {
+  const partner = await getUserPartner(ctx, partnerId);
+  if (!partner) {
+    throw new Error(`Partner ${partnerId} not found or access denied`);
+  }
+
+  const existingPatterns = partner.fileSourcePatterns || [];
+  const existingIndex = existingPatterns.findIndex((p) => {
+    if (p.sourceType !== sourceInfo.sourceType) return false;
+    if (p.pattern.toLowerCase() !== sourceInfo.searchPattern.toLowerCase()) return false;
+    if (sourceInfo.sourceType === "gmail" && p.integrationId !== sourceInfo.integrationId) {
+      return false;
+    }
+    if (sourceInfo.resultType && p.resultType && p.resultType !== sourceInfo.resultType) {
+      return false;
+    }
+    return true;
+  });
+
+  if (existingIndex < 0) {
+    return;
+  }
+
+  const now = Timestamp.now();
+  const target = existingPatterns[existingIndex];
+  const remainingTxIds = (target.sourceTransactionIds || []).filter(
+    (id) => id !== transactionId
+  );
+  const nextUsageCount = Math.max(0, target.usageCount - 1);
+
+  let updatedPatterns: FileSourcePattern[];
+
+  if (nextUsageCount === 0 || remainingTxIds.length === 0) {
+    updatedPatterns = existingPatterns.filter((_, i) => i !== existingIndex);
+  } else {
+    updatedPatterns = existingPatterns.map((pattern, i) => {
+      if (i !== existingIndex) return pattern;
+      return {
+        ...pattern,
+        usageCount: nextUsageCount,
+        confidence: Math.max(50, pattern.confidence - 5),
+        sourceTransactionIds: remainingTxIds.slice(-20),
+        lastUsedAt: now,
+      };
+    });
+  }
+
+  const partnerRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
+  await updateDoc(partnerRef, {
+    fileSourcePatterns: updatedPatterns,
+    fileSourcePatternsUpdatedAt: now,
+    updatedAt: now,
+  });
 }
 
 /**

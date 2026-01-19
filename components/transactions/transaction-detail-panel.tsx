@@ -3,7 +3,7 @@
 import { useCallback, useState, useMemo } from "react";
 import { useDropzone } from "react-dropzone";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { X, ChevronUp, ChevronDown, Upload, Loader2, History } from "lucide-react";
+import { Upload, Loader2, History, X } from "lucide-react";
 import { storage, db } from "@/lib/firebase/config";
 import {
   createFile,
@@ -18,11 +18,16 @@ import { TransactionFilesSection } from "@/components/transactions/transaction-f
 import { TransactionHistory } from "@/components/sidebar/transaction-history";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import {
+  PanelHeader,
+  PanelFooter,
+  SectionDivider,
+} from "@/components/ui/detail-panel-primitives";
 import { UserPartner, GlobalPartner, PartnerFormData } from "@/types/partner";
 import { usePrecisionSearch } from "@/hooks/use-precision-search";
+import { useAuth } from "@/components/auth";
 
 // Constants for file upload
-const MOCK_USER_ID = "dev-user-123";
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ACCEPTED_TYPES = {
   "image/jpeg": [".jpg", ".jpeg"],
@@ -68,6 +73,8 @@ export function TransactionDetailPanel({
   onOpenConnectFile,
   isConnectFileOpen = false,
 }: TransactionDetailPanelProps) {
+  const { userId } = useAuth();
+
   // Handler for assigning a partner to the transaction
   const handleAssignPartner = useCallback(
     async (
@@ -111,8 +118,8 @@ export function TransactionDetailPanel({
 
   // Operations context for file operations
   const ctx: OperationsContext = useMemo(
-    () => ({ db, userId: MOCK_USER_ID }),
-    []
+    () => ({ db, userId }),
+    [userId]
   );
 
   // Calculate SHA-256 hash of file content for duplicate detection
@@ -146,7 +153,7 @@ export function TransactionDetailPanel({
         // Create storage path
         const timestamp = Date.now();
         const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-        const storagePath = `files/${MOCK_USER_ID}/${timestamp}_${sanitizedName}`;
+        const storagePath = `files/${userId}/${timestamp}_${sanitizedName}`;
 
         // Upload to Firebase Storage
         const storageRef = ref(storage, storagePath);
@@ -238,40 +245,14 @@ export function TransactionDetailPanel({
       )}
 
       {/* Header with navigation and close button */}
-      <div className="flex items-center justify-between py-3 border-b px-2">
-        <h2 className="text-lg font-semibold pl-2">Transaction Details</h2>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onNavigatePrevious}
-            disabled={!hasPrevious}
-            className="h-8 w-8"
-          >
-            <ChevronUp className="h-4 w-4" />
-            <span className="sr-only">Previous transaction</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onNavigateNext}
-            disabled={!hasNext}
-            className="h-8 w-8"
-          >
-            <ChevronDown className="h-4 w-4" />
-            <span className="sr-only">Next transaction</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="h-8 w-8"
-          >
-            <X className="h-4 w-4" />
-            <span className="sr-only">Close</span>
-          </Button>
-        </div>
-      </div>
+      <PanelHeader
+        title="Transaction Details"
+        onClose={onClose}
+        onNavigatePrevious={onNavigatePrevious}
+        onNavigateNext={onNavigateNext}
+        hasPrevious={hasPrevious}
+        hasNext={hasNext}
+      />
 
       {/* Scrollable content */}
       <ScrollArea className="flex-1">
@@ -288,7 +269,8 @@ export function TransactionDetailPanel({
           />
 
           {/* Files Section */}
-          <div className="border-t pt-3 mt-3 -mx-4 px-4">
+          <SectionDivider />
+          <div>
             <TransactionFilesSection
               transaction={transaction}
               isSearching={isSearching}
@@ -302,7 +284,7 @@ export function TransactionDetailPanel({
       </ScrollArea>
 
       {/* Sticky footer with action buttons */}
-      <div className="border-t px-4 py-2 bg-background space-y-1">
+      <PanelFooter className="space-y-1">
         {/* Search error message */}
         {searchError && (
           <div className="text-xs text-destructive px-2">
@@ -320,26 +302,15 @@ export function TransactionDetailPanel({
           <History className="h-4 w-4" />
           <span>Edit History</span>
         </Button>
-      </div>
+      </PanelFooter>
 
       {/* Full-panel Edit History overlay */}
       {showHistoryPanel && (
         <div className="absolute inset-0 z-40 bg-background flex flex-col">
-          {/* Header */}
-          <div className="flex items-center justify-between py-3 border-b px-4">
-            <h2 className="text-lg font-semibold">Edit History</h2>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowHistoryPanel(false)}
-              className="h-8 w-8"
-            >
-              <X className="h-4 w-4" />
-              <span className="sr-only">Close history</span>
-            </Button>
-          </div>
-
-          {/* History content */}
+          <PanelHeader
+            title="Edit History"
+            onClose={() => setShowHistoryPanel(false)}
+          />
           <ScrollArea className="flex-1 px-4 py-4">
             <TransactionHistory
               transactionId={transaction.id}

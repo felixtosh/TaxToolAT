@@ -1,5 +1,9 @@
 import { Timestamp } from "firebase/firestore";
-import { FileSourceType, PartnerSuggestion } from "./partner";
+import {
+  FileSourceType,
+  FileSourceResultType,
+  PartnerSuggestion,
+} from "./partner";
 import { InvoiceDirection } from "./user-data";
 
 /**
@@ -97,7 +101,25 @@ export interface TaxFile {
   // === Source Tracking ===
 
   /** How the file was added to TaxStudio (defaults to "upload" for legacy files) */
-  sourceType?: "upload" | "gmail";
+  sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body";
+
+  /** Search pattern/query that produced this file (when known) */
+  sourceSearchPattern?: string;
+
+  /** Result type for the original file source */
+  sourceResultType?: FileSourceResultType;
+
+  /** For browser imports: original source URL */
+  sourceUrl?: string;
+
+  /** For browser imports: source domain */
+  sourceDomain?: string;
+
+  /** For browser imports: run ID for the pull session */
+  sourceRunId?: string;
+
+  /** For browser imports: collector ID */
+  sourceCollectorId?: string;
 
   /** For Gmail imports: Gmail message ID */
   gmailMessageId?: string;
@@ -125,6 +147,29 @@ export interface TaxFile {
 
   /** For Gmail imports: when the email was sent */
   gmailEmailDate?: Timestamp;
+
+  // === Inbound Email Source Tracking ===
+
+  /** For email inbound: the inbound address ID that received this email */
+  inboundEmailId?: string;
+
+  /** For email inbound: the email address that received the email */
+  inboundEmailAddress?: string;
+
+  /** For email inbound: Message-ID header of the email */
+  inboundMessageId?: string;
+
+  /** For email inbound: sender email address */
+  inboundFrom?: string;
+
+  /** For email inbound: sender display name */
+  inboundFromName?: string;
+
+  /** For email inbound: email subject */
+  inboundSubject?: string;
+
+  /** For email inbound: when the email was received */
+  inboundReceivedAt?: Timestamp;
 
   // === AI Extracted Data ===
 
@@ -303,7 +348,13 @@ export interface FileConnection {
   userId: string;
 
   /** How this connection was made */
-  connectionType: "manual" | "auto_matched" | "suggestion_accepted";
+  connectionType:
+    | "manual"
+    | "auto_matched"
+    | "suggestion_accepted"
+    | "gmail_import"
+    | "gmail_html_conversion"
+    | "email_inbound";
 
   /** Which matching criteria led to the match (for auto/suggestion) */
   matchSources?: TransactionMatchSource[];
@@ -322,8 +373,20 @@ export interface FileConnection {
   /** For Gmail: which integration (account) was searched */
   gmailIntegrationId?: string;
 
+  /** For Gmail: integration email */
+  gmailIntegrationEmail?: string;
+
   /** For Gmail: message ID containing the attachment */
   gmailMessageId?: string;
+
+  /** For Gmail: sender email address */
+  gmailMessageFrom?: string;
+
+  /** For Gmail: sender display name */
+  gmailMessageFromName?: string;
+
+  /** Type of result selected during the connection */
+  resultType?: FileSourceResultType;
 
   createdAt: Timestamp;
 }
@@ -369,7 +432,13 @@ export interface FileCreateData {
   contentHash?: string;
 
   // Source tracking
-  sourceType?: "upload" | "gmail";
+  sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body";
+  sourceSearchPattern?: string;
+  sourceResultType?: FileSourceResultType;
+  sourceUrl?: string;
+  sourceDomain?: string;
+  sourceRunId?: string;
+  sourceCollectorId?: string;
   gmailMessageId?: string;
   gmailIntegrationId?: string;
   gmailIntegrationEmail?: string;
@@ -379,6 +448,15 @@ export interface FileCreateData {
   gmailSenderDomain?: string;
   gmailSenderName?: string;
   gmailEmailDate?: Date;
+
+  // Inbound email tracking
+  inboundEmailId?: string;
+  inboundEmailAddress?: string;
+  inboundMessageId?: string;
+  inboundFrom?: string;
+  inboundFromName?: string;
+  inboundSubject?: string;
+  inboundReceivedAt?: Date;
 }
 
 /**

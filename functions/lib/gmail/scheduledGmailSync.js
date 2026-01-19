@@ -105,6 +105,11 @@ exports.scheduledGmailSync = (0, scheduler_1.onSchedule)({
     for (const integrationDoc of integrationsSnapshot.docs) {
         const integration = { id: integrationDoc.id, ...integrationDoc.data() };
         try {
+            if (integration.isPaused) {
+                console.log(`[GmailSync] Integration ${integration.id} is paused, skipping`);
+                skipped++;
+                continue;
+            }
             // Check if there's already a pending/processing sync for this integration
             const existingSync = await db
                 .collection("gmailSyncQueue")

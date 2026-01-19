@@ -328,7 +328,7 @@ export interface StrategyContext {
   userId: string;
 
   /** Firestore reference */
-  db: FirebaseFirestore.Firestore;
+  db: unknown;
 
   /** Queue item ID (for logging) */
   queueId: string;

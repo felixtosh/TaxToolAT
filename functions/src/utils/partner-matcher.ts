@@ -178,6 +178,7 @@ export interface PartnerData {
   ibans: string[];
   website?: string;
   vatId?: string;
+  globalPartnerId?: string | null;
   /** AI-learned patterns (user partners) */
   learnedPatterns?: LearnedPattern[];
   /** Static patterns (global partners from presets) */

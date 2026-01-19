@@ -18,7 +18,9 @@ export async function createLocalPartnerFromGlobal(
     .get();
 
   if (!existingSnapshot.empty) {
-    return existingSnapshot.docs[0].id;
+    const existingId = existingSnapshot.docs[0].id;
+    await replaceGlobalPartnerReferences(userId, globalPartnerId, existingId);
+    return existingId;
   }
 
   const globalDoc = await db.collection("globalPartners").doc(globalPartnerId).get();
@@ -46,5 +48,47 @@ export async function createLocalPartnerFromGlobal(
 
   const docRef = await db.collection("partners").add(partnerData);
   console.log(`[PartnerMatch] Created local partner ${docRef.id} from global ${globalPartnerId}`);
+  await replaceGlobalPartnerReferences(userId, globalPartnerId, docRef.id);
   return docRef.id;
+}
+
+async function replaceGlobalPartnerReferences(
+  userId: string,
+  globalPartnerId: string,
+  localPartnerId: string
+): Promise<void> {
+  const collections = ["transactions", "files"] as const;
+
+  for (const collectionName of collections) {
+    const snapshot = await db
+      .collection(collectionName)
+      .where("userId", "==", userId)
+      .where("partnerId", "==", globalPartnerId)
+      .where("partnerType", "==", "global")
+      .get();
+
+    if (snapshot.empty) continue;
+
+    let batch = db.batch();
+    let batchCount = 0;
+
+    for (const docSnap of snapshot.docs) {
+      batch.update(docSnap.ref, {
+        partnerId: localPartnerId,
+        partnerType: "user",
+        updatedAt: Timestamp.now(),
+      });
+      batchCount++;
+
+      if (batchCount >= 500) {
+        await batch.commit();
+        batch = db.batch();
+        batchCount = 0;
+      }
+    }
+
+    if (batchCount > 0) {
+      await batch.commit();
+    }
+  }
 }

@@ -22,8 +22,7 @@ import {
 import { autoMatchColumns, validateMappings } from "@/lib/import/field-matcher";
 import { parseCSV } from "@/lib/import/csv-parser";
 import { createNotification, uploadImportCSV, OperationsContext } from "@/lib/operations";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 const BATCH_SIZE = 500; // Firestore batch limit
 
 export type ImportStep = "upload" | "mapping" | "preview" | "importing" | "complete";
@@ -50,6 +49,7 @@ export interface ImportState {
 }
 
 export function useImport(source: TransactionSource | null) {
+  const { userId } = useAuth();
   const [state, setState] = useState<ImportState>({
     transientStep: null,
     file: null,
@@ -66,9 +66,9 @@ export function useImport(source: TransactionSource | null) {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Returns true when file is ready to proceed to mapping step
@@ -341,7 +341,7 @@ export function useImport(source: TransactionSource | null) {
           partnerSuggestions: [],
           importJobId,
           csvRowIndex: i, // Row index for re-mapping feature
-          userId: MOCK_USER_ID,
+          userId: userId ?? "",
           createdAt: now,
           updatedAt: now,
         });
@@ -403,10 +403,10 @@ export function useImport(source: TransactionSource | null) {
     // Upload CSV to storage for re-mapping feature
     let csvStoragePath: string | undefined;
     let csvDownloadUrl: string | undefined;
-    if (state.csvContent) {
+    if (state.csvContent && userId) {
       try {
         const csvUploadResult = await uploadImportCSV(
-          MOCK_USER_ID,
+          userId,
           importJobId,
           state.csvContent
         );
@@ -440,7 +440,7 @@ export function useImport(source: TransactionSource | null) {
       skippedCount,
       errorCount: errors.length,
       totalRows: rows.length,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
       createdAt: Timestamp.now(),
       // CSV storage fields - use null for queryability (e.g., find imports without CSV)
       csvStoragePath: csvStoragePath ?? null,

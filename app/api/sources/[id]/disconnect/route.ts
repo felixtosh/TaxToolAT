@@ -13,6 +13,7 @@ import {
   deleteDoc,
   deleteField,
 } from "firebase/firestore";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -38,8 +39,6 @@ if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_USE_EMULAT
   }
 }
 
-const MOCK_USER_ID = "dev-user-123";
-
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
@@ -50,6 +49,7 @@ interface RouteParams {
  */
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const { id: sourceId } = await params;
 
     console.log(`[Source Disconnect] Disconnecting source: ${sourceId}`);
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const source = sourceSnap.data();
 
-    if (source.userId !== MOCK_USER_ID) {
+    if (source.userId !== userId) {
       return NextResponse.json({ error: "Source not found" }, { status: 404 });
     }
 

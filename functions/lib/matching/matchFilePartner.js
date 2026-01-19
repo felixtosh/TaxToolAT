@@ -15,6 +15,7 @@ exports.matchFilePartner = void 0;
 exports.runPartnerMatching = runPartnerMatching;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const firestore_2 = require("firebase-admin/firestore");
+const createLocalPartnerFromGlobal_1 = require("./createLocalPartnerFromGlobal");
 const companyNameValidator_1 = require("../utils/companyNameValidator");
 const filePartnerMatcher_1 = require("../utils/filePartnerMatcher");
 const lookupCompany_1 = require("../ai/lookupCompany");
@@ -278,6 +279,97 @@ async function markPartnerMatchComplete(fileId, partnerId, partnerType, matchedB
         update.partnerMatchConfidence = confidence;
     }
     await db.collection("files").doc(fileId).update(update);
+    if (partnerId) {
+        const mergedFileData = {
+            ...fileDoc.data(),
+            partnerId,
+            partnerType,
+            partnerMatchedBy: matchedBy,
+            partnerMatchConfidence: confidence,
+        };
+        await syncPartnerToConnectedTransactions(fileId, mergedFileData);
+    }
+}
+function resolvePartnerConflictWithConfidence(filePartnerId, fileMatchedBy, fileConfidence, txPartnerId, txMatchedBy, txConfidence) {
+    const filePid = filePartnerId ?? null;
+    const txPid = txPartnerId ?? null;
+    if (!filePid && !txPid) {
+        return { winnerId: null, source: null, shouldSync: false };
+    }
+    if (filePid && !txPid) {
+        return { winnerId: filePid, source: "file", shouldSync: true };
+    }
+    if (txPid && !filePid) {
+        return { winnerId: txPid, source: "transaction", shouldSync: true };
+    }
+    const fileIsManual = fileMatchedBy === "manual";
+    const txIsManual = txMatchedBy === "manual";
+    if (fileIsManual && txIsManual) {
+        return { winnerId: null, source: null, shouldSync: false };
+    }
+    if (fileIsManual && !txIsManual) {
+        return { winnerId: filePid, source: "file", shouldSync: true };
+    }
+    if (txIsManual && !fileIsManual) {
+        return { winnerId: txPid, source: "transaction", shouldSync: true };
+    }
+    const fileConf = fileConfidence ?? 0;
+    const txConf = txConfidence ?? 0;
+    if (fileConf > txConf) {
+        return { winnerId: filePid, source: "file", shouldSync: true };
+    }
+    if (txConf > fileConf) {
+        return { winnerId: txPid, source: "transaction", shouldSync: true };
+    }
+    return { winnerId: txPid, source: "transaction", shouldSync: true };
+}
+async function syncPartnerToConnectedTransactions(fileId, fileData) {
+    if (!fileData.partnerId)
+        return;
+    const transactionIds = new Set();
+    const connectionsSnap = await db
+        .collection("fileConnections")
+        .where("fileId", "==", fileId)
+        .get();
+    for (const connection of connectionsSnap.docs) {
+        const connectionData = connection.data();
+        if (connectionData.transactionId) {
+            transactionIds.add(connectionData.transactionId);
+        }
+    }
+    if (Array.isArray(fileData.transactionIds)) {
+        for (const txId of fileData.transactionIds) {
+            if (typeof txId === "string") {
+                transactionIds.add(txId);
+            }
+        }
+    }
+    if (transactionIds.size === 0)
+        return;
+    const now = firestore_2.Timestamp.now();
+    for (const transactionId of transactionIds) {
+        if (!transactionId)
+            continue;
+        const txRef = db.collection("transactions").doc(transactionId);
+        const txDoc = await txRef.get();
+        if (!txDoc.exists)
+            continue;
+        const txData = txDoc.data();
+        if (txData.userId !== fileData.userId)
+            continue;
+        const resolution = resolvePartnerConflictWithConfidence(fileData.partnerId, fileData.partnerMatchedBy, fileData.partnerMatchConfidence, txData.partnerId ?? null, txData.partnerMatchedBy ?? null, txData.partnerMatchConfidence ?? null);
+        if (!resolution.shouldSync || resolution.source !== "file") {
+            continue;
+        }
+        await txRef.update({
+            partnerId: fileData.partnerId,
+            partnerType: fileData.partnerType ?? null,
+            partnerMatchedBy: fileData.partnerMatchedBy === "manual" ? "manual" : "auto",
+            partnerMatchConfidence: fileData.partnerMatchConfidence ?? null,
+            updatedAt: now,
+        });
+        console.log(`[PartnerMatch] Synced partner ${fileData.partnerId} from file ${fileId} to transaction ${transactionId}`);
+    }
 }
 /**
  * Normalize website URL to domain format
@@ -331,34 +423,6 @@ async function createUserPartnerFromLookup(userId, companyInfo, originalExtracte
     };
     const docRef = await db.collection("partners").add(partnerData);
     console.log(`[PartnerMatch] Created new partner ${docRef.id} from lookup for "${originalExtractedName}"`);
-    return docRef.id;
-}
-/**
- * Create a local user partner copy from a global partner
- */
-async function createLocalPartnerFromGlobal(userId, globalPartnerId) {
-    const globalDoc = await db.collection("globalPartners").doc(globalPartnerId).get();
-    if (!globalDoc.exists) {
-        throw new Error(`Global partner ${globalPartnerId} not found`);
-    }
-    const globalData = globalDoc.data();
-    const partnerData = {
-        userId,
-        name: globalData.name,
-        aliases: globalData.aliases || [],
-        website: globalData.website || null,
-        vatId: globalData.vatId || null,
-        country: globalData.country || null,
-        ibans: globalData.ibans || [],
-        address: globalData.address || null,
-        isActive: true,
-        globalPartnerId: globalPartnerId, // Link to global
-        createdAt: firestore_2.Timestamp.now(),
-        updatedAt: firestore_2.Timestamp.now(),
-        createdBy: "auto_partner_match",
-    };
-    const docRef = await db.collection("partners").add(partnerData);
-    console.log(`[PartnerMatch] Created local partner ${docRef.id} from global ${globalPartnerId}`);
     return docRef.id;
 }
 // === Main Matching Logic ===
@@ -440,7 +504,11 @@ async function runPartnerMatching(fileId, fileData) {
         website: doc.data().website || null,
         emailDomains: doc.data().emailDomains || [],
     }));
-    console.log(`[PartnerMatch] Searching ${userPartners.length} user partners and ${globalPartners.length} global partners`);
+    const localizedGlobalIds = new Set(userPartnersSnapshot.docs
+        .map((doc) => doc.data().globalPartnerId)
+        .filter(Boolean));
+    const filteredGlobalPartners = globalPartners.filter((partner) => !localizedGlobalIds.has(partner.id));
+    console.log(`[PartnerMatch] Searching ${userPartners.length} user partners and ${filteredGlobalPartners.length} global partners`);
     // === Check for existing partner with matching VAT ID first ===
     // Before calling VIES, check if we already have a partner with this VAT ID
     if (extractedVatId) {
@@ -462,7 +530,7 @@ async function runPartnerMatching(fileId, fileData) {
             return;
         }
         // Check global partners
-        const existingGlobalPartner = globalPartners.find((p) => {
+        const existingGlobalPartner = filteredGlobalPartners.find((p) => {
             if (!p.vatId)
                 return false;
             const normalizedPartnerVat = p.vatId.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -470,7 +538,7 @@ async function runPartnerMatching(fileId, fileData) {
         });
         if (existingGlobalPartner) {
             console.log(`[PartnerMatch] Found existing global partner "${existingGlobalPartner.name}" with matching VAT ID, creating local copy`);
-            const localPartnerId = await createLocalPartnerFromGlobal(userId, existingGlobalPartner.id);
+            const localPartnerId = await (0, createLocalPartnerFromGlobal_1.createLocalPartnerFromGlobal)(userId, existingGlobalPartner.id);
             await markPartnerMatchComplete(fileId, localPartnerId, "user", "auto", 95, []);
             // Learn extracted name as alias and email domain (non-blocking)
             learnPartnerAlias(localPartnerId, extractedPartner).catch(console.error);
@@ -531,7 +599,7 @@ async function runPartnerMatching(fileId, fileData) {
         extractedPartner,
         extractedWebsite: fileData.extractedWebsite,
         gmailSenderDomain,
-    }, userPartners, globalPartners);
+    }, userPartners, filteredGlobalPartners);
     // Build suggestions for storage
     const suggestions = matches.slice(0, CONFIG.MAX_SUGGESTIONS).map((m) => ({
         partnerId: m.partnerId,
@@ -549,7 +617,7 @@ async function runPartnerMatching(fileId, fileData) {
         // If global partner, create local copy first
         if (topMatch.partnerType === "global") {
             try {
-                assignedPartnerId = await createLocalPartnerFromGlobal(userId, topMatch.partnerId);
+                assignedPartnerId = await (0, createLocalPartnerFromGlobal_1.createLocalPartnerFromGlobal)(userId, topMatch.partnerId);
                 assignedPartnerType = "user";
             }
             catch (error) {
@@ -566,7 +634,7 @@ async function runPartnerMatching(fileId, fileData) {
             // Find the partner data to get website for domain validation
             const matchedPartner = topMatch.partnerType === "user"
                 ? userPartners.find((p) => p.id === topMatch.partnerId)
-                : globalPartners.find((p) => p.id === topMatch.partnerId);
+                : filteredGlobalPartners.find((p) => p.id === topMatch.partnerId);
             learnEmailDomainFromPartnerMatch(fileData, assignedPartnerId, topMatch.partnerName, matchedPartner?.website || null).catch((err) => {
                 console.error(`[PartnerMatch] Failed to learn email domain:`, err);
             });
@@ -639,6 +707,12 @@ exports.matchFilePartner = (0, firestore_1.onDocumentUpdated)({
     }
     // Skip if partner matching already done
     if (!extractionJustCompleted || after.partnerMatchComplete) {
+        if (before.partnerId !== after.partnerId &&
+            after.partnerId &&
+            after.partnerMatchComplete === true &&
+            !extractionJustCompleted) {
+            await syncPartnerToConnectedTransactions(fileId, after);
+        }
         return;
     }
     // Skip if partner already manually assigned

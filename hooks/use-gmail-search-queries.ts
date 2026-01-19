@@ -5,8 +5,7 @@ import { doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { UserPartner } from "@/types/partner";
 import { Transaction } from "@/types/transaction";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 
 interface UseGmailSearchQueriesOptions {
   transaction?: Transaction | null;
@@ -233,19 +232,23 @@ export function useGmailSearchQueries({
   partner,
   enabled = true,
 }: UseGmailSearchQueriesOptions = {}) {
+  const { userId } = useAuth();
   const [queries, setQueries] = useState<string[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  // Start as true so consumers wait for initial generation to complete
+  const [isLoading, setIsLoading] = useState(true);
   const lastTransactionIdRef = useRef<string | null>(null);
   const hasSavedRef = useRef(false);
 
   useEffect(() => {
     // Don't run if not enabled (e.g., overlay is closed)
     if (!enabled) {
+      setIsLoading(false);
       return;
     }
 
     if (!transaction) {
       setQueries([]);
+      setIsLoading(false);
       lastTransactionIdRef.current = null;
       hasSavedRef.current = false;
       return;
@@ -279,9 +282,9 @@ export function useGmailSearchQueries({
     setIsLoading(false);
 
     // Save to transaction in background (don't block UI)
-    if (newQueries.length > 0 && !hasSavedRef.current) {
+    if (newQueries.length > 0 && !hasSavedRef.current && userId) {
       hasSavedRef.current = true;
-      const txRef = doc(db, "users", MOCK_USER_ID, "transactions", transaction.id);
+      const txRef = doc(db, "transactions", transaction.id);
       updateDoc(txRef, {
         aiSearchQueries: newQueries,
         aiSearchQueriesForPartnerId: currentPartnerId,
@@ -290,7 +293,7 @@ export function useGmailSearchQueries({
         console.warn("Could not cache queries to transaction:", err.code || err.message);
       });
     }
-  }, [transaction, partner, enabled]);
+  }, [transaction, partner, enabled, userId]);
 
   return {
     queries,

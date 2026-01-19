@@ -9,11 +9,12 @@ import {
   markNotificationRead as markNotificationReadOp,
   markAllNotificationsRead as markAllNotificationsReadOp,
 } from "@/lib/operations";
+import { useAuth } from "@/components/auth";
 
-const MOCK_USER_ID = "dev-user-123"; // Mock user for development
 const MAX_NOTIFICATIONS = 50;
 
 export function useNotifications() {
+  const { userId } = useAuth();
   const [notifications, setNotifications] = useState<AutoActionNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -22,9 +23,9 @@ export function useNotifications() {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Calculate unread count
@@ -35,9 +36,15 @@ export function useNotifications() {
 
   // Real-time listener for notifications
   useEffect(() => {
+    if (!userId) {
+      setNotifications([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
-    const notificationsPath = `users/${MOCK_USER_ID}/notifications`;
+    const notificationsPath = `users/${userId}/notifications`;
     const q = query(
       collection(db, notificationsPath),
       orderBy("createdAt", "desc"),
@@ -63,7 +70,7 @@ export function useNotifications() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   // Mark a single notification as read
   const markRead = useCallback(

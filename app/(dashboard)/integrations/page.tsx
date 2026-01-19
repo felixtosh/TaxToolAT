@@ -13,6 +13,9 @@ import {
   ChevronRight,
   RefreshCw,
   Pause,
+  Globe,
+  Inbox,
+  Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,10 +26,13 @@ import {
   useActiveSyncForIntegration,
   useIntegrationFileStats,
 } from "@/hooks/use-integration-details";
+import { useBrowserExtensionStatus } from "@/hooks/use-browser-extension";
+import { useEmailInbound } from "@/hooks/use-email-inbound";
 import { EmailIntegration } from "@/types/email-integration";
 
 function IntegrationsContent() {
   const router = useRouter();
+  const extension = useBrowserExtensionStatus();
   const {
     integrations,
     loading,
@@ -34,9 +40,15 @@ function IntegrationsContent() {
     connectGmail,
     refresh,
   } = useEmailIntegrations();
+  const {
+    loading: inboundLoading,
+    error: inboundError,
+    primaryAddress,
+  } = useEmailInbound();
 
   const [connecting, setConnecting] = useState(false);
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [copiedEmail, setCopiedEmail] = useState(false);
 
   const handleConnectGmail = async () => {
     setConnecting(true);
@@ -60,7 +72,17 @@ function IntegrationsContent() {
     }
   };
 
+  const handleCopyEmail = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (primaryAddress?.email) {
+      await navigator.clipboard.writeText(primaryAddress.email);
+      setCopiedEmail(true);
+      setTimeout(() => setCopiedEmail(false), 2000);
+    }
+  };
+
   const gmailIntegrations = integrations.filter((i) => i.provider === "gmail");
+  const extensionInstalled = extension.status === "installed";
 
   return (
     <div className="h-full overflow-auto">
@@ -79,6 +101,80 @@ function IntegrationsContent() {
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
+
+        {/* Browser Plugin Section */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-emerald-100 flex items-center justify-center">
+                  <Globe className="h-5 w-5 text-emerald-700" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Browser Plugin</CardTitle>
+                  <CardDescription>
+                    Pull invoices from logged-in portals in Chrome
+                  </CardDescription>
+                </div>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent>
+            <div
+              className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors"
+              onClick={() => router.push("/integrations/browser")}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                    <Globe className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">Chrome Extension</span>
+                      {extension.status === "checking" ? (
+                        <Badge variant="secondary" className="text-xs border-blue-500 text-blue-600">
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          Checking
+                        </Badge>
+                      ) : extensionInstalled ? (
+                        <Badge variant="secondary" className="text-xs border-green-500 text-green-600">
+                          <Check className="h-3 w-3 mr-1" />
+                          Installed
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-xs border-amber-500 text-amber-600">
+                          <AlertCircle className="h-3 w-3 mr-1" />
+                          Not installed
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {extensionInstalled
+                        ? "Extension connected and ready to pull invoices"
+                        : "Install the plugin to start scanning invoice portals"}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      extension.checkNow();
+                    }}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Gmail Section */}
         <Card>
@@ -115,14 +211,6 @@ function IntegrationsContent() {
                 <Loader2 className="h-6 w-6 mx-auto animate-spin mb-2" />
                 Loading integrations...
               </div>
-            ) : gmailIntegrations.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <Mail className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                <p>No Gmail accounts connected</p>
-                <p className="text-sm mt-1">
-                  Connect your Gmail to search for invoices in your emails
-                </p>
-              </div>
             ) : (
               <div className="space-y-3">
                 {gmailIntegrations.map((integration) => (
@@ -135,6 +223,97 @@ function IntegrationsContent() {
                   />
                 ))}
               </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Email Forwarding Section */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-purple-100 flex items-center justify-center">
+                  <Inbox className="h-5 w-5 text-purple-600" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Email Forwarding</CardTitle>
+                  <CardDescription>
+                    Forward invoices to a dedicated email address
+                  </CardDescription>
+                </div>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent>
+            {inboundLoading || !primaryAddress ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Loader2 className="h-6 w-6 mx-auto animate-spin mb-2" />
+                Setting up your forwarding address...
+              </div>
+            ) : (
+              <div
+                className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors"
+                onClick={() => router.push("/integrations/email-inbound")}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                      <Inbox className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <code className="font-medium text-sm bg-muted px-2 py-1 rounded">
+                          {primaryAddress.email}
+                        </code>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          onClick={handleCopyEmail}
+                        >
+                          {copiedEmail ? (
+                            <Check className="h-3.5 w-3.5 text-green-500" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                        {primaryAddress.isActive ? (
+                          <Badge variant="secondary" className="text-xs border-green-500 text-green-600">
+                            <Check className="h-3 w-3 mr-1" />
+                            Active
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs border-amber-500 text-amber-600">
+                            <Pause className="h-3 w-3 mr-1" />
+                            Paused
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {primaryAddress.emailsReceived} emails received
+                        {primaryAddress.filesCreated > 0 && ` • ${primaryAddress.filesCreated} files created`}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    {primaryAddress.lastEmailAt && (
+                      <div className="text-right text-xs text-muted-foreground">
+                        Last email {formatDistanceToNow(primaryAddress.lastEmailAt.toDate(), { addSuffix: true })}
+                      </div>
+                    )}
+                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {inboundError && (
+              <Alert variant="destructive" className="mt-4">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{inboundError}</AlertDescription>
+              </Alert>
             )}
           </CardContent>
         </Card>
@@ -223,7 +402,7 @@ function GmailAccountCard({
                   Syncing
                 </Badge>
               ) : (
-                <Badge variant="secondary" className="text-xs">
+                <Badge variant="secondary" className="text-xs border-green-500 text-green-600">
                   <Check className="h-3 w-3 mr-1" />
                   Connected
                 </Badge>

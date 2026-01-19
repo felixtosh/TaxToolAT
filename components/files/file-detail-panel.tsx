@@ -4,9 +4,6 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { format } from "date-fns";
 import { useRouter } from "next/navigation";
 import {
-  X,
-  ChevronUp,
-  ChevronDown,
   Download,
   Trash2,
   Plus,
@@ -23,6 +20,7 @@ import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { PanelHeader, FieldRow } from "@/components/ui/detail-panel-primitives";
 import {
   Select,
   SelectContent,
@@ -52,24 +50,15 @@ import {
   dismissTransactionSuggestion,
   retryFileExtraction,
   updateFileDirection,
+  updateFileExtractedFields,
+  EditableExtractedFields,
 } from "@/lib/operations";
 import { InvoiceDirection } from "@/types/user-data";
 import { useFilePartnerSuggestions, PartnerSuggestionWithDetails } from "@/hooks/use-partner-suggestions";
 import { shouldAutoApply } from "@/lib/matching/partner-matcher";
 import { db } from "@/lib/firebase/config";
 import { cn } from "@/lib/utils";
-
-const MOCK_USER_ID = "dev-user-123";
-
-// Consistent field row component (matching transaction-details.tsx)
-function FieldRow({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
-  return (
-    <div className={cn("flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4", className)}>
-      <span className="text-sm text-muted-foreground shrink-0 sm:w-28">{label}</span>
-      <div className="text-sm w-0 flex-1">{children}</div>
-    </div>
-  );
-}
+import { useAuth } from "@/components/auth";
 
 // Helper to determine invoice type status for display
 type InvoiceTypeStatus = 'unknown' | 'analyzing' | 'invoice' | 'not_invoice';
@@ -130,14 +119,16 @@ export function FileDetailPanel({
   onHighlightField,
 }: FileDetailPanelProps) {
   const router = useRouter();
+  const { userId } = useAuth();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
   const [isConnectTransactionOpen, setIsConnectTransactionOpen] = useState(false);
   const [isRetryingExtraction, setIsRetryingExtraction] = useState(false);
+  const [isUpdatingExtractedFields, setIsUpdatingExtractedFields] = useState(false);
 
   const ctx: OperationsContext = useMemo(
-    () => ({ db, userId: MOCK_USER_ID }),
-    []
+    () => ({ db, userId }),
+    [userId]
   );
 
   // Find assigned partner from lists
@@ -154,6 +145,22 @@ export function FileDetailPanel({
 
   // Get partner suggestions based on extracted data
   const suggestions = useFilePartnerSuggestions(file, userPartners, globalPartners);
+
+  const isGmailSource = file.sourceType?.startsWith("gmail");
+  const sourceResultLabel = useMemo(() => {
+    switch (file.sourceResultType) {
+      case "gmail_attachment":
+        return "Attachment";
+      case "gmail_html_invoice":
+        return "HTML Invoice";
+      case "gmail_invoice_link":
+        return "Invoice Link";
+      case "local_file":
+        return "Local File";
+      default:
+        return null;
+    }
+  }, [file.sourceResultType]);
 
   // Track which files have been auto-applied to prevent repeated auto-applies
   const autoAppliedRef = useRef<Set<string>>(new Set());
@@ -316,44 +323,29 @@ export function FileDetailPanel({
     }
   }, [ctx, file.id]);
 
+  const handleUpdateExtractedFields = useCallback(async (fields: EditableExtractedFields) => {
+    setIsUpdatingExtractedFields(true);
+    try {
+      await updateFileExtractedFields(ctx, file.id, fields);
+    } catch (error) {
+      console.error("Failed to update extracted fields:", error);
+    } finally {
+      setIsUpdatingExtractedFields(false);
+    }
+  }, [ctx, file.id]);
+
   return (
     <>
       <div className="h-full flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between py-3 border-b px-2">
-          <h2 className="text-lg font-semibold pl-2 truncate">{file.fileName}</h2>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onNavigatePrevious}
-              disabled={!hasPrevious}
-              className="h-8 w-8"
-            >
-              <ChevronUp className="h-4 w-4" />
-              <span className="sr-only">Previous file</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onNavigateNext}
-              disabled={!hasNext}
-              className="h-8 w-8"
-            >
-              <ChevronDown className="h-4 w-4" />
-              <span className="sr-only">Next file</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onClose}
-              className="h-8 w-8"
-            >
-              <X className="h-4 w-4" />
-              <span className="sr-only">Close</span>
-            </Button>
-          </div>
-        </div>
+        <PanelHeader
+          title={file.fileName}
+          onClose={onClose}
+          onNavigatePrevious={onNavigatePrevious}
+          onNavigateNext={onNavigateNext}
+          hasPrevious={hasPrevious}
+          hasNext={hasNext}
+        />
 
         {/* Content */}
         <ScrollArea className="flex-1">
@@ -379,7 +371,7 @@ export function FileDetailPanel({
                   <div className="flex items-start gap-3">
                     <span className="text-muted-foreground w-16 shrink-0">Source</span>
                     <div className="flex-1 text-right">
-                      {file.sourceType === "gmail" ? (
+                      {isGmailSource ? (
                         file.gmailIntegrationId ? (
                           <Link
                             href={`/integrations/${file.gmailIntegrationId}`}
@@ -403,12 +395,26 @@ export function FileDetailPanel({
                       )}
                     </div>
                   </div>
-                  {file.sourceType === "gmail" && file.gmailSenderEmail && (
+                  {isGmailSource && file.gmailSenderEmail && (
                     <div className="flex items-start gap-3">
                       <span className="text-muted-foreground w-16 shrink-0">From</span>
                       <span className="flex-1 text-right break-all">
                         {file.gmailSenderEmail}
                       </span>
+                    </div>
+                  )}
+                  {file.sourceSearchPattern && (
+                    <div className="flex items-start gap-3">
+                      <span className="text-muted-foreground w-16 shrink-0">Search</span>
+                      <span className="flex-1 text-right break-all">
+                        {file.sourceSearchPattern}
+                      </span>
+                    </div>
+                  )}
+                  {sourceResultLabel && (
+                    <div className="flex items-start gap-3">
+                      <span className="text-muted-foreground w-16 shrink-0">Result</span>
+                      <span className="flex-1 text-right">{sourceResultLabel}</span>
                     </div>
                   )}
                   {/* File metadata */}
@@ -477,6 +483,8 @@ export function FileDetailPanel({
               isParsing={isParsing}
               onFieldClick={onHighlightField}
               onDirectionChange={handleDirectionChange}
+              onUpdate={handleUpdateExtractedFields}
+              isUpdating={isUpdatingExtractedFields}
             />
 
             <Separator />
@@ -533,7 +541,7 @@ export function FileDetailPanel({
                 </Popover>
               </div>
 
-              <FieldRow label="Connect">
+              <FieldRow label="Connect" labelWidth="w-28">
                 {assignedPartner ? (
                   <PartnerPill
                     name={assignedPartner.name}
@@ -559,7 +567,7 @@ export function FileDetailPanel({
 
               {/* Partner suggestions when no match */}
               {!assignedPartner && suggestions.length > 0 && (
-                <FieldRow label="Suggestions">
+                <FieldRow label="Suggestions" labelWidth="w-28">
                   <div className="flex flex-col gap-1.5">
                     {suggestions.map((suggestion) => (
                       <PartnerPill

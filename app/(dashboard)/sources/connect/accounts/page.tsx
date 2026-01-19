@@ -20,8 +20,7 @@ import { ArrowLeft, Building2, CheckCircle, Loader2, Link2, Plus } from "lucide-
 import { formatIban, normalizeIban } from "@/lib/import/deduplication";
 import { BankAccount } from "@/hooks/use-bank-connection";
 import { TransactionSource } from "@/types/source";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 
 interface AccountSelection {
   accountId: string;
@@ -39,6 +38,7 @@ interface AccountSelection {
 function SelectAccountsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { userId } = useAuth();
   const connectionId = searchParams.get("connectionId");
 
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
@@ -72,7 +72,7 @@ function SelectAccountsContent() {
         // Fetch ALL existing sources to check for duplicates
         const sourcesQuery = query(
           collection(db, "sources"),
-          where("userId", "==", MOCK_USER_ID),
+          where("userId", "==", userId),
           where("isActive", "==", true)
         );
         const sourcesSnap = await getDocs(sourcesQuery);
@@ -128,7 +128,7 @@ function SelectAccountsContent() {
     }
 
     fetchData();
-  }, [connectionId, router]);
+  }, [connectionId, router, userId]);
 
   // Get selected accounts count
   const selectedCount = useMemo(() => {

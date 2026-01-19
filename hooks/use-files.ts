@@ -29,12 +29,14 @@ import {
   getTransactionsForFile,
   acceptTransactionSuggestion,
   dismissTransactionSuggestion,
+  FileConnectionSourceInfo,
 } from "@/lib/operations";
+import { useAuth } from "@/components/auth";
 
 const FILES_COLLECTION = "files";
-const MOCK_USER_ID = "dev-user-123";
 
 export function useFiles(filters?: FileFilters) {
+  const { userId } = useAuth();
   const [files, setFiles] = useState<TaxFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -42,18 +44,24 @@ export function useFiles(filters?: FileFilters) {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Realtime listener for files
   useEffect(() => {
+    if (!userId) {
+      setFiles([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
     const q = query(
       collection(db, FILES_COLLECTION),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       orderBy("uploadedAt", "desc")
     );
 
@@ -110,7 +118,7 @@ export function useFiles(filters?: FileFilters) {
     );
 
     return () => unsubscribe();
-  }, [filters?.search, filters?.hasConnections, filters?.extractionComplete, filters?.includeDeleted, filters?.isNotInvoice]);
+  }, [userId, filters?.search, filters?.hasConnections, filters?.extractionComplete, filters?.includeDeleted, filters?.isNotInvoice]);
 
   const create = useCallback(
     async (data: FileCreateData): Promise<string> => {
@@ -240,6 +248,7 @@ export function useFiles(filters?: FileFilters) {
  * Hook to get files for a specific transaction with realtime updates
  */
 export function useTransactionFiles(transactionId: string | null) {
+  const { userId } = useAuth();
   const [files, setFiles] = useState<TaxFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -247,13 +256,13 @@ export function useTransactionFiles(transactionId: string | null) {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   useEffect(() => {
-    if (!transactionId) {
+    if (!transactionId || !userId) {
       setFiles([]);
       setLoading(false);
       return;
@@ -264,7 +273,7 @@ export function useTransactionFiles(transactionId: string | null) {
     // Listen for changes to files that include this transaction
     const q = query(
       collection(db, FILES_COLLECTION),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       where("transactionIds", "array-contains", transactionId)
     );
 
@@ -287,12 +296,19 @@ export function useTransactionFiles(transactionId: string | null) {
     );
 
     return () => unsubscribe();
-  }, [transactionId]);
+  }, [transactionId, userId]);
 
   const connectFile = useCallback(
-    async (fileId: string): Promise<string> => {
+    async (fileId: string, sourceInfo?: FileConnectionSourceInfo): Promise<string> => {
       if (!transactionId) throw new Error("No transaction selected");
-      return connectFileToTransaction(ctx, fileId, transactionId, "manual");
+      return connectFileToTransaction(
+        ctx,
+        fileId,
+        transactionId,
+        "manual",
+        undefined,
+        sourceInfo
+      );
     },
     [ctx, transactionId]
   );

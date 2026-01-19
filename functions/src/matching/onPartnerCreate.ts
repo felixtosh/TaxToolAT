@@ -30,6 +30,13 @@ export const onPartnerCreate = onDocumentCreated(
 
     console.log(`New partner created: ${partnerData.name} (${partnerId}) for user ${userId}`);
 
+    if (partnerData.globalPartnerId && partnerData.createdBy === "auto_partner_match") {
+      console.log(
+        `Skipping re-match for localized partner ${partnerId} (global ${partnerData.globalPartnerId})`
+      );
+      return;
+    }
+
     try {
       // Get unmatched transactions for this user (no partnerId set)
       const unmatchedSnapshot = await db
@@ -95,6 +102,14 @@ export const onPartnerCreate = onDocumentCreated(
           patterns: data.patterns || [],
         };
       });
+      const localizedGlobalIds = new Set(
+        userPartnersSnapshot.docs
+          .map((doc) => doc.data().globalPartnerId)
+          .filter(Boolean) as string[]
+      );
+      const filteredGlobalPartners = globalPartners.filter(
+        (partner) => !localizedGlobalIds.has(partner.id)
+      );
 
       // Process each unmatched transaction
       const batch = db.batch();
@@ -114,7 +129,7 @@ export const onPartnerCreate = onDocumentCreated(
           reference: txData.reference || null,
         };
 
-        const matches = matchTransaction(transaction, userPartners, globalPartners);
+        const matches = matchTransaction(transaction, userPartners, filteredGlobalPartners);
         processedTransactionIds.push(txDoc.id);
 
         if (matches.length > 0) {

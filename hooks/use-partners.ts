@@ -12,11 +12,12 @@ import {
   assignPartnerToTransaction,
   removePartnerFromTransaction,
 } from "@/lib/operations";
+import { useAuth } from "@/components/auth";
 
 const PARTNERS_COLLECTION = "partners";
-const MOCK_USER_ID = "dev-user-123";
 
 export function usePartners() {
+  const { userId } = useAuth();
   const [partners, setPartners] = useState<UserPartner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -24,18 +25,24 @@ export function usePartners() {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Realtime listener for user partners
   useEffect(() => {
+    if (!userId) {
+      setPartners([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
     const q = query(
       collection(db, PARTNERS_COLLECTION),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       where("isActive", "==", true),
       orderBy("name", "asc")
     );
@@ -59,7 +66,7 @@ export function usePartners() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   const createPartner = useCallback(
     async (data: PartnerFormData): Promise<string> => {

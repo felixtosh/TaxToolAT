@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { doc, getDoc, updateDoc, Timestamp } from "firebase/firestore";
-import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 const db = getServerDb();
 const TOKENS_COLLECTION = "emailTokens";

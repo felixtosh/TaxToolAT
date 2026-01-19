@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { initializeApp, getApps } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getRequisitionByGoCardlessId, refreshRequisitionStatus } from "@/lib/operations";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -16,8 +17,6 @@ const firebaseConfig = {
 const appName = "gocardless-callback";
 const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
 const db = getFirestore(app);
-
-const MOCK_USER_ID = "dev-user-123";
 
 /**
  * GET /api/gocardless/callback
@@ -53,7 +52,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const ctx = { db, userId: MOCK_USER_ID };
+    const userId = await getServerUserIdWithFallback(request);
+    const ctx = { db, userId };
 
     // Find our requisition by GoCardless ID
     const requisition = await getRequisitionByGoCardlessId(ctx, gcRequisitionId);

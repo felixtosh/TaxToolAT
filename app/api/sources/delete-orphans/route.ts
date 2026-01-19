@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { initializeApp, getApps } from "firebase/app";
 import {
   getFirestore,
@@ -10,6 +10,7 @@ import {
   deleteDoc,
   doc,
 } from "firebase/firestore";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -35,19 +36,19 @@ if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_USE_EMULAT
   }
 }
 
-const MOCK_USER_ID = "dev-user-123";
 const TRUELAYER_CONNECTIONS_COLLECTION = "truelayerConnections";
 
 /**
  * POST /api/sources/delete-orphans
  * Delete sources missing required fields, orphaned TrueLayer connections, and orphaned transactions
  */
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     // === 1. Find and delete orphan sources ===
     const sourcesQuery = query(
       collection(db, "sources"),
-      where("userId", "==", MOCK_USER_ID)
+      where("userId", "==", userId)
     );
 
     const snapshot = await getDocs(sourcesQuery);
@@ -99,7 +100,7 @@ export async function POST() {
     // === 2. Find and delete orphan TrueLayer connections ===
     const connectionsQuery = query(
       collection(db, TRUELAYER_CONNECTIONS_COLLECTION),
-      where("userId", "==", MOCK_USER_ID)
+      where("userId", "==", userId)
     );
 
     const connectionsSnap = await getDocs(connectionsQuery);
@@ -131,7 +132,7 @@ export async function POST() {
     // === 3. Find and delete orphan transactions (referencing non-existent sources) ===
     const transactionsQuery = query(
       collection(db, "transactions"),
-      where("userId", "==", MOCK_USER_ID)
+      where("userId", "==", userId)
     );
 
     const transactionsSnap = await getDocs(transactionsQuery);

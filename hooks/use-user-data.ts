@@ -9,14 +9,14 @@ import {
   getUserData,
   saveUserData,
 } from "@/lib/operations";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 
 /**
  * Hook for managing user data (name, company, aliases)
  * Used for extraction prompts and invoice direction detection
  */
 export function useUserData() {
+  const { userId } = useAuth();
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -25,16 +25,22 @@ export function useUserData() {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Realtime listener for user data
   useEffect(() => {
+    if (!userId) {
+      setUserData(null);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
-    const docRef = doc(db, "users", MOCK_USER_ID, "settings", "userData");
+    const docRef = doc(db, "users", userId, "settings", "userData");
 
     const unsubscribe = onSnapshot(
       docRef,
@@ -54,7 +60,7 @@ export function useUserData() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   /**
    * Save user data

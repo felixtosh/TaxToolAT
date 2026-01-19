@@ -10,8 +10,8 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { EmailIntegration } from "@/types/email-integration";
+import { useAuth } from "@/components/auth";
 
-const MOCK_USER_ID = "dev-user-123";
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
 
 export interface UseEmailIntegrationsResult {
@@ -36,15 +36,22 @@ export interface UseEmailIntegrationsResult {
 }
 
 export function useEmailIntegrations(): UseEmailIntegrationsResult {
+  const { userId } = useAuth();
   const [integrations, setIntegrations] = useState<EmailIntegration[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Subscribe to integrations
   useEffect(() => {
+    if (!userId) {
+      setIntegrations([]);
+      setLoading(false);
+      return;
+    }
+
     const q = query(
       collection(db, INTEGRATIONS_COLLECTION),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       where("isActive", "==", true),
       orderBy("createdAt", "desc")
     );
@@ -68,7 +75,7 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   // Connect Gmail account - redirects to OAuth flow
   const connectGmail = useCallback(async () => {

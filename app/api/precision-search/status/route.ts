@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import {
   getPrecisionSearchQueueItem,
   getTransactionSearchHistory,
@@ -22,6 +23,7 @@ const db = getServerDb();
  */
 export async function GET(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const queueId = request.nextUrl.searchParams.get("queueId");
     const transactionId = request.nextUrl.searchParams.get("transactionId");
 
@@ -32,7 +34,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
     const result: Record<string, unknown> = {};
 
     // Get queue item if requested

@@ -700,9 +700,17 @@ export async function runPartnerMatching(
     website: doc.data().website || null,
     emailDomains: doc.data().emailDomains || [],
   }));
+  const localizedGlobalIds = new Set(
+    userPartnersSnapshot.docs
+      .map((doc) => doc.data().globalPartnerId)
+      .filter(Boolean) as string[]
+  );
+  const filteredGlobalPartners = globalPartners.filter(
+    (partner) => !localizedGlobalIds.has(partner.id)
+  );
 
   console.log(
-    `[PartnerMatch] Searching ${userPartners.length} user partners and ${globalPartners.length} global partners`
+    `[PartnerMatch] Searching ${userPartners.length} user partners and ${filteredGlobalPartners.length} global partners`
   );
 
   // === Check for existing partner with matching VAT ID first ===
@@ -741,7 +749,7 @@ export async function runPartnerMatching(
     }
 
     // Check global partners
-    const existingGlobalPartner = globalPartners.find((p) => {
+    const existingGlobalPartner = filteredGlobalPartners.find((p) => {
       if (!p.vatId) return false;
       const normalizedPartnerVat = p.vatId.toUpperCase().replace(/[^A-Z0-9]/g, "");
       return normalizedPartnerVat === normalizedExtractedVat;
@@ -832,17 +840,17 @@ export async function runPartnerMatching(
   }
 
   // Match against all partners
-  const matches = matchFileToAllPartners(
-    {
-      extractedIban,
-      extractedVatId,
-      extractedPartner,
-      extractedWebsite: fileData.extractedWebsite,
-      gmailSenderDomain,
-    },
-    userPartners,
-    globalPartners
-  );
+    const matches = matchFileToAllPartners(
+      {
+        extractedIban,
+        extractedVatId,
+        extractedPartner,
+        extractedWebsite: fileData.extractedWebsite,
+        gmailSenderDomain,
+      },
+      userPartners,
+      filteredGlobalPartners
+    );
 
   // Build suggestions for storage
   const suggestions: PartnerSuggestion[] = matches.slice(0, CONFIG.MAX_SUGGESTIONS).map((m) => ({
@@ -892,7 +900,7 @@ export async function runPartnerMatching(
       // Find the partner data to get website for domain validation
       const matchedPartner = topMatch.partnerType === "user"
         ? userPartners.find((p) => p.id === topMatch.partnerId)
-        : globalPartners.find((p) => p.id === topMatch.partnerId);
+        : filteredGlobalPartners.find((p) => p.id === topMatch.partnerId);
       learnEmailDomainFromPartnerMatch(
         fileData,
         assignedPartnerId,

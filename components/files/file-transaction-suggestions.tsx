@@ -60,19 +60,35 @@ function SuggestionRow({
   const { preview, confidence, matchSources } = suggestion;
 
   return (
-    <div className="flex items-center gap-2 p-2 -mx-2 rounded bg-muted/30 border border-dashed">
+    <div className="flex items-center gap-2 p-2 -mx-2 rounded bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/30">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p className="text-sm truncate flex-1">{preview.name}</p>
-          <Badge
-            variant="outline"
-            className={cn(
-              "shrink-0 text-xs px-1.5 py-0",
-              getTransactionMatchConfidenceColor(confidence)
-            )}
-          >
-            {confidence}%
-          </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge
+                variant="outline"
+                className={cn(
+                  "shrink-0 text-xs px-1.5 py-0 cursor-help",
+                  getTransactionMatchConfidenceColor(confidence)
+                )}
+              >
+                {confidence}%
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-[220px] text-xs">
+              <div className="font-medium mb-1">Match signals</div>
+              {matchSources.length > 0 ? (
+                <div className="space-y-0.5">
+                  {matchSources.map((source, idx) => (
+                    <div key={idx}>{getTransactionMatchSourceLabel(source)}</div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-muted-foreground">No specific signals</div>
+              )}
+            </TooltipContent>
+          </Tooltip>
         </div>
         <div className="flex items-center justify-between mt-1">
           <p className="text-xs text-muted-foreground">
@@ -89,48 +105,26 @@ function SuggestionRow({
             {formatAmount(preview.amount, preview.currency)}
           </span>
         </div>
-        {/* Match sources */}
-        <div className="flex items-center gap-1 mt-1.5">
-          <TooltipProvider>
-            {matchSources.map((source, index) => {
-              const Icon = getSourceIcon(source);
-              return (
-                <Tooltip key={index}>
-                  <TooltipTrigger asChild>
-                    <div className="p-1 rounded bg-muted">
-                      <Icon className="h-3 w-3 text-muted-foreground" />
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="text-xs">
-                    {getTransactionMatchSourceLabel(source)}
-                  </TooltipContent>
-                </Tooltip>
-              );
-            })}
-          </TooltipProvider>
-        </div>
       </div>
-      <div className="flex flex-col gap-1 shrink-0">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 w-7 p-0 hover:bg-green-100 hover:text-green-700"
-          onClick={onAccept}
-          disabled={disabled}
-        >
-          <Check className="h-4 w-4" />
-          <span className="sr-only">Accept</span>
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 w-7 p-0 hover:bg-red-100 hover:text-red-700"
+      <div className="flex items-center gap-1 shrink-0">
+        <button
+          type="button"
           onClick={onDismiss}
           disabled={disabled}
+          className="p-1 rounded hover:bg-destructive/10 transition-colors"
+          title="Dismiss suggestion"
         >
-          <X className="h-4 w-4" />
-          <span className="sr-only">Dismiss</span>
-        </Button>
+          <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+        </button>
+        <button
+          type="button"
+          onClick={onAccept}
+          disabled={disabled}
+          className="p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+          title="Connect transaction"
+        >
+          <Check className="h-4 w-4 text-muted-foreground hover:text-green-600" />
+        </button>
       </div>
     </div>
   );
@@ -181,30 +175,32 @@ export function FileTransactionSuggestions({
   }
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <Sparkles className="h-4 w-4 text-amber-500" />
-        <h3 className="text-sm font-medium">Suggested Transactions</h3>
-        <Badge variant="secondary" className="text-xs">
-          {suggestions.length}
-        </Badge>
-      </div>
-
-      <p className="text-xs text-muted-foreground">
-        These transactions may match this file based on amount, date, and partner.
-      </p>
-
+    <TooltipProvider>
       <div className="space-y-2">
-        {suggestions.map((suggestion) => (
-          <SuggestionRow
-            key={suggestion.transactionId}
-            suggestion={suggestion}
-            onAccept={() => handleAccept(suggestion)}
-            onDismiss={() => handleDismiss(suggestion.transactionId)}
-            disabled={processingId === suggestion.transactionId}
-          />
-        ))}
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-amber-500" />
+          <h3 className="text-sm font-medium">Suggested Transactions</h3>
+          <Badge variant="secondary" className="text-xs">
+            {suggestions.length}
+          </Badge>
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          These transactions may match this file based on amount, date, and partner.
+        </p>
+
+        <div className="space-y-2">
+          {suggestions.map((suggestion) => (
+            <SuggestionRow
+              key={suggestion.transactionId}
+              suggestion={suggestion}
+              onAccept={() => handleAccept(suggestion)}
+              onDismiss={() => handleDismiss(suggestion.transactionId)}
+              disabled={processingId === suggestion.transactionId}
+            />
+          ))}
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }

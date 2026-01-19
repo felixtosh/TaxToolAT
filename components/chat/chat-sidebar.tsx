@@ -11,6 +11,7 @@ import { MessageBubble } from "./message-bubble";
 import { ConfirmationCard } from "./confirmation-card";
 import { ChatTabs } from "./chat-tabs";
 import { NotificationsList } from "./notifications-list";
+import { OnboardingSidebar } from "@/components/onboarding";
 
 const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 600;
@@ -29,6 +30,7 @@ export function ChatSidebar() {
     activeTab,
     setActiveTab,
     notifications,
+    sidebarMode,
   } = useChat();
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -151,76 +153,83 @@ export function ChatSidebar() {
         onClick={handleSidebarClick}
       >
         <div className="flex h-full flex-col flex-1 overflow-hidden">
-          {/* Header with Tabs */}
-          <ChatTabs
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-            onNewChat={startNewSession}
-            onClose={toggleSidebar}
-          />
-
-          {/* Content based on active tab */}
-          {activeTab === "notifications" ? (
-            <NotificationsList
-              notifications={notifications}
-              onStartNewConversation={() => {
-                setActiveTab("chat");
-                startNewSession();
-              }}
-            />
+          {/* Show onboarding sidebar or regular chat/notifications */}
+          {sidebarMode === "onboarding" ? (
+            <OnboardingSidebar />
           ) : (
             <>
-              {/* Messages */}
-              <ScrollArea className="flex-1 p-4" ref={scrollRef}>
-                <div className="space-y-4">
-                  {messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
-                      <MessageSquare className="mb-4 h-12 w-12 opacity-20" />
-                      <p className="text-sm">Start a conversation with your AI tax assistant.</p>
-                      <p className="mt-2 text-xs">
-                        Try: "Show me my recent transactions" or "Categorize all Amazon purchases"
-                      </p>
+              {/* Header with Tabs */}
+              <ChatTabs
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
+                onNewChat={startNewSession}
+                onClose={toggleSidebar}
+              />
+
+              {/* Content based on active tab */}
+              {activeTab === "notifications" ? (
+                <NotificationsList
+                  notifications={notifications}
+                  onStartNewConversation={() => {
+                    setActiveTab("chat");
+                    startNewSession();
+                  }}
+                />
+              ) : (
+                <>
+                  {/* Messages */}
+                  <ScrollArea className="flex-1 p-4" ref={scrollRef}>
+                    <div className="space-y-4">
+                      {messages.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
+                          <MessageSquare className="mb-4 h-12 w-12 opacity-20" />
+                          <p className="text-sm">Start a conversation with your AI tax assistant.</p>
+                          <p className="mt-2 text-xs">
+                            Try: "Show me my recent transactions" or "Categorize all Amazon purchases"
+                          </p>
+                        </div>
+                      ) : (
+                        messages.map((message) => (
+                          <MessageBubble key={message.id} message={message} />
+                        ))
+                      )}
+
+                      {/* Pending confirmations */}
+                      {pendingConfirmations
+                        .filter((tc) => tc.status === "pending")
+                        .map((toolCall) => (
+                          <ConfirmationCard key={toolCall.id} toolCall={toolCall} />
+                        ))}
+
+                      {/* Loading indicator */}
+                      {isLoading && (
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span className="text-sm">Thinking...</span>
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    messages.map((message) => (
-                      <MessageBubble key={message.id} message={message} />
-                    ))
-                  )}
+                  </ScrollArea>
 
-                  {/* Pending confirmations */}
-                  {pendingConfirmations
-                    .filter((tc) => tc.status === "pending")
-                    .map((toolCall) => (
-                      <ConfirmationCard key={toolCall.id} toolCall={toolCall} />
-                    ))}
-
-                  {/* Loading indicator */}
-                  {isLoading && (
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span className="text-sm">Thinking...</span>
-                    </div>
-                  )}
-                </div>
-              </ScrollArea>
-
-              {/* Input */}
-              <div className="border-t p-4">
-                <form ref={formRef} onSubmit={handleSubmit} className="flex gap-2">
-                  <Input
-                    ref={inputRef}
-                    placeholder={isLoading ? "Waiting for response..." : "Ask about your transactions..."}
-                    className="flex-1"
-                  />
-                  <Button type="submit" size="icon" disabled={isLoading}>
-                    {isLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Send className="h-4 w-4" />
-                    )}
-                  </Button>
-                </form>
-              </div>
+                  {/* Input */}
+                  <div className="border-t p-4">
+                    <form ref={formRef} onSubmit={handleSubmit} className="flex gap-2">
+                      <Input
+                        ref={inputRef}
+                        placeholder={isLoading ? "Waiting for response..." : "Ask about your transactions..."}
+                        className="flex-1"
+                      />
+                      <Button type="submit" size="icon" disabled={isLoading}>
+                        {isLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </form>
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>

@@ -8,11 +8,12 @@ import {
   OperationsContext,
   updateTransaction as updateTransactionOp,
 } from "@/lib/operations";
+import { useAuth } from "@/components/auth";
 
 const TRANSACTIONS_COLLECTION = "transactions";
-const MOCK_USER_ID = "dev-user-123"; // Mock user for development
 
 export function useTransactions() {
+  const { userId } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -21,18 +22,24 @@ export function useTransactions() {
   const ctx: OperationsContext = useMemo(
     () => ({
       db,
-      userId: MOCK_USER_ID,
+      userId: userId ?? "",
     }),
-    []
+    [userId]
   );
 
   // Realtime listener for transactions - this stays in the hook
   useEffect(() => {
+    if (!userId) {
+      setTransactions([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
     const q = query(
       collection(db, TRANSACTIONS_COLLECTION),
-      where("userId", "==", MOCK_USER_ID),
+      where("userId", "==", userId),
       orderBy("date", "desc")
     );
 
@@ -58,7 +65,7 @@ export function useTransactions() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   // Mutations now call the operations layer
   const updateTransaction = useCallback(

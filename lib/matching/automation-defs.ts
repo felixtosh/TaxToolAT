@@ -223,6 +223,21 @@ export const FILE_MATCHING_AUTOMATIONS: AutomationStep[] = [
     category: "search",
   },
   {
+    id: "file-browser-search",
+    name: "Browser Invoice Collection",
+    shortDescription: "Collect invoices from partner websites",
+    longDescription:
+      "Uses the browser extension to automatically collect invoices from partner websites. " +
+      "When a partner has configured invoice sources (e.g., Amazon order history, utility company portals), " +
+      "the extension can navigate to those sites and download invoice PDFs automatically.",
+    icon: "Globe",
+    integrationId: "browser",
+    affectedFields: ["fileIds"],
+    order: 3,
+    trigger: "if_integration",
+    category: "search",
+  },
+  {
     id: "category-partner-match",
     name: "No-Receipt: Partner Match",
     shortDescription: "Match by previously categorized partner",
@@ -237,7 +252,7 @@ export const FILE_MATCHING_AUTOMATIONS: AutomationStep[] = [
       max: CATEGORY_MATCH_CONFIG.PARTNER_MATCH_CONFIDENCE,
       unit: "percent"
     },
-    order: 3,
+    order: 4,
     trigger: "if_no_match", // Only runs if no file was matched
     category: "matching",
   },
@@ -256,7 +271,7 @@ export const FILE_MATCHING_AUTOMATIONS: AutomationStep[] = [
       max: 100,
       unit: "percent"
     },
-    order: 4,
+    order: 5,
     trigger: "if_no_match", // Only runs if no file was matched
     category: "matching",
   },

@@ -38,6 +38,7 @@ interface FileSourcePattern {
   sourceType: "local" | "gmail";
   pattern: string;
   integrationId?: string;
+  resultType?: "local_file" | "gmail_attachment" | "gmail_html_invoice" | "gmail_invoice_link";
   confidence: number;
   usageCount: number;
   sourceTransactionIds: string[];

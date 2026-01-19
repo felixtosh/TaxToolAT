@@ -134,5 +134,3 @@ export function getStorageEmulatorHost(): string | null {
   }
   return null;
 }
-
-export const MOCK_USER_ID = "dev-user-123";

@@ -3,7 +3,8 @@ import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
 
 export const TEST_SOURCE_ID = "test-source-dev";
-export const MOCK_USER_ID = "dev-user-123";
+// Default user ID for test data (will be replaced with actual user ID when called)
+export const DEFAULT_TEST_USER_ID = "dev-user-123";
 
 const TEST_SOURCE_IBAN = "DE89370400440532013000";
 
@@ -23,7 +24,7 @@ export function generateTestSource(): Omit<TransactionSource, "createdAt" | "upd
     type: "csv",
     currency: "EUR",
     isActive: true,
-    userId: MOCK_USER_ID,
+    userId: DEFAULT_TEST_USER_ID,
     createdAt: now,
     updatedAt: now,
   };
@@ -188,7 +189,7 @@ export async function generateTestTransactions(): Promise<
       partnerMatchConfidence: null,
       partnerSuggestions: [],
       importJobId: "test-import",
-      userId: MOCK_USER_ID,
+      userId: DEFAULT_TEST_USER_ID,
       createdAt: now,
       updatedAt: now,
     });
@@ -241,7 +242,7 @@ export async function generateTestTransactions(): Promise<
       partnerMatchConfidence: null,
       partnerSuggestions: [],
       importJobId: "test-import-edge",
-      userId: MOCK_USER_ID,
+      userId: DEFAULT_TEST_USER_ID,
       createdAt: now,
       updatedAt: now,
     });

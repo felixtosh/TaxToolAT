@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { doc, setDoc, updateDoc, Timestamp } from "firebase/firestore";
-import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import {
   createEmailIntegration,
   getEmailIntegrationByEmail,
@@ -112,7 +113,14 @@ export async function GET(request: NextRequest) {
 
     // Calculate token expiry
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
-    const ctx = { db, userId: MOCK_USER_ID };
+    // Note: OAuth callback doesn't have auth header - get userId from cookie set during auth start
+    // Fall back to dev user only in development mode
+    const cookieUserId = request.cookies.get("gmail_oauth_user_id")?.value;
+    const userId = cookieUserId || (process.env.NODE_ENV === "development" ? "dev-user-123" : "");
+    if (!userId) {
+      return redirectWithParams(request, "/integrations", { error: "no_user_id" });
+    }
+    const ctx = { db, userId };
 
     // Check if email is already connected (active)
     const existing = await getEmailIntegrationByEmail(ctx, userInfo.email);
@@ -122,7 +130,8 @@ export async function GET(request: NextRequest) {
         existing.id,
         tokens.access_token,
         tokens.refresh_token || "",
-        expiresAt
+        expiresAt,
+        userId
       );
 
       // Update token expiry on integration
@@ -142,7 +151,8 @@ export async function GET(request: NextRequest) {
         disconnected.id,
         tokens.access_token,
         tokens.refresh_token || "",
-        expiresAt
+        expiresAt,
+        userId
       );
 
       await reconnectEmailIntegration(ctx, disconnected.id, expiresAt);
@@ -172,7 +182,8 @@ export async function GET(request: NextRequest) {
       integrationId,
       tokens.access_token,
       tokens.refresh_token || "",
-      expiresAt
+      expiresAt,
+      userId
     );
 
     // Add email to user's own emails
@@ -197,12 +208,13 @@ async function storeTokens(
   integrationId: string,
   accessToken: string,
   refreshToken: string,
-  expiresAt: Date
+  expiresAt: Date,
+  userId: string
 ): Promise<void> {
   const tokenDoc = doc(db, TOKENS_COLLECTION, integrationId);
   await setDoc(tokenDoc, {
     integrationId,
-    userId: MOCK_USER_ID,
+    userId,
     provider: "gmail",
     accessToken,
     refreshToken,

@@ -69,12 +69,14 @@ export async function createCategory(ctx: OperationsContext, data: CategoryData)
 ```typescript
 // /hooks/use-categories.ts
 import { listCategories, createCategory } from "@/lib/operations";
+import { useAuth } from "@/components/auth";
 
 export function useCategories() {
-  const ctx = useMemo(() => ({ db, userId: MOCK_USER_ID }), []);
+  const { userId } = useAuth();
+  const ctx = useMemo(() => ({ db, userId: userId ?? "" }), [userId]);
 
   // Realtime listener stays in hook
-  useEffect(() => { onSnapshot(...) }, []);
+  useEffect(() => { onSnapshot(...) }, [userId]);
 
   // Mutations call operations layer
   const addCategory = useCallback((data) => createCategory(ctx, data), [ctx]);
@@ -130,5 +132,14 @@ When modifying transaction-related types, also update the test data generator:
 
 ## Data Storage
 - Firebase Firestore for data persistence
-- Collections: `sources`, `transactions`, `receipts`
-- Mock user ID: `dev-user-123`
+- Collections: `sources`, `transactions`, `receipts`, `files`, `partners`, `emailIntegrations`
+- User authentication via Firebase Auth (email/password + Google Sign-In)
+- User ID obtained from `useAuth()` hook in client components or `getServerUserIdWithFallback()` in API routes
+
+## Authentication
+- Firebase Auth with email/password and Google Sign-In
+- Invite-only registration (admin must add email to `allowedEmails` collection)
+- Admin system uses Firebase custom claims (`admin: true`)
+- Super admin: `felix@i7v6.com` (hardcoded, auto-granted admin on first login)
+- Auth context provided by `AuthProvider` in `/components/auth/`
+- Protected routes use `ProtectedRoute` component

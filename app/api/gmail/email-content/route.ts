@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { doc, getDoc } from "firebase/firestore";
-import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import { getEmailIntegration, markIntegrationAccessed, markIntegrationNeedsReauth } from "@/lib/operations";
 import { GmailClient } from "@/lib/email-providers/gmail-client";
 
@@ -23,6 +24,7 @@ const TOKENS_COLLECTION = "emailTokens";
  */
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
     const { integrationId, messageId } = body;
 
@@ -40,7 +42,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
 
     // Verify integration exists and belongs to user
     const integration = await getEmailIntegration(ctx, integrationId);

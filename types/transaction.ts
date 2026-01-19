@@ -173,6 +173,9 @@ export interface TransactionFilters {
   /** Filter by matched partner ID */
   partnerId?: string;
 
+  /** Filter by multiple partner IDs */
+  partnerIds?: string[];
+
   /** Filter by partner match status */
   hasPartner?: boolean;
 }

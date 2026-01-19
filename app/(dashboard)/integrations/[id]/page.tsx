@@ -313,7 +313,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
             <Button
               variant="default"
               size="sm"
-              onClick={handleRefresh}
+              onClick={() => handleRefresh()}
               disabled={refreshing}
             >
               {refreshing ? (

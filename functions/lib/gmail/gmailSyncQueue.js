@@ -36,9 +36,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.onSyncQueueCreated = exports.processGmailSyncQueue = void 0;
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const firestore_1 = require("firebase-functions/v2/firestore");
+const params_1 = require("firebase-functions/params");
 const firestore_2 = require("firebase-admin/firestore");
 const storage_1 = require("firebase-admin/storage");
 const crypto = __importStar(require("crypto"));
+// Define secrets for Google OAuth - set via Firebase CLI:
+// firebase functions:secrets:set GOOGLE_CLIENT_ID
+// firebase functions:secrets:set GOOGLE_CLIENT_SECRET
+const googleClientId = (0, params_1.defineSecret)("GOOGLE_CLIENT_ID");
+const googleClientSecret = (0, params_1.defineSecret)("GOOGLE_CLIENT_SECRET");
 const db = (0, firestore_2.getFirestore)();
 const storage = (0, storage_1.getStorage)();
 // ============================================================================
@@ -47,6 +53,7 @@ const storage = (0, storage_1.getStorage)();
 const MAX_EMAILS_PER_BATCH = 50;
 const PROCESSING_TIMEOUT_MS = 270000; // 4.5 minutes (leave buffer for 5 min function timeout)
 const REQUEST_DELAY_MS = 200; // 1000 / GMAIL_REQUESTS_PER_SECOND
+const PAUSE_CHECK_INTERVAL = 5;
 // Invoice search keywords
 const INVOICE_KEYWORDS = [
     // German
@@ -128,6 +135,63 @@ function extractAttachments(message) {
 async function sha256(data) {
     return crypto.createHash("sha256").update(data).digest("hex");
 }
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+/**
+ * Refresh access token using refresh token
+ * Returns new token data or null if refresh fails
+ *
+ * @param integrationId - The integration to refresh
+ * @param refreshToken - The refresh token
+ * @param clientId - Google OAuth Client ID (from secret)
+ * @param clientSecret - Google OAuth Client Secret (from secret)
+ */
+async function refreshAccessToken(integrationId, refreshToken, clientId, clientSecret) {
+    if (!refreshToken) {
+        console.log("[GmailSync] No refresh token available");
+        return null;
+    }
+    if (!clientId || !clientSecret) {
+        console.error("[GmailSync] Google OAuth credentials not configured in Cloud Functions");
+        return null;
+    }
+    try {
+        const response = await fetch(GOOGLE_TOKEN_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                client_id: clientId,
+                client_secret: clientSecret,
+                refresh_token: refreshToken,
+                grant_type: "refresh_token",
+            }),
+        });
+        if (!response.ok) {
+            const errorData = await response.text();
+            console.error("[GmailSync] Token refresh failed:", errorData);
+            return null;
+        }
+        const tokens = await response.json();
+        const expiresAt = firestore_2.Timestamp.fromDate(new Date(Date.now() + tokens.expires_in * 1000));
+        // Update stored tokens
+        await db.collection("emailTokens").doc(integrationId).update({
+            accessToken: tokens.access_token,
+            expiresAt,
+            updatedAt: firestore_2.Timestamp.now(),
+        });
+        // Update integration
+        await db.collection("emailIntegrations").doc(integrationId).update({
+            tokenExpiresAt: expiresAt,
+            needsReauth: false,
+            lastError: null,
+            updatedAt: firestore_2.Timestamp.now(),
+        });
+        return { accessToken: tokens.access_token, expiresAt };
+    }
+    catch (error) {
+        console.error("[GmailSync] Token refresh error:", error);
+        return null;
+    }
+}
 // ============================================================================
 // Gmail API Client
 // ============================================================================
@@ -190,30 +254,40 @@ class GmailApiClient {
         return Buffer.from(base64, "base64");
     }
 }
-// ============================================================================
-// Queue Processor
-// ============================================================================
-async function processQueueItem(queueItem) {
+async function processQueueItem(queueItem, options) {
     const startTime = Date.now();
     console.log(`[GmailSync] Processing queue item ${queueItem.id} (${queueItem.type})`);
     // Get integration email for storing on files
     const integrationDoc = await db.collection("emailIntegrations").doc(queueItem.integrationId).get();
-    const integrationEmail = integrationDoc.exists ? integrationDoc.data()?.email : undefined;
+    const integrationData = integrationDoc.data();
+    const integrationEmail = integrationDoc.exists ? integrationData?.email : undefined;
+    const integrationPaused = Boolean(integrationData?.isPaused);
     // Get access token
     const tokenDoc = await db.collection("emailTokens").doc(queueItem.integrationId).get();
     if (!tokenDoc.exists) {
         throw new Error("Email token not found");
     }
-    const tokenData = tokenDoc.data();
-    // Check if token is expired
-    if (tokenData.expiresAt.toDate() < new Date()) {
-        // Mark integration as needing reauth
-        await db.collection("emailIntegrations").doc(queueItem.integrationId).update({
-            needsReauth: true,
-            lastError: "Access token expired",
-            updatedAt: firestore_2.Timestamp.now(),
-        });
-        throw new Error("Access token expired - needs re-authentication");
+    let tokenData = tokenDoc.data();
+    // Check if token is expired or about to expire (within 5 minutes)
+    const tokenExpiresAt = tokenData.expiresAt.toDate();
+    const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
+    if (tokenExpiresAt < fiveMinutesFromNow) {
+        console.log(`[GmailSync] Token expired or expiring soon, attempting refresh...`);
+        // Try to refresh the token using secrets
+        const refreshedToken = await refreshAccessToken(queueItem.integrationId, tokenData.refreshToken, options.clientId, options.clientSecret);
+        if (refreshedToken) {
+            console.log(`[GmailSync] Token refreshed successfully`);
+            tokenData = { ...tokenData, accessToken: refreshedToken.accessToken, expiresAt: refreshedToken.expiresAt };
+        }
+        else {
+            // Refresh failed - mark integration as needing reauth
+            await db.collection("emailIntegrations").doc(queueItem.integrationId).update({
+                needsReauth: true,
+                lastError: "Access token expired and refresh failed",
+                updatedAt: firestore_2.Timestamp.now(),
+            });
+            throw new Error("Access token expired and refresh failed - needs re-authentication");
+        }
     }
     const client = new GmailApiClient(tokenData.accessToken);
     const dateFrom = queueItem.dateFrom.toDate();
@@ -228,16 +302,53 @@ async function processQueueItem(queueItem) {
     let processedAttachments = 0;
     let timedOut = false;
     const processedMessageIds = new Set(queueItem.processedMessageIds || []);
+    const markPausedAndExit = async () => {
+        await db.collection("gmailSyncQueue").doc(queueItem.id).update({
+            status: "paused",
+            emailsProcessed,
+            filesCreated,
+            attachmentsSkipped,
+            errors,
+            nextPageToken: nextPageToken || null,
+            processedMessageIds: Array.from(processedMessageIds),
+            completedAt: firestore_2.Timestamp.now(),
+        });
+        console.log(`[GmailSync] Paused queue item ${queueItem.id}`);
+    };
+    const isPauseRequested = async () => {
+        const [queueSnap, latestIntegrationSnap] = await Promise.all([
+            db.collection("gmailSyncQueue").doc(queueItem.id).get(),
+            db.collection("emailIntegrations").doc(queueItem.integrationId).get(),
+        ]);
+        const queueStatus = queueSnap.exists ? queueSnap.data()?.status : null;
+        const latestIntegrationPaused = latestIntegrationSnap.exists
+            ? Boolean(latestIntegrationSnap.data()?.isPaused)
+            : false;
+        return queueStatus === "paused" || latestIntegrationPaused;
+    };
     try {
+        if (integrationPaused || await isPauseRequested()) {
+            await markPausedAndExit();
+            return;
+        }
         // Search for messages
         const searchResult = await client.searchMessages(query, nextPageToken);
         const messageIds = searchResult.messages;
         nextPageToken = searchResult.nextPageToken;
         console.log(`[GmailSync] Found ${messageIds.length} messages, nextPageToken: ${nextPageToken ? "yes" : "no"}`);
+        let pauseChecks = 0;
         for (const { id: messageId } of messageIds) {
             // Skip already processed messages (from previous runs)
             if (processedMessageIds.has(messageId)) {
                 continue;
+            }
+            pauseChecks++;
+            if (pauseChecks >= PAUSE_CHECK_INTERVAL) {
+                pauseChecks = 0;
+                if (await isPauseRequested()) {
+                    await markPausedAndExit();
+                    return;
+                }
             }
             // Check timeout - this is the only batch limiter now
             if (Date.now() - startTime > PROCESSING_TIMEOUT_MS) {
@@ -380,6 +491,10 @@ async function processQueueItem(queueItem) {
                 console.error(`[GmailSync] ${errorMsg}`);
                 errors.push(errorMsg);
             }
+        }
+        if (await isPauseRequested()) {
+            await markPausedAndExit();
+            return;
         }
         // Determine if we need to continue processing
         // Continue if there are more pages OR if we timed out before finishing current batch
@@ -584,6 +699,7 @@ exports.processGmailSyncQueue = (0, scheduler_1.onSchedule)({
     region: "europe-west1",
     memory: "1GiB",
     timeoutSeconds: 300,
+    secrets: [googleClientId, googleClientSecret],
 }, async () => {
     console.log("[GmailSync] Starting queue processor...");
     // Get oldest pending queue item
@@ -599,13 +715,26 @@ exports.processGmailSyncQueue = (0, scheduler_1.onSchedule)({
     }
     const queueDoc = pendingSnapshot.docs[0];
     const queueItem = { id: queueDoc.id, ...queueDoc.data() };
+    const integrationDoc = await db.collection("emailIntegrations").doc(queueItem.integrationId).get();
+    const integrationPaused = Boolean(integrationDoc.data()?.isPaused);
+    if (integrationPaused) {
+        await queueDoc.ref.update({
+            status: "paused",
+            completedAt: firestore_2.Timestamp.now(),
+        });
+        console.log(`[GmailSync] Integration ${queueItem.integrationId} is paused, skipping queue item ${queueItem.id}`);
+        return;
+    }
     // Mark as processing
     await queueDoc.ref.update({
         status: "processing",
         startedAt: firestore_2.Timestamp.now(),
     });
     try {
-        await processQueueItem(queueItem);
+        await processQueueItem(queueItem, {
+            clientId: googleClientId.value(),
+            clientSecret: googleClientSecret.value(),
+        });
     }
     catch (error) {
         console.error("[GmailSync] Queue processor error:", error);
@@ -623,6 +752,7 @@ exports.onSyncQueueCreated = (0, firestore_1.onDocumentCreated)({
     region: "europe-west1",
     memory: "1GiB",
     timeoutSeconds: 300,
+    secrets: [googleClientId, googleClientSecret],
 }, async (event) => {
     const data = event.data?.data();
     if (!data)
@@ -633,13 +763,26 @@ exports.onSyncQueueCreated = (0, firestore_1.onDocumentCreated)({
         return;
     }
     const queueItem = { id: event.params.queueId, ...data };
+    const integrationDoc = await db.collection("emailIntegrations").doc(queueItem.integrationId).get();
+    const integrationPaused = Boolean(integrationDoc.data()?.isPaused);
+    if (integrationPaused) {
+        await event.data?.ref.update({
+            status: "paused",
+            completedAt: firestore_2.Timestamp.now(),
+        });
+        console.log(`[GmailSync] Integration ${queueItem.integrationId} is paused, skipping queue item ${queueItem.id}`);
+        return;
+    }
     // Mark as processing
     await event.data?.ref.update({
         status: "processing",
         startedAt: firestore_2.Timestamp.now(),
     });
     try {
-        await processQueueItem(queueItem);
+        await processQueueItem(queueItem, {
+            clientId: googleClientId.value(),
+            clientSecret: googleClientSecret.value(),
+        });
     }
     catch (error) {
         console.error("[GmailSync] Immediate processing error:", error);

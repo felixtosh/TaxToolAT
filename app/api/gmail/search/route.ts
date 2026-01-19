@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { doc, getDoc } from "firebase/firestore";
-import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import { getEmailIntegration, markIntegrationAccessed, markIntegrationNeedsReauth } from "@/lib/operations";
 import { GmailClient } from "@/lib/email-providers/gmail-client";
 
@@ -57,7 +58,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const userId = await getServerUserIdWithFallback(request);
+    const ctx = { db, userId };
 
     // Verify integration exists and belongs to user
     const integration = await getEmailIntegration(ctx, integrationId);
@@ -129,30 +131,12 @@ export async function POST(request: NextRequest) {
     // Update last accessed time
     await markIntegrationAccessed(ctx, integrationId);
 
-    const messageSummaries = result.messages.map((msg) => ({
-      messageId: msg.messageId,
-      threadId: msg.threadId,
-      subject: msg.subject,
-      attachmentCount: msg.attachments.length,
-      attachments: msg.attachments.map((attachment) => ({
-        filename: attachment.filename,
-        mimeType: attachment.mimeType,
-        size: attachment.size,
-      })),
-    }));
-
     console.log("[Gmail Search] Response", {
       integrationId,
       messageCount: result.messages.length,
       totalEstimate: result.totalEstimate,
       nextPageToken: result.nextPageToken,
-      messages: messageSummaries,
     });
-
-    console.log(
-      "[Gmail Search] Response details",
-      JSON.stringify({ integrationId, messages: messageSummaries }, null, 2)
-    );
 
     return NextResponse.json({
       success: true,

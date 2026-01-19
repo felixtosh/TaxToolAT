@@ -2,25 +2,66 @@
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { X, Building2, Globe, CreditCard, FileText, Pencil, Trash2, ExternalLink, Receipt, Sparkles, ChevronRight, Ban, Mail, File, UserCheck, Loader2, Check, AlertCircle } from "lucide-react";
+import {
+  X,
+  Building2,
+  Globe,
+  CreditCard,
+  FileText,
+  Pencil,
+  Trash2,
+  ExternalLink,
+  Receipt,
+  ChevronRight,
+  ChevronDown,
+  Ban,
+  Mail,
+  File,
+  UserCheck,
+  Loader2,
+  Check,
+  AlertCircle,
+  Zap,
+  Hash,
+  MapPin,
+  StickyNote,
+  Link as LinkIcon,
+} from "lucide-react";
 import { UserPartner, PartnerFormData } from "@/types/partner";
 import { Transaction } from "@/types/transaction";
 import { TaxFile } from "@/types/file";
 import { usePartners } from "@/hooks/use-partners";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
 import { formatIban } from "@/lib/import/deduplication";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, ReactNode } from "react";
 import { AddPartnerDialog } from "./add-partner-dialog";
-import { EmailPatternsSection } from "./email-patterns-section";
-import { collection, query, where, orderBy, limit, getDocs, documentId } from "firebase/firestore";
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+  getDocs,
+  documentId,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { format } from "date-fns";
 import Link from "next/link";
-import { removeEmailPatternFromPartner, mergePartnerIntoUserData, reextractFilesForPartner, unmarkPartnerAsMe } from "@/lib/operations";
+import {
+  removeEmailPatternFromPartner,
+  mergePartnerIntoUserData,
+  reextractFilesForPartner,
+  unmarkPartnerAsMe,
+} from "@/lib/operations";
 import { useUserData } from "@/hooks/use-user-data";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useInvoiceSources } from "@/hooks/use-invoice-sources";
+import { InvoiceSourcesSection } from "./invoice-sources-section";
+import { RuleCard } from "./rule-card";
+// Collapsible components used internally by CollapsibleListSection primitive
+import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { FieldRow, SectionHeader, CollapsibleListSection, ListItem } from "@/components/ui/detail-panel-primitives";
+import { useAuth } from "@/components/auth";
 
 interface PartnerDetailPanelProps {
   partner: UserPartner;
@@ -32,19 +73,24 @@ interface FeedbackMessage {
   text: string;
 }
 
-export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps) {
+// NOTE: SectionHeader, CollapsibleListSection, and ListItem are now imported
+// from @/components/ui/detail-panel-primitives for consistency across all panels
+
+export function PartnerDetailPanel({
+  partner,
+  onClose,
+}: PartnerDetailPanelProps) {
+  const { userId } = useAuth();
   const { updatePartner, deletePartner } = usePartners();
   const { integrations } = useEmailIntegrations();
   const { isPartnerMarkedAsMe } = useUserData();
+  const invoiceSourcesHook = useInvoiceSources({ partnerId: partner.id });
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isMarkingAsMe, setIsMarkingAsMe] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackMessage | null>(null);
 
-  // Check if this partner is marked as "my company"
   const isMarkedAsMe = isPartnerMarkedAsMe(partner.id);
-
-  // Create operations context
-  const ctx = useMemo(() => ({ db, userId: MOCK_USER_ID }), []);
+  const ctx = useMemo(() => ({ db, userId }), [userId]);
 
   const integrationLabels = useMemo(() => {
     const map = new Map<string, string>();
@@ -75,69 +121,35 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
   }, [feedback]);
 
   // Transaction state
-  const [manualTransactions, setManualTransactions] = useState<Transaction[]>([]);
-  const [autoTransactions, setAutoTransactions] = useState<Transaction[]>([]);
-  const [manualRemovalTransactions, setManualRemovalTransactions] = useState<Transaction[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [totalTransactionCount, setTotalTransactionCount] = useState(0);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(true);
 
   // File state
-  const [manualFiles, setManualFiles] = useState<TaxFile[]>([]);
-  const [autoFiles, setAutoFiles] = useState<TaxFile[]>([]);
-  const [manualRemovalFiles, setManualRemovalFiles] = useState<TaxFile[]>([]);
+  const [files, setFiles] = useState<TaxFile[]>([]);
   const [totalFileCount, setTotalFileCount] = useState(0);
   const [isLoadingFiles, setIsLoadingFiles] = useState(true);
 
-  // Fetch connected transactions, separated by match type
+  // Fetch transactions
   useEffect(() => {
     async function fetchTransactions() {
       setIsLoadingTransactions(true);
       try {
-        // Fetch all connected transactions (we need to categorize them)
         const q = query(
           collection(db, "transactions"),
-          where("userId", "==", MOCK_USER_ID),
+          where("userId", "==", userId),
           where("partnerId", "==", partner.id),
           orderBy("date", "desc"),
-          limit(50) // Fetch more to properly categorize
+          limit(10)
         );
         const snapshot = await getDocs(q);
-        const transactions = snapshot.docs.map((doc) => ({
+        const txs = snapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         })) as Transaction[];
 
-        // Separate manual vs auto/suggestion connections
-        const manual = transactions.filter(tx => tx.partnerMatchedBy === "manual");
-        const auto = transactions.filter(tx => tx.partnerMatchedBy !== "manual");
-
-        setManualTransactions(manual.slice(0, 10));
-        setAutoTransactions(auto.slice(0, 10));
-        setTotalTransactionCount(transactions.length);
-
-        // Fetch manual removal transactions (to show date and amount)
-        if (partner.manualRemovals && partner.manualRemovals.length > 0) {
-          const uniqueRemovalIds = [...new Set(partner.manualRemovals.map(r => r.transactionId))];
-          // Firestore 'in' queries are limited to 30 items
-          const batchSize = 30;
-          const removalTransactions: Transaction[] = [];
-
-          for (let i = 0; i < uniqueRemovalIds.length && i < 30; i += batchSize) {
-            const batch = uniqueRemovalIds.slice(i, i + batchSize);
-            const removalQuery = query(
-              collection(db, "transactions"),
-              where("userId", "==", MOCK_USER_ID),
-              where(documentId(), "in", batch)
-            );
-            const removalSnapshot = await getDocs(removalQuery);
-            removalTransactions.push(...removalSnapshot.docs.map((doc) => ({
-              id: doc.id,
-              ...doc.data(),
-            })) as Transaction[]);
-          }
-
-          setManualRemovalTransactions(removalTransactions);
-        }
+        setTransactions(txs);
+        setTotalTransactionCount(snapshot.size);
       } catch (error) {
         console.error("Failed to fetch transactions:", error);
       } finally {
@@ -145,67 +157,85 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
       }
     }
     fetchTransactions();
-  }, [partner.id, partner.manualRemovals]);
+  }, [partner.id, userId]);
 
-  // Fetch connected files, separated by match type
+  // Fetch files - includes files directly matched to partner AND files connected to partner's transactions
   useEffect(() => {
     async function fetchFiles() {
       setIsLoadingFiles(true);
       try {
-        // Fetch all connected files
-        const q = query(
+        // First get transaction IDs for this partner (to find files connected to them)
+        const txIds = transactions.map((tx) => tx.id);
+
+        // Query 1: Files directly matched to this partner
+        const directFilesQuery = query(
           collection(db, "files"),
-          where("userId", "==", MOCK_USER_ID),
+          where("userId", "==", userId),
           where("partnerId", "==", partner.id),
           orderBy("uploadedAt", "desc"),
-          limit(50)
+          limit(10)
         );
-        const snapshot = await getDocs(q);
-        const files = snapshot.docs.map((doc) => ({
+        const directSnapshot = await getDocs(directFilesQuery);
+        const directFiles = directSnapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         })) as TaxFile[];
 
-        // Separate manual vs auto/suggestion connections
-        const manual = files.filter((f) => f.partnerMatchedBy === "manual");
-        const auto = files.filter((f) => f.partnerMatchedBy !== "manual");
-
-        setManualFiles(manual.slice(0, 10));
-        setAutoFiles(auto.slice(0, 10));
-        setTotalFileCount(files.length);
-
-        // Fetch manual file removal files (to show filename)
-        if (partner.manualFileRemovals && partner.manualFileRemovals.length > 0) {
-          const uniqueFileIds = [...new Set(partner.manualFileRemovals.map((r) => r.fileId))];
-          const batchSize = 30;
-          const removalFiles: TaxFile[] = [];
-
-          for (let i = 0; i < uniqueFileIds.length && i < 30; i += batchSize) {
-            const batch = uniqueFileIds.slice(i, i + batchSize);
-            const removalQuery = query(
-              collection(db, "files"),
-              where("userId", "==", MOCK_USER_ID),
-              where(documentId(), "in", batch)
-            );
-            const removalSnapshot = await getDocs(removalQuery);
-            removalFiles.push(
-              ...(removalSnapshot.docs.map((doc) => ({
-                id: doc.id,
-                ...doc.data(),
-              })) as TaxFile[])
-            );
+        // Query 2: Files connected to partner's transactions (if we have transaction IDs)
+        let connectedFiles: TaxFile[] = [];
+        if (txIds.length > 0) {
+          // Firestore array-contains-any supports up to 30 values
+          const txIdBatches = [];
+          for (let i = 0; i < txIds.length; i += 10) {
+            txIdBatches.push(txIds.slice(i, i + 10));
           }
 
-          setManualRemovalFiles(removalFiles);
+          for (const batch of txIdBatches.slice(0, 3)) { // Limit to 3 batches (30 txs)
+            const connectedQuery = query(
+              collection(db, "files"),
+              where("userId", "==", userId),
+              where("transactionIds", "array-contains-any", batch),
+              limit(10)
+            );
+            const connectedSnapshot = await getDocs(connectedQuery);
+            connectedFiles.push(
+              ...connectedSnapshot.docs.map((doc) => ({
+                id: doc.id,
+                ...doc.data(),
+              })) as TaxFile[]
+            );
+          }
         }
+
+        // Merge and dedupe
+        const allFilesMap = new Map<string, TaxFile>();
+        for (const f of [...directFiles, ...connectedFiles]) {
+          if (!allFilesMap.has(f.id)) {
+            allFilesMap.set(f.id, f);
+          }
+        }
+        const allFiles = Array.from(allFilesMap.values())
+          .sort((a, b) => {
+            const aTime = a.uploadedAt?.toMillis?.() || 0;
+            const bTime = b.uploadedAt?.toMillis?.() || 0;
+            return bTime - aTime;
+          })
+          .slice(0, 10);
+
+        setFiles(allFiles);
+        setTotalFileCount(allFilesMap.size);
       } catch (error) {
         console.error("Failed to fetch files:", error);
       } finally {
         setIsLoadingFiles(false);
       }
     }
-    fetchFiles();
-  }, [partner.id, partner.manualFileRemovals]);
+
+    // Wait for transactions to load first
+    if (!isLoadingTransactions) {
+      fetchFiles();
+    }
+  }, [partner.id, transactions, isLoadingTransactions, userId]);
 
   const handleEdit = async (data: PartnerFormData) => {
     await updatePartner(partner.id, data);
@@ -226,48 +256,35 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
     setIsMarkingAsMe(true);
     setFeedback(null);
     try {
-      // 1. Add partner info to user data
       const result = await mergePartnerIntoUserData(ctx, {
         partnerId: partner.id,
         name: partner.name,
         vatId: partner.vatId,
         ibans: partner.ibans,
       });
-
-      // 2. Re-extract all files connected to this partner
-      // This will recalculate counterparties now that we know this partner is "me"
       const reextractResult = await reextractFilesForPartner(ctx, partner.id);
 
-      // Build description of what was added
       const added: string[] = [];
       if (result.aliasAdded) added.push("name");
       if (result.vatIdAdded) added.push("VAT ID");
-      if (result.ibansAdded > 0) added.push(`${result.ibansAdded} IBAN${result.ibansAdded > 1 ? "s" : ""}`);
+      if (result.ibansAdded > 0)
+        added.push(`${result.ibansAdded} IBAN${result.ibansAdded > 1 ? "s" : ""}`);
 
       if (added.length > 0 || reextractResult.queuedCount > 0) {
         const parts: string[] = [];
-        if (added.length > 0) {
-          parts.push(`Added ${added.join(", ")} to your identity.`);
-        }
-        if (reextractResult.queuedCount > 0) {
+        if (added.length > 0) parts.push(`Added ${added.join(", ")} to your identity.`);
+        if (reextractResult.queuedCount > 0)
           parts.push(`Re-extracting ${reextractResult.queuedCount} file${reextractResult.queuedCount > 1 ? "s" : ""}.`);
-        }
-        setFeedback({
-          type: "success",
-          text: parts.join(" "),
-        });
+        setFeedback({ type: "success", text: parts.join(" ") });
       } else {
         setFeedback({
           type: "info",
-          text: "This partner's info is already in your user data. No files to update.",
+          text: "This partner's info is already in your user data.",
         });
       }
     } catch (error) {
       console.error("Failed to mark partner as me:", error);
-      setFeedback({
-        type: "error",
-        text: "Failed to add partner to your identity.",
-      });
+      setFeedback({ type: "error", text: "Failed to add partner to your identity." });
     } finally {
       setIsMarkingAsMe(false);
     }
@@ -278,680 +295,416 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
     setFeedback(null);
     try {
       const removed = await unmarkPartnerAsMe(ctx, partner.id);
-      if (removed) {
-        setFeedback({
-          type: "success",
-          text: "Removed from your companies.",
-        });
-      }
+      if (removed) setFeedback({ type: "success", text: "Removed from your companies." });
     } catch (error) {
       console.error("Failed to unmark partner:", error);
-      setFeedback({
-        type: "error",
-        text: "Failed to remove from your companies.",
-      });
+      setFeedback({ type: "error", text: "Failed to remove from your companies." });
     } finally {
       setIsMarkingAsMe(false);
     }
   };
 
+  // Check if we have any matching rules to show
+  const hasMatchingRules =
+    partner.ibans.length > 0 ||
+    partner.vatId ||
+    partner.website ||
+    partner.learnedPatterns?.length ||
+    partner.aliases.some((a) => a.includes("*")) ||
+    partner.emailDomains?.length ||
+    gmailFilePatterns.length > 0;
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-        <div className="flex flex-col min-w-0">
-          <div className="flex items-center gap-2">
-            <Building2 className="h-5 w-5 text-muted-foreground flex-shrink-0" />
-            <h2 className="font-semibold truncate">{partner.name}</h2>
+      <div className="flex items-center justify-between px-4 py-3 border-b">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <Building2 className="h-5 w-5 text-primary" />
           </div>
-          {isMarkedAsMe && (
-            <span className="text-xs text-primary ml-7">My Company</span>
-          )}
+          <div className="min-w-0">
+            <h2 className="font-semibold truncate">{partner.name}</h2>
+            {isMarkedAsMe && (
+              <span className="text-xs text-primary">My Company</span>
+            )}
+            {partner.globalPartnerId && !isMarkedAsMe && (
+              <span className="text-xs text-muted-foreground">
+                Global Partner
+              </span>
+            )}
+          </div>
         </div>
-        <Button variant="ghost" size="icon" onClick={onClose} className="flex-shrink-0">
+        <Button variant="ghost" size="icon" onClick={onClose}>
           <X className="h-4 w-4" />
         </Button>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-4 space-y-6">
-        {/* Aliases */}
-        {partner.aliases.length > 0 && (
-          <div>
-            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-              Also known as
-            </h3>
-            <div className="flex flex-wrap gap-1.5">
-              {partner.aliases.map((alias, idx) => (
-                <Badge key={idx} variant="secondary" className="text-xs">
-                  {alias}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* VAT ID */}
-        {partner.vatId && (
-          <div>
-            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-              <FileText className="h-3 w-3 inline mr-1" />
-              VAT ID
-            </h3>
-            <p className="text-sm font-mono">{partner.vatId}</p>
-          </div>
-        )}
-
-        {/* IBANs */}
-        {partner.ibans.length > 0 && (
-          <div>
-            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-              <CreditCard className="h-3 w-3 inline mr-1" />
-              Bank Accounts
-            </h3>
-            <div className="space-y-1">
-              {partner.ibans.map((iban, idx) => (
-                <p key={idx} className="text-sm font-mono">{formatIban(iban)}</p>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Website */}
-        {partner.website && (
-          <div>
-            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-              <Globe className="h-3 w-3 inline mr-1" />
-              Website
-            </h3>
-            <a
-              href={`https://${partner.website}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-primary hover:underline flex items-center gap-1"
-            >
-              {partner.website}
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          </div>
-        )}
-
-        {/* Address */}
-        {partner.address && (
-          <div>
-            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-              Address
-            </h3>
-            <div className="text-sm space-y-0.5">
-              {partner.address.street && (
-                <p className="whitespace-pre-line">{partner.address.street}</p>
-              )}
-              {(partner.address.postalCode || partner.address.city) && (
-                <p>
-                  {[partner.address.postalCode, partner.address.city]
-                    .filter(Boolean)
-                    .join(" ")}
-                </p>
-              )}
-              {partner.address.country && <p>{partner.address.country}</p>}
-            </div>
-          </div>
-        )}
-
-        {/* Notes */}
-        {partner.notes && (
-          <div>
-            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-              Notes
-            </h3>
-            <p className="text-sm text-muted-foreground whitespace-pre-wrap">{partner.notes}</p>
-          </div>
-        )}
-
-        {/* Global Partner Link */}
-        {partner.globalPartnerId && (
-          <div>
-            <Badge variant="outline" className="text-xs">
-              Linked to Global Partner
-            </Badge>
-          </div>
-        )}
-
-        {/* Email Search Patterns */}
-        <EmailPatternsSection
-          partner={partner}
-          onRemovePattern={handleRemoveEmailPattern}
-        />
-
-        {/* Tabbed Interface for Files and Transactions */}
-        <Tabs defaultValue="transactions" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="transactions" className="flex items-center gap-1.5">
-              <Receipt className="h-3.5 w-3.5" />
-              Transactions ({totalTransactionCount})
-            </TabsTrigger>
-            <TabsTrigger value="files" className="flex items-center gap-1.5">
-              <File className="h-3.5 w-3.5" />
-              Files ({totalFileCount})
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Transactions Tab */}
-          <TabsContent value="transactions" className="space-y-4 mt-4">
-            {/* Transaction Matching Criteria */}
-            <div className="p-3 bg-muted/50 rounded-lg space-y-3">
-              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-                <Sparkles className="h-3 w-3" />
-                Transaction Matching Criteria
-              </h3>
-
-              {/* IBANs for matching */}
-              {partner.ibans.length > 0 && (
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    <CreditCard className="h-3 w-3 inline mr-1" />
-                    IBAN Match <Badge variant="secondary" className="text-[10px] ml-1">100%</Badge>
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {partner.ibans.map((iban, idx) => (
-                      <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
-                        {formatIban(iban)}
-                      </code>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Website for matching */}
-              {partner.website && (
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    <Globe className="h-3 w-3 inline mr-1" />
-                    Website Match <Badge variant="secondary" className="text-[10px] ml-1">90%</Badge>
-                  </div>
-                  <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
-                    *{partner.website}*
-                  </code>
-                </div>
-              )}
-
-              {/* Glob patterns in aliases */}
-              {partner.aliases.some(a => a.includes("*")) && (
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    Manual Patterns <Badge variant="secondary" className="text-[10px] ml-1">90%</Badge>
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {partner.aliases.filter(a => a.includes("*")).map((alias, idx) => (
-                      <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
-                        {alias}
-                      </code>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Learned patterns (globs from manual assignments/removals) */}
-              {partner.learnedPatterns && partner.learnedPatterns.length > 0 && (
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    Learned Globs
-                  </div>
-                  <div className="space-y-1">
-                    {partner.learnedPatterns.map((pattern, idx) => (
-                      <div key={idx} className="flex items-center gap-1.5">
-                        <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono flex-1 truncate">
-                          {pattern.pattern}
-                        </code>
-                        <Badge variant="secondary" className="text-[10px]">
-                          {pattern.confidence}%
-                        </Badge>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Name/Aliases for fuzzy matching */}
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">
-                  Name Match <Badge variant="outline" className="text-[10px] ml-1">60-90%</Badge>
-                </div>
+      <ScrollArea className="flex-1">
+        <div className="p-4 space-y-6">
+          {/* Basic Info Section */}
+          <div className="space-y-1">
+            {partner.aliases.length > 0 && (
+              <FieldRow label="Also known as" icon={<Hash className="h-3 w-3" />}>
                 <div className="flex flex-wrap gap-1">
-                  <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
-                    {partner.name}
-                  </code>
-                  {partner.aliases.filter(a => !a.includes("*")).map((alias, idx) => (
-                    <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
+                  {partner.aliases.filter((a) => !a.includes("*")).map((alias, idx) => (
+                    <Badge key={idx} variant="secondary" className="text-xs">
                       {alias}
+                    </Badge>
+                  ))}
+                </div>
+              </FieldRow>
+            )}
+
+            {partner.vatId && (
+              <FieldRow label="VAT ID" icon={<FileText className="h-3 w-3" />}>
+                <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
+                  {partner.vatId}
+                </code>
+              </FieldRow>
+            )}
+
+            {partner.ibans.length > 0 && (
+              <FieldRow label="Bank" icon={<CreditCard className="h-3 w-3" />}>
+                <div className="space-y-0.5">
+                  {partner.ibans.map((iban, idx) => (
+                    <code key={idx} className="font-mono text-xs block">
+                      {formatIban(iban)}
                     </code>
                   ))}
                 </div>
-              </div>
-            </div>
+              </FieldRow>
+            )}
 
-            {/* Connected Transactions Section */}
-            <div>
-              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                Connected Transactions
-              </h3>
-              {isLoadingTransactions ? (
-                <p className="text-sm text-muted-foreground">Loading...</p>
-              ) : manualTransactions.length === 0 && autoTransactions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No transactions connected yet</p>
-              ) : (
-                <div className="space-y-1">
-                  {/* Manual connections */}
-                  {manualTransactions.length > 0 && (
-                    <>
-                      <p className="text-xs text-muted-foreground font-medium mt-2 mb-1">
-                        Manually connected ({manualTransactions.length})
-                      </p>
-                      {manualTransactions.map((tx) => (
-                        <Link
-                          key={tx.id}
-                          href={`/transactions?id=${tx.id}`}
-                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
+            {partner.website && (
+              <FieldRow label="Website" icon={<Globe className="h-3 w-3" />}>
+                <a
+                  href={`https://${partner.website}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline inline-flex items-center gap-1"
+                >
+                  {partner.website}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </FieldRow>
+            )}
+
+            {partner.address && (
+              <FieldRow label="Address" icon={<MapPin className="h-3 w-3" />}>
+                <div className="space-y-0.5">
+                  {partner.address.street && <p>{partner.address.street}</p>}
+                  {(partner.address.postalCode || partner.address.city) && (
+                    <p>
+                      {[partner.address.postalCode, partner.address.city]
+                        .filter(Boolean)
+                        .join(" ")}
+                    </p>
+                  )}
+                  {partner.address.country && <p>{partner.address.country}</p>}
+                </div>
+              </FieldRow>
+            )}
+
+            {partner.notes && (
+              <FieldRow label="Notes" icon={<StickyNote className="h-3 w-3" />}>
+                <p className="text-muted-foreground whitespace-pre-wrap">
+                  {partner.notes}
+                </p>
+              </FieldRow>
+            )}
+          </div>
+
+          {/* Matching Rules Section */}
+          {hasMatchingRules && (
+            <div className="space-y-3">
+              <SectionHeader>Matching Rules</SectionHeader>
+              <div className="grid gap-2">
+                {/* IBAN Rule */}
+                {partner.ibans.length > 0 && (
+                  <RuleCard
+                    icon={<CreditCard className="h-4 w-4" />}
+                    title="IBAN Match"
+                    confidence={100}
+                    variant="manual"
+                  >
+                    <div className="flex flex-wrap gap-1">
+                      {partner.ibans.map((iban, idx) => (
+                        <code
+                          key={idx}
+                          className="text-xs bg-green-100/50 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono"
                         >
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm truncate">{tx.name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {tx.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
-                              {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
-                            </span>
-                            <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                          </div>
-                        </Link>
+                          {formatIban(iban)}
+                        </code>
                       ))}
-                    </>
-                  )}
+                    </div>
+                  </RuleCard>
+                )}
 
-                  {/* Auto-matched connections */}
-                  {autoTransactions.length > 0 && (
-                    <>
-                      <p className="text-xs text-muted-foreground font-medium mt-3 mb-1 pt-2 border-t">
-                        Auto-matched ({autoTransactions.length})
-                      </p>
-                      {autoTransactions.map((tx) => (
-                        <Link
-                          key={tx.id}
-                          href={`/transactions?id=${tx.id}`}
-                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm truncate">{tx.name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {tx.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
-                              {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
-                            </span>
-                            <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                          </div>
-                        </Link>
-                      ))}
-                    </>
-                  )}
+                {/* VAT ID Rule */}
+                {partner.vatId && (
+                  <RuleCard
+                    icon={<FileText className="h-4 w-4" />}
+                    title="VAT ID Match"
+                    confidence={95}
+                    variant="manual"
+                  >
+                    <code className="text-xs bg-green-100/50 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono">
+                      {partner.vatId}
+                    </code>
+                  </RuleCard>
+                )}
 
-                  {totalTransactionCount > 20 && (
-                    <Link
-                      href={`/transactions?partnerId=${partner.id}`}
-                      className="text-xs text-primary hover:underline block mt-2"
-                    >
-                      View all {totalTransactionCount} transactions
-                    </Link>
-                  )}
-                </div>
-              )}
-            </div>
+                {/* Website Rule */}
+                {partner.website && (
+                  <RuleCard
+                    icon={<Globe className="h-4 w-4" />}
+                    title="Domain Match"
+                    confidence={90}
+                  >
+                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
+                      *{partner.website}*
+                    </code>
+                  </RuleCard>
+                )}
 
-            {/* Manual Removals Section for Transactions */}
-            {partner.manualRemovals && partner.manualRemovals.length > 0 && (() => {
-              const uniqueRemovals = partner.manualRemovals.filter(
-                (removal, index, self) =>
-                  index === self.findIndex((r) => r.transactionId === removal.transactionId)
-              );
-              return (
-                <div>
-                  <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                    <Ban className="h-3 w-3 inline mr-1" />
-                    Manual Removals
-                    <span className="ml-1 text-foreground">({uniqueRemovals.length})</span>
-                  </h3>
-                  <p className="text-xs text-muted-foreground mb-2">
-                    Transactions you removed from this partner. Used to improve pattern learning.
-                  </p>
-                  <div className="space-y-1">
-                    {uniqueRemovals.slice(0, 10).map((removal) => {
-                      const tx = manualRemovalTransactions.find((t) => t.id === removal.transactionId);
-                      const transactionId = tx?.id || removal.transactionId;
-                      return (
-                        <Link
-                          key={transactionId}
-                          href={`/transactions?id=${transactionId}`}
-                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm truncate">{tx?.name || removal.name || removal.partner || "Unknown"}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {tx?.date?.toDate ? format(tx.date.toDate(), "MMM d, yyyy") : ""}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            {tx && (
-                              <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
-                                {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
-                              </span>
-                            )}
-                            <X className="h-4 w-4 text-muted-foreground" />
-                          </div>
-                        </Link>
-                      );
-                    })}
-                    {uniqueRemovals.length > 10 && (
-                      <p className="text-xs text-muted-foreground mt-2">
-                        +{uniqueRemovals.length - 10} more
-                      </p>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
-          </TabsContent>
+                {/* Manual Patterns */}
+                {partner.aliases.some((a) => a.includes("*")) && (
+                  <RuleCard
+                    icon={<Zap className="h-4 w-4" />}
+                    title="Manual Patterns"
+                    confidence={90}
+                    variant="manual"
+                  >
+                    <div className="flex flex-wrap gap-1">
+                      {partner.aliases
+                        .filter((a) => a.includes("*"))
+                        .map((alias, idx) => (
+                          <code
+                            key={idx}
+                            className="text-xs bg-green-100/50 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono"
+                          >
+                            {alias}
+                          </code>
+                        ))}
+                    </div>
+                  </RuleCard>
+                )}
 
-          {/* Files Tab */}
-          <TabsContent value="files" className="space-y-4 mt-4">
-            {/* File Matching Criteria */}
-            <div className="p-3 bg-muted/50 rounded-lg space-y-3">
-              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-                <File className="h-3 w-3" />
-                File Matching Criteria
-              </h3>
-
-              {/* IBANs for matching (extracted from invoices) */}
-              {partner.ibans.length > 0 && (
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    <CreditCard className="h-3 w-3 inline mr-1" />
-                    IBAN Match <Badge variant="secondary" className="text-[10px] ml-1">100%</Badge>
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {partner.ibans.map((iban, idx) => (
-                      <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
-                        {formatIban(iban)}
-                      </code>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* VAT ID for matching */}
-              {partner.vatId && (
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    <FileText className="h-3 w-3 inline mr-1" />
-                    VAT ID Match <Badge variant="secondary" className="text-[10px] ml-1">95%</Badge>
-                  </div>
-                  <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
-                    {partner.vatId}
-                  </code>
-                </div>
-              )}
-
-              {/* Email Domains (learned from Gmail files) */}
-              {partner.emailDomains && partner.emailDomains.length > 0 && (
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    <Mail className="h-3 w-3 inline mr-1" />
-                    Email Domain Match <Badge variant="secondary" className="text-[10px] ml-1">90%</Badge>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground mb-1 italic">
-                    Learned from matched Gmail invoices
-                  </p>
-                  <div className="flex flex-wrap gap-1">
-                    {partner.emailDomains.map((domain, idx) => (
-                      <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
-                        @{domain}
-                      </code>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Gmail search patterns */}
-              {gmailFilePatterns.length > 0 && (
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    <Mail className="h-3 w-3 inline mr-1" />
-                    Gmail Search Patterns <Badge variant="secondary" className="text-[10px] ml-1">{gmailFilePatterns.length}</Badge>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground mb-1 italic">
-                    Learned searches and accounts used to find invoices
-                  </p>
-                  <div className="space-y-1">
-                    {gmailFilePatterns.map((pattern, index) => {
-                      const label = pattern.integrationId
-                        ? integrationLabels.get(pattern.integrationId) || pattern.integrationId
-                        : "Any account";
-
-                      return (
-                        <div key={`${pattern.pattern}-${index}`} className="flex items-center gap-1.5">
-                          <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono flex-1 truncate">
+                {/* Learned Patterns */}
+                {partner.learnedPatterns && partner.learnedPatterns.length > 0 && (
+                  <RuleCard
+                    icon={<Zap className="h-4 w-4" />}
+                    title="Learned Patterns"
+                    variant="learned"
+                  >
+                    <div className="space-y-1">
+                      {partner.learnedPatterns.slice(0, 3).map((pattern, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <code className="text-xs bg-blue-100/50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
                             {pattern.pattern}
                           </code>
-                          <Badge variant="secondary" className="text-[10px]">
-                            {label}
-                          </Badge>
                           <Badge variant="outline" className="text-[10px]">
                             {pattern.confidence}%
                           </Badge>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+                      ))}
+                      {partner.learnedPatterns.length > 3 && (
+                        <p className="text-xs text-muted-foreground">
+                          +{partner.learnedPatterns.length - 3} more
+                        </p>
+                      )}
+                    </div>
+                  </RuleCard>
+                )}
 
-              {/* Website for matching */}
-              {partner.website && (
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    <Globe className="h-3 w-3 inline mr-1" />
-                    Website/Domain Match <Badge variant="secondary" className="text-[10px] ml-1">90%</Badge>
-                  </div>
-                  <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
-                    {partner.website}
-                  </code>
-                </div>
-              )}
+                {/* Email Domains */}
+                {partner.emailDomains && partner.emailDomains.length > 0 && (
+                  <RuleCard
+                    icon={<Mail className="h-4 w-4" />}
+                    title="Email Domains"
+                    confidence={90}
+                    variant="learned"
+                  >
+                    <div className="flex flex-wrap gap-1">
+                      {partner.emailDomains.map((domain, idx) => (
+                        <code
+                          key={idx}
+                          className="text-xs bg-blue-100/50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded font-mono"
+                        >
+                          @{domain}
+                        </code>
+                      ))}
+                    </div>
+                  </RuleCard>
+                )}
 
-              {/* Name/Aliases for fuzzy matching on extractedPartner */}
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">
-                  Extracted Partner Name Match <Badge variant="outline" className="text-[10px] ml-1">60-90%</Badge>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  <code className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
-                    {partner.name}
-                  </code>
-                  {partner.aliases.filter(a => !a.includes("*")).map((alias, idx) => (
-                    <code key={idx} className="text-[10px] bg-background px-1.5 py-0.5 rounded font-mono">
-                      {alias}
+                {/* Gmail Search Patterns */}
+                {gmailFilePatterns.length > 0 && (
+                  <RuleCard
+                    icon={<Mail className="h-4 w-4" />}
+                    title="Gmail Searches"
+                    variant="learned"
+                  >
+                    <div className="space-y-1">
+                      {gmailFilePatterns.slice(0, 2).map((pattern, idx) => (
+                        <div key={idx} className="flex items-center gap-1.5">
+                          <code className="text-xs bg-blue-100/50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
+                            {pattern.pattern}
+                          </code>
+                          <Badge variant="outline" className="text-[10px]">
+                            {pattern.confidence}%
+                          </Badge>
+                        </div>
+                      ))}
+                      {gmailFilePatterns.length > 2 && (
+                        <p className="text-xs text-muted-foreground">
+                          +{gmailFilePatterns.length - 2} more
+                        </p>
+                      )}
+                    </div>
+                  </RuleCard>
+                )}
+
+                {/* Name Match - always shown */}
+                <RuleCard
+                  icon={<Building2 className="h-4 w-4" />}
+                  title="Name Match"
+                  confidence={70}
+                >
+                  <div className="flex flex-wrap gap-1">
+                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                      {partner.name}
                     </code>
-                  ))}
-                </div>
+                    {partner.aliases
+                      .filter((a) => !a.includes("*"))
+                      .slice(0, 2)
+                      .map((alias, idx) => (
+                        <code
+                          key={idx}
+                          className="text-xs bg-muted px-1.5 py-0.5 rounded"
+                        >
+                          {alias}
+                        </code>
+                      ))}
+                  </div>
+                </RuleCard>
               </div>
             </div>
+          )}
 
-            {/* Connected Files Section */}
-            <div>
-              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                Connected Files
-              </h3>
-              {isLoadingFiles ? (
-                <p className="text-sm text-muted-foreground">Loading...</p>
-              ) : manualFiles.length === 0 && autoFiles.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No files connected yet</p>
+          {/* Invoice Sources Section */}
+          <div className="space-y-3">
+            <SectionHeader>Invoice Sources</SectionHeader>
+            <InvoiceSourcesSection
+              partner={partner}
+              onAddSource={invoiceSourcesHook.addSource}
+              onRemoveSource={invoiceSourcesHook.removeSource}
+              onToggleStatus={invoiceSourcesHook.toggleSourceStatus}
+              onFetchNow={invoiceSourcesHook.triggerFetch}
+              onPromoteLink={invoiceSourcesHook.promoteLink}
+              onInferFrequency={invoiceSourcesHook.inferFrequency}
+              isLoading={invoiceSourcesHook.isLoading}
+            />
+          </div>
+
+          {/* Divider */}
+          <div className="border-t" />
+
+          {/* Connected Data - Collapsible */}
+          <div className="space-y-2">
+            <SectionHeader>Connected Data</SectionHeader>
+
+            {/* Transactions */}
+            <CollapsibleListSection
+              title="Transactions"
+              icon={<Receipt className="h-4 w-4" />}
+              count={totalTransactionCount}
+              isLoading={isLoadingTransactions}
+              viewAllLink={`/transactions?partnerIds=${partner.id}`}
+              viewAllLabel={`View all ${totalTransactionCount} transactions`}
+            >
+              {transactions.length === 0 && !isLoadingTransactions ? (
+                <p className="text-sm text-muted-foreground py-2">
+                  No transactions connected
+                </p>
               ) : (
-                <div className="space-y-1">
-                  {/* Manual connections */}
-                  {manualFiles.length > 0 && (
-                    <>
-                      <p className="text-xs text-muted-foreground font-medium mt-2 mb-1">
-                        Manually connected ({manualFiles.length})
-                      </p>
-                      {manualFiles.map((file) => (
-                        <Link
-                          key={file.id}
-                          href={`/files?id=${file.id}`}
-                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm truncate">{file.fileName}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {file.uploadedAt?.toDate ? format(file.uploadedAt.toDate(), "MMM d, yyyy") : ""}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            {file.extractedAmount && (
-                              <span className="text-sm font-medium tabular-nums">
-                                {new Intl.NumberFormat("de-DE", {
-                                  style: "currency",
-                                  currency: file.extractedCurrency || "EUR",
-                                }).format(file.extractedAmount / 100)}
-                              </span>
-                            )}
-                            <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                          </div>
-                        </Link>
-                      ))}
-                    </>
-                  )}
-
-                  {/* Auto-matched files */}
-                  {autoFiles.length > 0 && (
-                    <>
-                      <p className="text-xs text-muted-foreground font-medium mt-3 mb-1 pt-2 border-t">
-                        Auto-matched ({autoFiles.length})
-                      </p>
-                      {autoFiles.map((file) => (
-                        <Link
-                          key={file.id}
-                          href={`/files?id=${file.id}`}
-                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm truncate">{file.fileName}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {file.uploadedAt?.toDate ? format(file.uploadedAt.toDate(), "MMM d, yyyy") : ""}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            {file.extractedAmount && (
-                              <span className="text-sm font-medium tabular-nums">
-                                {new Intl.NumberFormat("de-DE", {
-                                  style: "currency",
-                                  currency: file.extractedCurrency || "EUR",
-                                }).format(file.extractedAmount / 100)}
-                              </span>
-                            )}
-                            <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                          </div>
-                        </Link>
-                      ))}
-                    </>
-                  )}
-
-                  {totalFileCount > 20 && (
-                    <Link
-                      href={`/files?partnerId=${partner.id}`}
-                      className="text-xs text-primary hover:underline block mt-2"
-                    >
-                      View all {totalFileCount} files
-                    </Link>
-                  )}
-                </div>
+                transactions.slice(0, 5).map((tx) => (
+                  <ListItem
+                    key={tx.id}
+                    href={`/transactions?id=${tx.id}`}
+                    title={tx.name}
+                    subtitle={
+                      tx.date?.toDate
+                        ? format(tx.date.toDate(), "MMM d, yyyy")
+                        : ""
+                    }
+                    amount={tx.amount}
+                    currency={tx.currency}
+                    isNegative={tx.amount < 0}
+                  />
+                ))
               )}
-            </div>
+            </CollapsibleListSection>
 
-            {/* Manual File Removals Section */}
-            {partner.manualFileRemovals && partner.manualFileRemovals.length > 0 && (() => {
-              const uniqueRemovals = partner.manualFileRemovals.filter(
-                (removal, index, self) =>
-                  index === self.findIndex((r) => r.fileId === removal.fileId)
-              );
-              return (
-                <div>
-                  <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                    <Ban className="h-3 w-3 inline mr-1" />
-                    Manual Removals
-                    <span className="ml-1 text-foreground">({uniqueRemovals.length})</span>
-                  </h3>
-                  <p className="text-xs text-muted-foreground mb-2">
-                    Files you removed from this partner. Used to improve file matching.
-                  </p>
-                  <div className="space-y-1">
-                    {uniqueRemovals.slice(0, 10).map((removal) => {
-                      const file = manualRemovalFiles.find((f) => f.id === removal.fileId);
-                      return (
-                        <Link
-                          key={removal.fileId}
-                          href={`/files?id=${removal.fileId}`}
-                          className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm truncate">{file?.fileName || removal.fileName || "Unknown file"}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {file?.uploadedAt?.toDate ? format(file.uploadedAt.toDate(), "MMM d, yyyy") : ""}
-                            </p>
-                          </div>
-                          <X className="h-4 w-4 text-muted-foreground" />
-                        </Link>
-                      );
-                    })}
-                    {uniqueRemovals.length > 10 && (
-                      <p className="text-xs text-muted-foreground mt-2">
-                        +{uniqueRemovals.length - 10} more
-                      </p>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
-          </TabsContent>
-        </Tabs>
-      </div>
+            {/* Files */}
+            <CollapsibleListSection
+              title="Files"
+              icon={<File className="h-4 w-4" />}
+              count={totalFileCount}
+              isLoading={isLoadingFiles}
+              viewAllLink={`/files?partnerId=${partner.id}`}
+              viewAllLabel={`View all ${totalFileCount} files`}
+            >
+              {files.length === 0 && !isLoadingFiles ? (
+                <p className="text-sm text-muted-foreground py-2">
+                  No files connected
+                </p>
+              ) : (
+                files.slice(0, 5).map((file) => (
+                  <ListItem
+                    key={file.id}
+                    href={`/files?id=${file.id}`}
+                    title={file.fileName}
+                    subtitle={
+                      file.uploadedAt?.toDate
+                        ? format(file.uploadedAt.toDate(), "MMM d, yyyy")
+                        : ""
+                    }
+                    amount={file.extractedAmount || undefined}
+                    currency={file.extractedCurrency || undefined}
+                    isNegative={false}
+                  />
+                ))
+              )}
+            </CollapsibleListSection>
+          </div>
+        </div>
+      </ScrollArea>
 
       {/* Footer Actions */}
       <div className="p-4 border-t space-y-2">
-        {/* Feedback message */}
         {feedback && (
           <div
-            className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm ${
-              feedback.type === "success"
-                ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300"
-                : feedback.type === "error"
-                ? "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300"
-                : "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-            }`}
+            className={cn(
+              "flex items-center gap-2 px-3 py-2 rounded-md text-sm",
+              feedback.type === "success" &&
+                "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300",
+              feedback.type === "error" &&
+                "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
+              feedback.type === "info" &&
+                "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+            )}
           >
             {feedback.type === "success" ? (
               <Check className="h-4 w-4 flex-shrink-0" />
-            ) : feedback.type === "error" ? (
-              <AlertCircle className="h-4 w-4 flex-shrink-0" />
             ) : (
               <AlertCircle className="h-4 w-4 flex-shrink-0" />
             )}
             <span>{feedback.text}</span>
           </div>
         )}
-        {/* Mark as Me / Unmark button */}
+
         <Button
           variant={isMarkedAsMe ? "secondary" : "outline"}
           className="w-full"
@@ -965,7 +718,7 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
           )}
           {isMarkedAsMe ? "Remove from my companies" : "This is my company"}
         </Button>
-        {/* Edit and Delete buttons */}
+
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -975,14 +728,17 @@ export function PartnerDetailPanel({ partner, onClose }: PartnerDetailPanelProps
             <Trash2 className="h-4 w-4 mr-2" />
             Delete
           </Button>
-          <Button variant="outline" className="flex-1" onClick={() => setIsEditDialogOpen(true)}>
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={() => setIsEditDialogOpen(true)}
+          >
             <Pencil className="h-4 w-4 mr-2" />
             Edit
           </Button>
         </div>
       </div>
 
-      {/* Edit Dialog */}
       <AddPartnerDialog
         open={isEditDialogOpen}
         onClose={() => setIsEditDialogOpen(false)}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import { queuePrecisionSearch } from "@/lib/operations";
 
 const db = getServerDb();
@@ -20,6 +21,7 @@ const db = getServerDb();
  */
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
     const { scope, transactionId } = body;
 
@@ -37,20 +39,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
 
     // Note: We no longer block duplicate searches - the UI handles showing progress
     // and users can re-trigger if needed. The queue processor will handle deduplication.
 
     // Queue the precision search
     const queueId = await queuePrecisionSearch(ctx, {
-      userId: MOCK_USER_ID,
+      userId,
       scope,
       transactionId: scope === "single_transaction" ? transactionId : undefined,
       triggeredBy: "manual",
       triggeredByAuthor: {
         type: "user",
-        userId: MOCK_USER_ID,
+        userId,
       },
     });
 

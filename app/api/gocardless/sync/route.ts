@@ -3,6 +3,7 @@ import { initializeApp, getApps } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { syncTransactions, getSyncStatus, checkReauthRequired } from "@/lib/operations";
 import { ReauthRequiredError, RateLimitError } from "@/lib/gocardless";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -18,8 +19,6 @@ const appName = "gocardless-sync";
 const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
 const db = getFirestore(app);
 
-const MOCK_USER_ID = "dev-user-123";
-
 /**
  * POST /api/gocardless/sync
  * Trigger manual transaction sync for a source
@@ -28,6 +27,7 @@ const MOCK_USER_ID = "dev-user-123";
  */
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
     const { sourceId } = body;
 
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
 
     // Check if re-auth is needed first
     const reauthCheck = await checkReauthRequired(ctx, sourceId);
@@ -99,6 +99,7 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const sourceId = request.nextUrl.searchParams.get("sourceId");
 
     if (!sourceId) {
@@ -108,7 +109,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
     const status = await getSyncStatus(ctx, sourceId);
 
     return NextResponse.json({

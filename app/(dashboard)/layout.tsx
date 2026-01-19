@@ -1,17 +1,23 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User } from "lucide-react";
+import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Mail } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { ChatProvider, ChatSidebar, useChat } from "@/components/chat";
+import { ProtectedRoute, useAuth } from "@/components/auth";
+import { OnboardingOverlay, OnboardingCompletion } from "@/components/onboarding";
+import { useOnboarding } from "@/hooks/use-onboarding";
 
 const navItems = [
   { href: "/transactions", label: "Transactions", icon: Receipt },
@@ -22,9 +28,48 @@ const navItems = [
   { href: "/integrations", label: "Integrations", icon: Link2 },
 ];
 
+/**
+ * Controller component that syncs onboarding state with chat sidebar mode
+ * and renders onboarding-related overlays
+ */
+function OnboardingController() {
+  const { isOnboarding, showCompletion, dismissCompletion } = useOnboarding();
+  const { setSidebarMode, toggleSidebar, isSidebarOpen } = useChat();
+
+  // Sync sidebar mode with onboarding state
+  useEffect(() => {
+    if (isOnboarding) {
+      setSidebarMode("onboarding");
+      // Auto-open sidebar when onboarding
+      if (!isSidebarOpen) {
+        toggleSidebar();
+      }
+    } else {
+      setSidebarMode("chat");
+    }
+  }, [isOnboarding, setSidebarMode, isSidebarOpen, toggleSidebar]);
+
+  // Handle completion dismissal - switch to chat mode
+  const handleDismissCompletion = async () => {
+    await dismissCompletion();
+    setSidebarMode("chat");
+  };
+
+  return (
+    <>
+      <OnboardingOverlay />
+      <OnboardingCompletion
+        open={showCompletion ?? false}
+        onDismiss={handleDismissCompletion}
+      />
+    </>
+  );
+}
+
 function DashboardContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { isSidebarOpen, sidebarWidth } = useChat();
+  const { user, isAdmin, signOut } = useAuth();
 
   return (
     <div
@@ -60,8 +105,8 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
           <div className="flex items-center gap-4">
-            <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
-              Dev Mode
+            <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded truncate max-w-[200px]">
+              {user?.email}
             </span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -69,30 +114,59 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                   <Settings className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Settings</DropdownMenuLabel>
                 <DropdownMenuItem asChild>
-                  <Link href="/admin/user-data" className="flex items-center gap-2">
+                  <Link href="/settings/profile" className="flex items-center gap-2">
                     <User className="h-4 w-4" />
-                    User Data
+                    Profile
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
-                  <Link href="/admin/partners" className="flex items-center gap-2">
-                    <Globe className="h-4 w-4" />
-                    Global Partners
+                  <Link href="/settings/accounts" className="flex items-center gap-2">
+                    <Mail className="h-4 w-4" />
+                    Linked Accounts
                   </Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/admin/usage" className="flex items-center gap-2">
-                    <Activity className="h-4 w-4" />
-                    AI Usage
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/admin/categories" className="flex items-center gap-2">
-                    <Tag className="h-4 w-4" />
-                    No-Receipt Categories
-                  </Link>
+
+                {isAdmin && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Admin</DropdownMenuLabel>
+                    <DropdownMenuItem asChild>
+                      <Link href="/admin/partners" className="flex items-center gap-2">
+                        <Globe className="h-4 w-4" />
+                        Global Partners
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href="/admin/usage" className="flex items-center gap-2">
+                        <Activity className="h-4 w-4" />
+                        AI Usage
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href="/admin/categories" className="flex items-center gap-2">
+                        <Tag className="h-4 w-4" />
+                        No-Receipt Categories
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href="/admin/users" className="flex items-center gap-2">
+                        <UserPlus className="h-4 w-4" />
+                        Manage Users
+                      </Link>
+                    </DropdownMenuItem>
+                  </>
+                )}
+
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => signOut()}
+                  className="flex items-center gap-2 text-destructive focus:text-destructive"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sign Out
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -111,9 +185,12 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <ChatProvider>
-      <ChatSidebar />
-      <DashboardContent>{children}</DashboardContent>
-    </ChatProvider>
+    <ProtectedRoute>
+      <ChatProvider>
+        <OnboardingController />
+        <ChatSidebar />
+        <DashboardContent>{children}</DashboardContent>
+      </ChatProvider>
+    </ProtectedRoute>
   );
 }

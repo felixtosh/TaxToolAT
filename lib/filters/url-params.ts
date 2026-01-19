@@ -13,6 +13,7 @@ interface StoredFilters {
   dateTo?: string; // ISO string
   amountType?: "income" | "expense" | "all";
   sourceId?: string;
+  partnerIds?: string[];
 }
 
 /**
@@ -30,6 +31,9 @@ export function saveFiltersToStorage(
   if (filters.amountType && filters.amountType !== "all")
     stored.amountType = filters.amountType;
   if (filters.sourceId) stored.sourceId = filters.sourceId;
+  if (filters.partnerIds && filters.partnerIds.length > 0) {
+    stored.partnerIds = filters.partnerIds;
+  }
 
   localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(stored));
   localStorage.setItem(SEARCH_STORAGE_KEY, search);
@@ -55,6 +59,9 @@ export function loadFiltersFromStorage(): {
       if (parsed.dateTo) filters.dateTo = new Date(parsed.dateTo);
       if (parsed.amountType) filters.amountType = parsed.amountType;
       if (parsed.sourceId) filters.sourceId = parsed.sourceId;
+      if (parsed.partnerIds && parsed.partnerIds.length > 0) {
+        filters.partnerIds = parsed.partnerIds;
+      }
     }
   } catch {
     // Ignore parse errors
@@ -81,6 +88,9 @@ export function buildSearchParamsString(
   if (filters.amountType && filters.amountType !== "all")
     params.set("amountType", filters.amountType);
   if (filters.sourceId) params.set("sourceId", filters.sourceId);
+  if (filters.partnerIds && filters.partnerIds.length > 0) {
+    params.set("partnerIds", filters.partnerIds.join(","));
+  }
 
   return params.toString();
 }
@@ -96,7 +106,9 @@ export function hasUrlParams(searchParams: URLSearchParams): boolean {
     searchParams.has("dateFrom") ||
     searchParams.has("dateTo") ||
     searchParams.has("amountType") ||
-    searchParams.has("sourceId")
+    searchParams.has("sourceId") ||
+    searchParams.has("partnerId") ||
+    searchParams.has("partnerIds")
   );
 }
 
@@ -129,6 +141,15 @@ export function parseFiltersFromUrl(
   const sourceId = searchParams.get("sourceId");
   if (sourceId) filters.sourceId = sourceId;
 
+  const partnerId = searchParams.get("partnerId");
+  const partnerIds = searchParams.get("partnerIds");
+  if (partnerIds) {
+    filters.partnerIds = partnerIds.split(",").map((id) => id.trim()).filter(Boolean);
+  } else if (partnerId) {
+    filters.partnerIds = [partnerId];
+    filters.partnerId = partnerId;
+  }
+
   return filters;
 }
 
@@ -149,6 +170,9 @@ export function buildFilterUrl(
   if (filters.amountType && filters.amountType !== "all")
     params.set("amountType", filters.amountType);
   if (filters.sourceId) params.set("sourceId", filters.sourceId);
+  if (filters.partnerIds && filters.partnerIds.length > 0) {
+    params.set("partnerIds", filters.partnerIds.join(","));
+  }
 
   const queryString = params.toString();
   return queryString ? `${basePath}?${queryString}` : basePath;
@@ -164,7 +188,8 @@ export function hasActiveFilters(filters: TransactionFilters): boolean {
     filters.dateFrom ||
     filters.dateTo ||
     (filters.amountType && filters.amountType !== "all") ||
-    filters.sourceId
+    filters.sourceId ||
+    (filters.partnerIds && filters.partnerIds.length > 0)
   );
 }
 
@@ -178,5 +203,6 @@ export function countActiveFilters(filters: TransactionFilters): number {
   if (filters.dateFrom || filters.dateTo) count++;
   if (filters.amountType && filters.amountType !== "all") count++;
   if (filters.sourceId) count++;
+  if (filters.partnerIds && filters.partnerIds.length > 0) count++;
   return count;
 }

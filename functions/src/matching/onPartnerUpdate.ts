@@ -209,6 +209,14 @@ async function reMatchOrphanedFilesAfterDeletion(
       website: doc.data().website || null,
       emailDomains: doc.data().emailDomains || [],
     }));
+    const localizedGlobalIds = new Set(
+      userPartnersSnapshot.docs
+        .map((doc) => doc.data().globalPartnerId)
+        .filter(Boolean) as string[]
+    );
+    const filteredGlobalPartners = globalPartners.filter(
+      (partner) => !localizedGlobalIds.has(partner.id)
+    );
 
     // Process files
     let reMatched = 0;
@@ -216,7 +224,11 @@ async function reMatchOrphanedFilesAfterDeletion(
 
     for (const fileDoc of unmatchedFilesSnapshot.docs) {
       try {
-        const { action, newPartnerId } = await reMatchFilePartner(fileDoc, userPartners, globalPartners);
+        const { action, newPartnerId } = await reMatchFilePartner(
+          fileDoc,
+          userPartners,
+          filteredGlobalPartners
+        );
 
         if (action === "rematched" && newPartnerId) {
           reMatched++;
@@ -354,6 +366,14 @@ export const onPartnerUpdate = onDocumentUpdated(
         website: doc.data().website || null,
         emailDomains: doc.data().emailDomains || [],
       }));
+      const localizedGlobalIds = new Set(
+        userPartnersSnapshot.docs
+          .map((doc) => doc.data().globalPartnerId)
+          .filter(Boolean) as string[]
+      );
+      const filteredGlobalPartners = globalPartners.filter(
+        (partner) => !localizedGlobalIds.has(partner.id)
+      );
 
       // Process files
       let reMatched = 0;
@@ -362,7 +382,7 @@ export const onPartnerUpdate = onDocumentUpdated(
 
       for (const fileDoc of filesToProcess) {
         try {
-          const { action } = await reMatchFilePartner(fileDoc, userPartners, globalPartners);
+          const { action } = await reMatchFilePartner(fileDoc, userPartners, filteredGlobalPartners);
 
           switch (action) {
             case "rematched":

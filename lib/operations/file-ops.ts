@@ -20,9 +20,15 @@ import {
   FileFilters,
   FileCreateData,
   FileExtractionData,
+  TransactionSuggestion,
 } from "@/types/file";
 import { Transaction } from "@/types/transaction";
-import { FileSourceType, ManualFileRemoval } from "@/types/partner";
+import { FileSourceResultType, FileSourceType, ManualFileRemoval } from "@/types/partner";
+import {
+  createLocalPartnerFromGlobal,
+  decrementFileSourcePatternUsage,
+  learnFileSourcePattern,
+} from "./partner-ops";
 import { OperationsContext } from "./types";
 
 const PARTNERS_COLLECTION = "partners";
@@ -37,8 +43,16 @@ export interface FileConnectionSourceInfo {
   searchPattern?: string;
   /** For Gmail: which integration (account) */
   gmailIntegrationId?: string;
+  /** For Gmail: integration email */
+  gmailIntegrationEmail?: string;
   /** For Gmail: message ID */
   gmailMessageId?: string;
+  /** For Gmail: sender email */
+  gmailMessageFrom?: string;
+  /** For Gmail: sender name */
+  gmailMessageFromName?: string;
+  /** Type of result selected during the connection */
+  resultType?: FileSourceResultType;
 }
 
 const FILES_COLLECTION = "files";
@@ -284,14 +298,50 @@ export async function createFile(
   if (data.sourceType) {
     newFile.sourceType = data.sourceType;
   }
+  if (data.sourceSearchPattern) {
+    newFile.sourceSearchPattern = data.sourceSearchPattern;
+  }
+  if (data.sourceResultType) {
+    newFile.sourceResultType = data.sourceResultType;
+  }
+  if (data.sourceUrl) {
+    newFile.sourceUrl = data.sourceUrl;
+  }
+  if (data.sourceDomain) {
+    newFile.sourceDomain = data.sourceDomain;
+  }
+  if (data.sourceRunId) {
+    newFile.sourceRunId = data.sourceRunId;
+  }
+  if (data.sourceCollectorId) {
+    newFile.sourceCollectorId = data.sourceCollectorId;
+  }
   if (data.gmailMessageId) {
     newFile.gmailMessageId = data.gmailMessageId;
   }
   if (data.gmailIntegrationId) {
     newFile.gmailIntegrationId = data.gmailIntegrationId;
   }
+  if (data.gmailIntegrationEmail) {
+    newFile.gmailIntegrationEmail = data.gmailIntegrationEmail;
+  }
   if (data.gmailSubject) {
     newFile.gmailSubject = data.gmailSubject;
+  }
+  if (data.gmailAttachmentId) {
+    newFile.gmailAttachmentId = data.gmailAttachmentId;
+  }
+  if (data.gmailSenderEmail) {
+    newFile.gmailSenderEmail = data.gmailSenderEmail;
+  }
+  if (data.gmailSenderDomain) {
+    newFile.gmailSenderDomain = data.gmailSenderDomain;
+  }
+  if (data.gmailSenderName) {
+    newFile.gmailSenderName = data.gmailSenderName;
+  }
+  if (data.gmailEmailDate) {
+    newFile.gmailEmailDate = data.gmailEmailDate;
   }
 
   const docRef = await addDoc(collection(ctx.db, FILES_COLLECTION), newFile);
@@ -356,6 +406,97 @@ export async function updateFileDirection(
     invoiceDirection: direction,
     updatedAt: Timestamp.now(),
   });
+}
+
+/**
+ * Editable additional field (label + value pair)
+ */
+export interface EditableAdditionalField {
+  label: string;
+  value: string;
+}
+
+/**
+ * User-editable extracted fields (string-based for form inputs)
+ */
+export interface EditableExtractedFields {
+  date: string; // yyyy-MM-dd format
+  amount: string; // number as string (in currency units, not cents)
+  vatPercent: string; // number as string
+  partner: string;
+  vatId: string;
+  iban: string;
+  address: string;
+  additionalFields: EditableAdditionalField[]; // dynamic key-value pairs
+}
+
+/**
+ * Update a file's extracted fields from user edits.
+ * Handles conversion from string inputs to proper types.
+ */
+export async function updateFileExtractedFields(
+  ctx: OperationsContext,
+  fileId: string,
+  fields: EditableExtractedFields
+): Promise<void> {
+  const existing = await getFile(ctx, fileId);
+  if (!existing) {
+    throw new Error(`File ${fileId} not found or access denied`);
+  }
+
+  // Convert string inputs to proper types
+  const updates: Record<string, unknown> = {
+    updatedAt: Timestamp.now(),
+  };
+
+  // Date: convert from yyyy-MM-dd string to Timestamp
+  if (fields.date) {
+    const dateObj = new Date(fields.date);
+    if (!isNaN(dateObj.getTime())) {
+      updates.extractedDate = Timestamp.fromDate(dateObj);
+    }
+  } else {
+    updates.extractedDate = null;
+  }
+
+  // Amount: convert from currency units to cents
+  if (fields.amount) {
+    const amountNum = parseFloat(fields.amount);
+    if (!isNaN(amountNum)) {
+      updates.extractedAmount = Math.round(amountNum * 100);
+    }
+  } else {
+    updates.extractedAmount = null;
+  }
+
+  // VAT percent: convert to number
+  if (fields.vatPercent) {
+    const vatNum = parseFloat(fields.vatPercent);
+    if (!isNaN(vatNum)) {
+      updates.extractedVatPercent = vatNum;
+    }
+  } else {
+    updates.extractedVatPercent = null;
+  }
+
+  // String fields: use value or null if empty
+  updates.extractedPartner = fields.partner || null;
+  updates.extractedVatId = fields.vatId || null;
+  updates.extractedIban = fields.iban || null;
+  updates.extractedAddress = fields.address || null;
+
+  // Additional fields: filter out empty ones, map to storage format
+  const additionalFields = fields.additionalFields
+    .filter((f) => f.label.trim() && f.value.trim())
+    .map((f) => ({
+      label: f.label.trim(),
+      value: f.value.trim(),
+      rawValue: f.value.trim(), // use edited value as raw
+    }));
+  updates.extractedAdditionalFields = additionalFields.length > 0 ? additionalFields : null;
+
+  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
+  await updateDoc(docRef, updates);
 }
 
 /**
@@ -655,8 +796,20 @@ export async function connectFileToTransaction(
   if (sourceInfo?.gmailIntegrationId) {
     connectionData.gmailIntegrationId = sourceInfo.gmailIntegrationId;
   }
+  if (sourceInfo?.gmailIntegrationEmail) {
+    connectionData.gmailIntegrationEmail = sourceInfo.gmailIntegrationEmail;
+  }
   if (sourceInfo?.gmailMessageId) {
     connectionData.gmailMessageId = sourceInfo.gmailMessageId;
+  }
+  if (sourceInfo?.gmailMessageFrom) {
+    connectionData.gmailMessageFrom = sourceInfo.gmailMessageFrom;
+  }
+  if (sourceInfo?.gmailMessageFromName) {
+    connectionData.gmailMessageFromName = sourceInfo.gmailMessageFromName;
+  }
+  if (sourceInfo?.resultType) {
+    connectionData.resultType = sourceInfo.resultType;
   }
 
   batch.set(connectionRef, connectionData);
@@ -677,14 +830,59 @@ export async function connectFileToTransaction(
     updatedAt: now,
   };
 
+  const localizePartner = async (
+    partnerId: string | null | undefined,
+    partnerType: "user" | "global" | null | undefined
+  ): Promise<{ partnerId: string | null; partnerType: "user" | "global" | null; localized: boolean }> => {
+    if (!partnerId || partnerType !== "global") {
+      return { partnerId: partnerId ?? null, partnerType: partnerType ?? null, localized: false };
+    }
+
+    try {
+      const { localPartnerId } = await createLocalPartnerFromGlobal(ctx, partnerId);
+      return { partnerId: localPartnerId, partnerType: "user", localized: true };
+    } catch (error) {
+      console.error(`[PartnerMatch] Failed to localize global partner ${partnerId}:`, error);
+      return { partnerId, partnerType, localized: false };
+    }
+  };
+
+  const resolvedTxPartner = await localizePartner(txData.partnerId, txData.partnerType);
+  if (resolvedTxPartner.localized) {
+    transactionUpdates.partnerId = resolvedTxPartner.partnerId;
+    transactionUpdates.partnerType = "user";
+  }
+
+  const resolvedFilePartner = await localizePartner(file.partnerId, file.partnerType ?? null);
+  if (resolvedFilePartner.localized) {
+    fileUpdates.partnerId = resolvedFilePartner.partnerId;
+    fileUpdates.partnerType = "user";
+  }
+
+  if (sourceInfo?.searchPattern) {
+    const patternPartnerId = resolvedTxPartner.partnerId ?? resolvedFilePartner.partnerId ?? null;
+    if (patternPartnerId) {
+      try {
+        await learnFileSourcePattern(ctx, patternPartnerId, transactionId, {
+          sourceType: sourceInfo.sourceType,
+          searchPattern: sourceInfo.searchPattern,
+          integrationId: sourceInfo.gmailIntegrationId,
+          resultType: sourceInfo.resultType,
+        });
+      } catch (error) {
+        console.error("Failed to learn file source pattern:", error);
+      }
+    }
+  }
+
   // 4. Partner sync: Resolve conflict and sync partner bidirectionally
   // Defer partner sync until extraction completes so file partner is authoritative.
   if (file.extractionComplete === true) {
     const resolution = resolvePartnerConflict(
-      file.partnerId,
+      resolvedFilePartner.partnerId,
       file.partnerMatchedBy as PartnerMatchedBy,
       file.partnerMatchConfidence,
-      txData.partnerId,
+      resolvedTxPartner.partnerId,
       txData.partnerMatchedBy as PartnerMatchedBy,
       txData.partnerMatchConfidence
     );
@@ -692,24 +890,24 @@ export async function connectFileToTransaction(
     if (resolution.shouldSync && resolution.winnerId) {
       if (resolution.source === "file") {
         // File wins → sync file's partner to transaction
-        transactionUpdates.partnerId = file.partnerId;
-        transactionUpdates.partnerType = file.partnerType;
+        transactionUpdates.partnerId = resolvedFilePartner.partnerId;
+        transactionUpdates.partnerType = resolvedFilePartner.partnerType;
         // Keep "auto" if syncing, unless file was manual
         transactionUpdates.partnerMatchedBy = file.partnerMatchedBy === "manual" ? "manual" : "auto";
         transactionUpdates.partnerMatchConfidence = file.partnerMatchConfidence ?? null;
         console.log(
-          `[FileConnect] Synced partner ${file.partnerId} from file to transaction ${transactionId} ` +
+          `[FileConnect] Synced partner ${resolvedFilePartner.partnerId} from file to transaction ${transactionId} ` +
           `(file: ${file.partnerMatchConfidence ?? 0}% vs tx: ${txData.partnerMatchConfidence ?? 0}%)`
         );
       } else if (resolution.source === "transaction") {
         // Transaction wins → sync transaction's partner to file
-        fileUpdates.partnerId = txData.partnerId;
-        fileUpdates.partnerType = txData.partnerType;
+        fileUpdates.partnerId = resolvedTxPartner.partnerId;
+        fileUpdates.partnerType = resolvedTxPartner.partnerType;
         // Keep "auto" if syncing, unless transaction was manual
         fileUpdates.partnerMatchedBy = txData.partnerMatchedBy === "manual" ? "manual" : "auto";
         fileUpdates.partnerMatchConfidence = txData.partnerMatchConfidence ?? null;
         console.log(
-          `[FileConnect] Synced partner ${txData.partnerId} from transaction to file ${fileId} ` +
+          `[FileConnect] Synced partner ${resolvedTxPartner.partnerId} from transaction to file ${fileId} ` +
           `(tx: ${txData.partnerMatchConfidence ?? 0}% vs file: ${file.partnerMatchConfidence ?? 0}%)`
         );
       }
@@ -740,7 +938,8 @@ export async function disconnectFileFromTransaction(
   if (!fileDoc.exists()) {
     throw new Error(`File ${fileId} not found`);
   }
-  if (fileDoc.data().userId !== ctx.userId) {
+  const fileData = fileDoc.data();
+  if (fileData.userId !== ctx.userId) {
     throw new Error(`File ${fileId} access denied`);
   }
 
@@ -768,6 +967,37 @@ export async function disconnectFileFromTransaction(
 
   const now = Timestamp.now();
   const batch = writeBatch(ctx.db);
+
+  if (!snapshot.empty) {
+    const connectionData = snapshot.docs[0].data() as {
+      sourceType?: FileSourceType;
+      searchPattern?: string;
+      gmailIntegrationId?: string;
+      resultType?: FileSourceResultType;
+    };
+    const partnerIdForPattern = txData.partnerId ?? fileData.partnerId ?? null;
+    if (
+      connectionData.sourceType &&
+      connectionData.searchPattern &&
+      partnerIdForPattern
+    ) {
+      try {
+        await decrementFileSourcePatternUsage(
+          ctx,
+          partnerIdForPattern,
+          transactionId,
+          {
+            sourceType: connectionData.sourceType,
+            searchPattern: connectionData.searchPattern,
+            integrationId: connectionData.gmailIntegrationId,
+            resultType: connectionData.resultType,
+          }
+        );
+      } catch (error) {
+        console.error("Failed to decrement file source pattern:", error);
+      }
+    }
+  }
 
   // 1. Delete junction document if it exists
   if (!snapshot.empty) {
@@ -1290,4 +1520,277 @@ export async function bulkUnmarkFilesAsNotInvoice(
   }
 
   return { updated, errors };
+}
+
+// === Agent-Friendly Matching Operations ===
+
+// Re-export TransactionSuggestion from types for convenience
+export type { TransactionSuggestion } from "@/types/file";
+
+/**
+ * File with transaction suggestions (for agent matching)
+ * This is just TaxFile with the optional suggestion fields made explicit
+ */
+export interface FileWithSuggestions extends TaxFile {
+  /** Override to make non-optional for this context */
+  transactionMatchComplete: boolean;
+}
+
+/**
+ * Filters for listing files with suggestions
+ */
+export interface FileSuggestionsFilters extends FileFilters {
+  /** Only files with suggestions */
+  hasSuggestions?: boolean;
+  /** Minimum confidence for suggestions */
+  minSuggestionConfidence?: number;
+}
+
+/**
+ * List files with their transaction suggestions (from server-side matching).
+ * Useful for agents to see what the system has already matched.
+ */
+export async function listFilesWithSuggestions(
+  ctx: OperationsContext,
+  filters?: FileSuggestionsFilters & { limit?: number }
+): Promise<FileWithSuggestions[]> {
+  const constraints: Parameters<typeof query>[1][] = [
+    where("userId", "==", ctx.userId),
+    orderBy("uploadedAt", "desc"),
+  ];
+
+  // Only include files where matching is complete
+  constraints.push(where("transactionMatchComplete", "==", true));
+
+  if (filters?.extractionComplete !== undefined) {
+    constraints.push(where("extractionComplete", "==", filters.extractionComplete));
+  }
+
+  const q = query(collection(ctx.db, FILES_COLLECTION), ...constraints);
+  const snapshot = await getDocs(q);
+
+  let files = snapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+    transactionSuggestions: doc.data().transactionSuggestions || [],
+    transactionMatchComplete: doc.data().transactionMatchComplete || false,
+  })) as FileWithSuggestions[];
+
+  // Filter out soft-deleted and non-invoice files
+  files = files.filter((f) => !f.deletedAt && !f.isNotInvoice);
+
+  // Client-side filters
+  if (filters?.search) {
+    const searchLower = filters.search.toLowerCase();
+    files = files.filter(
+      (f) =>
+        f.fileName.toLowerCase().includes(searchLower) ||
+        (f.extractedPartner?.toLowerCase() || "").includes(searchLower)
+    );
+  }
+
+  if (filters?.hasConnections !== undefined) {
+    files = files.filter((f) =>
+      filters.hasConnections
+        ? f.transactionIds.length > 0
+        : f.transactionIds.length === 0
+    );
+  }
+
+  // Filter by suggestions
+  if (filters?.hasSuggestions !== undefined) {
+    files = files.filter((f) =>
+      filters.hasSuggestions
+        ? (f.transactionSuggestions?.length ?? 0) > 0
+        : (f.transactionSuggestions?.length ?? 0) === 0
+    );
+  }
+
+  // Filter by minimum suggestion confidence
+  if (filters?.minSuggestionConfidence !== undefined) {
+    files = files.filter((f) =>
+      f.transactionSuggestions?.some(
+        (s) => s.confidence >= filters.minSuggestionConfidence!
+      ) ?? false
+    );
+  }
+
+  if (filters?.limit) {
+    files = files.slice(0, filters.limit);
+  }
+
+  return files;
+}
+
+/**
+ * Filters for listing transactions needing files
+ */
+export interface TransactionsNeedingFilesFilters {
+  /** Minimum amount in cents (absolute value) */
+  minAmount?: number;
+  /** Only include transactions with a partner assigned */
+  hasPartner?: boolean;
+  /** Date range start */
+  dateFrom?: Date;
+  /** Date range end */
+  dateTo?: Date;
+  /** Max results */
+  limit?: number;
+}
+
+/**
+ * List transactions that need files (no connected files).
+ * Useful for agents to know which transactions to find receipts for.
+ */
+export async function listTransactionsNeedingFiles(
+  ctx: OperationsContext,
+  filters?: TransactionsNeedingFilesFilters
+): Promise<Transaction[]> {
+  const constraints: Parameters<typeof query>[1][] = [
+    where("userId", "==", ctx.userId),
+    orderBy("date", "desc"),
+  ];
+
+  // Date range filters
+  if (filters?.dateFrom) {
+    constraints.push(where("date", ">=", Timestamp.fromDate(filters.dateFrom)));
+  }
+  if (filters?.dateTo) {
+    constraints.push(where("date", "<=", Timestamp.fromDate(filters.dateTo)));
+  }
+
+  const q = query(collection(ctx.db, TRANSACTIONS_COLLECTION), ...constraints);
+  const snapshot = await getDocs(q);
+
+  let transactions = snapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  })) as Transaction[];
+
+  // Filter to transactions without files
+  transactions = transactions.filter(
+    (t) => !t.fileIds || t.fileIds.length === 0
+  );
+
+  // Filter to transactions without no-receipt category (they actually need files)
+  transactions = transactions.filter((t) => !t.noReceiptCategoryId);
+
+  // Filter by amount (absolute value)
+  if (filters?.minAmount !== undefined) {
+    transactions = transactions.filter(
+      (t) => Math.abs(t.amount) >= filters.minAmount!
+    );
+  }
+
+  // Filter by partner
+  if (filters?.hasPartner !== undefined) {
+    transactions = transactions.filter((t) =>
+      filters.hasPartner ? !!t.partnerId : !t.partnerId
+    );
+  }
+
+  if (filters?.limit) {
+    transactions = transactions.slice(0, filters.limit);
+  }
+
+  return transactions;
+}
+
+/**
+ * Result of auto-connecting suggestions
+ */
+export interface AutoConnectResult {
+  connected: number;
+  skipped: number;
+  errors: string[];
+  connections: Array<{
+    fileId: string;
+    transactionId: string;
+    confidence: number;
+  }>;
+}
+
+/**
+ * Auto-connect files to their suggested transactions above a confidence threshold.
+ * Uses the server-side matching results stored in transactionSuggestions.
+ *
+ * @param fileId - Optional specific file to connect, or all unconnected files if omitted
+ * @param minConfidence - Minimum confidence to auto-connect (default 89, matches server threshold)
+ */
+export async function autoConnectFileSuggestions(
+  ctx: OperationsContext,
+  fileId?: string,
+  minConfidence: number = 89
+): Promise<AutoConnectResult> {
+  const result: AutoConnectResult = {
+    connected: 0,
+    skipped: 0,
+    errors: [],
+    connections: [],
+  };
+
+  // Get files to process
+  let files: FileWithSuggestions[];
+  if (fileId) {
+    const file = await getFile(ctx, fileId);
+    if (!file) {
+      result.errors.push(`File ${fileId} not found`);
+      return result;
+    }
+    files = [{
+      ...file,
+      transactionSuggestions: (file as unknown as { transactionSuggestions?: TransactionSuggestion[] }).transactionSuggestions || [],
+      transactionMatchComplete: (file as unknown as { transactionMatchComplete?: boolean }).transactionMatchComplete || false,
+    }];
+  } else {
+    // Get all unconnected files with suggestions
+    files = await listFilesWithSuggestions(ctx, {
+      hasConnections: false,
+      hasSuggestions: true,
+      minSuggestionConfidence: minConfidence,
+    });
+  }
+
+  // Process each file
+  for (const file of files) {
+    // Skip files already connected
+    if (file.transactionIds.length > 0) {
+      result.skipped++;
+      continue;
+    }
+
+    // Find highest-confidence suggestion above threshold
+    const bestSuggestion = (file.transactionSuggestions ?? [])
+      .filter((s) => s.confidence >= minConfidence)
+      .sort((a, b) => b.confidence - a.confidence)[0];
+
+    if (!bestSuggestion) {
+      result.skipped++;
+      continue;
+    }
+
+    // Connect the file to the transaction
+    try {
+      await connectFileToTransaction(
+        ctx,
+        file.id,
+        bestSuggestion.transactionId,
+        "auto_matched",
+        bestSuggestion.confidence
+      );
+
+      result.connected++;
+      result.connections.push({
+        fileId: file.id,
+        transactionId: bestSuggestion.transactionId,
+        confidence: bestSuggestion.confidence,
+      });
+    } catch (error) {
+      result.errors.push(
+        `Failed to connect ${file.id}: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
+    }
+  }
+
+  return result;
 }

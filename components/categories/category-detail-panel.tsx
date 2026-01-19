@@ -5,8 +5,8 @@ import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { PanelHeader, SectionHeader } from "@/components/ui/detail-panel-primitives";
 import {
-  X,
   Tag,
   Sparkles,
   Receipt,
@@ -15,6 +15,7 @@ import {
   Trash2,
   Building2,
   Ban,
+  X,
 } from "lucide-react";
 import { UserNoReceiptCategory, CategoryLearnedPattern } from "@/types/no-receipt-category";
 import { Transaction } from "@/types/transaction";
@@ -24,8 +25,7 @@ import { usePartners } from "@/hooks/use-partners";
 import { collection, query, where, orderBy, limit, getDocs, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import Link from "next/link";
-
-const MOCK_USER_ID = "dev-user-123";
+import { useAuth } from "@/components/auth";
 
 interface CategoryDetailPanelProps {
   category: UserNoReceiptCategory;
@@ -33,6 +33,7 @@ interface CategoryDetailPanelProps {
 }
 
 export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelProps) {
+  const { userId } = useAuth();
   const { updateCategory, clearRemoval } = useNoReceiptCategories();
   const { partners: allPartners } = usePartners();
   const [manualTransactions, setManualTransactions] = useState<Transaction[]>([]);
@@ -55,7 +56,7 @@ export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelPr
       try {
         const q = query(
           collection(db, "transactions"),
-          where("userId", "==", MOCK_USER_ID),
+          where("userId", "==", userId),
           where("noReceiptCategoryId", "==", category.id),
           orderBy("date", "desc"),
           limit(50)
@@ -80,7 +81,7 @@ export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelPr
       }
     }
     fetchTransactions();
-  }, [category.id]);
+  }, [category.id, userId]);
 
   // Fetch manual removal transactions (for displaying details)
   useEffect(() => {
@@ -93,7 +94,7 @@ export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelPr
           try {
             const q = query(
               collection(db, "transactions"),
-              where("userId", "==", MOCK_USER_ID),
+              where("userId", "==", userId),
               where("__name__", "in", transactionIds)
             );
             const snapshot = await getDocs(q);
@@ -111,7 +112,7 @@ export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelPr
       }
     }
     fetchManualRemovalTransactions();
-  }, [category.id, category.manualRemovals]);
+  }, [category.id, category.manualRemovals, userId]);
 
   const handleAddPattern = async () => {
     if (!newPattern.trim()) return;
@@ -160,23 +161,17 @@ export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelPr
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-        <div className="flex items-center gap-2 min-w-0">
-          <Tag className="h-5 w-5 text-muted-foreground flex-shrink-0" />
-          <h2 className="font-semibold truncate">{category.name}</h2>
-        </div>
-        <Button variant="ghost" size="icon" onClick={onClose} className="flex-shrink-0">
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
+      <PanelHeader
+        title={category.name}
+        icon={<Tag className="h-5 w-5 text-muted-foreground" />}
+        onClose={onClose}
+      />
 
       {/* Content */}
       <div className="flex-1 overflow-auto p-4 space-y-6">
         {/* Description */}
         <div>
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-            Description
-          </h3>
+          <SectionHeader className="mb-2">Description</SectionHeader>
           <p className="text-sm">{category.description}</p>
           <p className="text-sm text-muted-foreground mt-1">{category.helperText}</p>
         </div>
@@ -184,10 +179,10 @@ export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelPr
         {/* Learned Patterns */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            <SectionHeader>
               <Sparkles className="h-3 w-3 inline mr-1" />
               Learned Patterns ({category.learnedPatterns.length})
-            </h3>
+            </SectionHeader>
             {!isAddingPattern && (
               <Button
                 variant="ghost"

@@ -128,7 +128,17 @@ export interface LearnedPattern extends MatchPattern {
 /**
  * File source type for tracking where files come from
  */
-export type FileSourceType = "local" | "gmail";
+export type FileSourceType = "local" | "gmail" | "browser";
+
+/**
+ * Result type for file source patterns (used for strategy-specific searches).
+ */
+export type FileSourceResultType =
+  | "local_file"
+  | "gmail_attachment"
+  | "gmail_html_invoice"
+  | "gmail_invoice_link"
+  | "browser_invoice";
 
 /**
  * Learned pattern for finding files from a specific source.
@@ -144,6 +154,9 @@ export interface FileSourcePattern {
   /** For Gmail: which integration (account) to search */
   integrationId?: string;
 
+  /** What kind of result this pattern was learned from */
+  resultType?: FileSourceResultType;
+
   /** Confidence score (0-100) based on successful uses */
   confidence: number;
 
@@ -158,6 +171,82 @@ export interface FileSourcePattern {
 
   /** Last time pattern was used successfully */
   lastUsedAt: Timestamp;
+}
+
+/**
+ * Status of an invoice source
+ */
+export type InvoiceSourceStatus = "active" | "paused" | "error" | "needs_login";
+
+/**
+ * How an invoice source was added
+ */
+export type InvoiceSourceType = "manual" | "email_link" | "browser_detected";
+
+/**
+ * How invoice frequency was determined
+ */
+export type FrequencySource = "inferred" | "manual";
+
+/**
+ * An invoice source URL associated with a partner.
+ * Used for periodic automated invoice fetching via browser extension.
+ */
+export interface InvoiceSource {
+  /** Unique ID for this source */
+  id: string;
+
+  /** The URL to fetch invoices from (e.g., billing portal) */
+  url: string;
+
+  /** Domain extracted from URL for display */
+  domain: string;
+
+  /** Human-readable label (e.g., "Google Admin Billing") */
+  label?: string;
+
+  /** When this source was first discovered/added */
+  discoveredAt: Timestamp;
+
+  /** How this source was added */
+  sourceType: InvoiceSourceType;
+
+  /** If converted from an invoiceLink, the original message ID for reference */
+  fromInvoiceLinkMessageId?: string;
+
+  // === Frequency & Scheduling ===
+
+  /** Inferred invoice frequency in days (e.g., 30 for monthly) */
+  inferredFrequencyDays?: number;
+
+  /** How frequency was determined */
+  frequencySource?: FrequencySource;
+
+  /** Number of invoices used to infer frequency */
+  frequencyDataPoints?: number;
+
+  /** When this source was last successfully fetched */
+  lastFetchedAt?: Timestamp;
+
+  /** When the next fetch should occur (calculated from frequency) */
+  nextExpectedAt?: Timestamp;
+
+  /** Number of successful fetches */
+  successfulFetches: number;
+
+  /** Number of failed fetch attempts */
+  failedFetches: number;
+
+  // === Status ===
+
+  /** Current status of this source */
+  status: InvoiceSourceStatus;
+
+  /** Last error message if status is error */
+  lastError?: string;
+
+  /** When status last changed */
+  statusChangedAt?: Timestamp;
 }
 
 /**
@@ -295,6 +384,16 @@ export interface UserPartner {
 
   /** When invoice links were last updated */
   invoiceLinksUpdatedAt?: Timestamp;
+
+  /**
+   * Invoice sources for automated periodic fetching.
+   * URLs where this partner's invoices can be downloaded.
+   * Managed in the partner detail panel's Files tab.
+   */
+  invoiceSources?: InvoiceSource[];
+
+  /** When invoice sources were last updated */
+  invoiceSourcesUpdatedAt?: Timestamp;
 
   /** Active status (soft delete) */
   isActive: boolean;

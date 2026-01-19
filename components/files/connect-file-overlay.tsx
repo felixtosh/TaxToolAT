@@ -15,6 +15,10 @@ import {
   FileDown,
   AlertCircle,
   RefreshCw,
+  ArrowRight,
+  Globe,
+  Plug,
+  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,12 +38,14 @@ import {
 import { usePartners } from "@/hooks/use-partners";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
 import { useGmailSearchQueries } from "@/hooks/use-gmail-search-queries";
-import { addEmailDomainToPartner, learnFileSourcePattern } from "@/lib/operations";
+import { addEmailDomainToPartner } from "@/lib/operations";
 import { db } from "@/lib/firebase/config";
 import { EmailMessage, EmailAttachment } from "@/types/email-integration";
 import { Transaction } from "@/types/transaction";
-
-const MOCK_USER_ID = "dev-user-123";
+import { InvoiceSource } from "@/types/partner";
+import { useAuth } from "@/components/auth";
+import { useBrowserExtensionStatus } from "@/hooks/use-browser-extension";
+import { IntegrationStatusBanner } from "@/components/automations/integration-status-banner";
 
 const RECEIPT_KEYWORDS = [
   "invoice",
@@ -98,6 +104,29 @@ function containsAny(haystack: string, needles: string[]): boolean {
   return needles.some((needle) => haystack.includes(needle));
 }
 
+function globMatch(pattern: string, text: string): boolean {
+  if (!pattern || !text) return false;
+  const normalizedText = text.toLowerCase();
+  const normalizedPattern = pattern.toLowerCase();
+  const regexPattern = normalizedPattern
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*");
+
+  try {
+    return new RegExp(`^${regexPattern}$`).test(normalizedText);
+  } catch {
+    return false;
+  }
+}
+
+function normalizeLocalPattern(pattern: string): string {
+  return pattern
+    .replace(/\*/g, " ")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function extractEmailDomain(email?: string | null): string | null {
   if (!email) return null;
   const match = email.toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
@@ -113,7 +142,11 @@ interface ConnectFileOverlayProps {
       sourceType: "local" | "gmail";
       searchPattern?: string;
       gmailIntegrationId?: string;
+      gmailIntegrationEmail?: string;
       gmailMessageId?: string;
+      gmailMessageFrom?: string;
+      gmailMessageFromName?: string;
+      resultType?: "local_file" | "gmail_attachment" | "gmail_html_invoice" | "gmail_invoice_link";
     }
   ) => Promise<void>;
   connectedFileIds?: string[];
@@ -141,11 +174,17 @@ export function ConnectFileOverlay({
   connectedFileIds = [],
   transaction,
 }: ConnectFileOverlayProps) {
+  const { userId } = useAuth();
+
   // Common state
-  const [activeTab, setActiveTab] = useState<"files" | "gmail-attachments" | "email-to-pdf">("files");
+  const [activeTab, setActiveTab] = useState<"files" | "gmail-attachments" | "email-to-pdf" | "browser">("files");
   const [searchQuery, setSearchQuery] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
   const hasTriedAutoSearch = useRef(false);
+  const [strategyMode, setStrategyMode] = useState(false);
+  const [strategyGmailMessageIds, setStrategyGmailMessageIds] = useState<Set<string>>(new Set());
+  const [strategyEmailMessageIds, setStrategyEmailMessageIds] = useState<Set<string>>(new Set());
+  const [strategyQueryByMessageId, setStrategyQueryByMessageId] = useState<Map<string, string>>(new Map());
 
   // Files tab state
   const [selectedResult, setSelectedResult] = useState<UnifiedSearchResult | null>(null);
@@ -175,6 +214,7 @@ export function ConnectFileOverlay({
   // Hooks
   const { partners } = usePartners();
   const { integrations, hasGmailIntegration } = useEmailIntegrations();
+  const { status: browserExtensionStatus } = useBrowserExtensionStatus();
   const gmailIntegrations = useMemo(
     () => integrations.filter((i) => i.provider === "gmail"),
     [integrations]
@@ -186,6 +226,15 @@ export function ConnectFileOverlay({
         integration.id,
         integration.displayName || integration.email || integration.provider
       );
+    }
+    return map;
+  }, [integrations]);
+  const integrationEmails = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const integration of integrations) {
+      if (integration.email) {
+        map.set(integration.id, integration.email);
+      }
     }
     return map;
   }, [integrations]);
@@ -508,6 +557,86 @@ export function ConnectFileOverlay({
     return "";
   }, [partner?.name, transaction?.partner, transaction?.name, transaction?.reference]);
 
+  const partnerStrategies = useMemo(() => {
+    const patterns = partner?.fileSourcePatterns || [];
+    if (patterns.length === 0) {
+      return {
+        hasStrategy: false,
+        localPatterns: [],
+        gmailPatterns: [],
+        primaryQuery: "",
+      };
+    }
+
+    const ranked = [...patterns].sort((a, b) => {
+      if (b.usageCount !== a.usageCount) return b.usageCount - a.usageCount;
+      return b.confidence - a.confidence;
+    });
+
+    const localPatterns = ranked
+      .filter((pattern) => pattern.sourceType === "local")
+      .map((pattern) => ({
+        ...pattern,
+        normalized: normalizeLocalPattern(pattern.pattern),
+      }))
+      .filter((pattern) => pattern.normalized.length > 0);
+
+    const gmailPatterns = ranked.filter((pattern) => pattern.sourceType === "gmail");
+
+    const primaryPattern = ranked[0];
+    const primaryQuery = primaryPattern
+      ? primaryPattern.sourceType === "local"
+        ? normalizeLocalPattern(primaryPattern.pattern)
+        : primaryPattern.pattern
+      : "";
+
+    return {
+      hasStrategy: ranked.length > 0,
+      localPatterns,
+      gmailPatterns,
+      primaryQuery,
+    };
+  }, [partner?.fileSourcePatterns]);
+
+  const localStrategyMatchFileIds = useMemo(() => {
+    if (!strategyMode || partnerStrategies.localPatterns.length === 0) {
+      return new Set<string>();
+    }
+    const matches = new Set<string>();
+    for (const result of localFileResults) {
+      if (result.type !== "local" || !result.fileId) continue;
+      const fileName = result.filename.toLowerCase();
+      for (const pattern of partnerStrategies.localPatterns) {
+        if (
+          globMatch(pattern.pattern, fileName) ||
+          (pattern.normalized &&
+            fileName.includes(pattern.normalized.toLowerCase()))
+        ) {
+          matches.add(result.fileId);
+          break;
+        }
+      }
+    }
+    return matches;
+  }, [strategyMode, localFileResults, partnerStrategies.localPatterns]);
+
+  const getLocalStrategyPattern = useCallback(
+    (filename: string): string | null => {
+      if (!strategyMode || partnerStrategies.localPatterns.length === 0) return null;
+      const lowered = filename.toLowerCase();
+      for (const pattern of partnerStrategies.localPatterns) {
+        if (
+          globMatch(pattern.pattern, lowered) ||
+          (pattern.normalized && lowered.includes(pattern.normalized.toLowerCase()))
+        ) {
+          return pattern.pattern;
+        }
+      }
+      return null;
+    },
+    [strategyMode, partnerStrategies.localPatterns]
+  );
+
   const buildGmailQueries = useCallback(
     (searchWith: string, includeTransactionTokens: boolean) => {
     const queries = new Set<string>();
@@ -552,48 +681,6 @@ export function ConnectFileOverlay({
 
     return Array.from(queries);
   }, [transaction?.name, transaction?.reference]);
-
-  // Track transaction ID to detect changes
-  const lastTransactionIdRef = useRef<string | null>(null);
-
-  // Reset state when overlay opens OR transaction changes
-  useEffect(() => {
-    if (!open) return;
-
-    const transactionChanged = transaction?.id !== lastTransactionIdRef.current;
-    lastTransactionIdRef.current = transaction?.id || null;
-
-    if (transactionChanged) {
-      setActiveTab("files");
-      setSearchQuery("");
-      setSelectedResult(null);
-      setGmailMessages([]);
-      setSelectedAttachmentKey(null);
-      setEmails([]);
-      setSelectedEmail(null);
-      setIsConnecting(false);
-      setHasSearched(false);
-      setError(null);
-      hasTriedAutoSearch.current = false;
-      clearLocalFiles();
-    }
-  }, [open, transaction?.id, clearLocalFiles]);
-
-  // Auto-search when transaction is ready
-  useEffect(() => {
-    if (!open || hasSearched || hasTriedAutoSearch.current) return;
-    if (!transaction) return;
-
-    hasTriedAutoSearch.current = true;
-
-    // Use learned pattern if available, otherwise use simple search
-    const queryToUse = bestLearnedPattern?.pattern || simpleSearch;
-
-    if (queryToUse) {
-      setSearchQuery(queryToUse);
-      setTimeout(() => handleSearch(queryToUse, "auto"), 50);
-    }
-  }, [open, hasSearched, transaction, bestLearnedPattern, simpleSearch]);
 
   // Helper to search Gmail with a specific query
   const searchGmail = useCallback(async (
@@ -662,10 +749,174 @@ export function ConnectFileOverlay({
     });
   };
 
+  const runPartnerStrategySearch = useCallback(async () => {
+    if (!transaction || !partnerStrategies.hasStrategy) return false;
+
+    const primaryQuery = partnerStrategies.primaryQuery || simpleSearch || "";
+    const gmailPatternQueries = partnerStrategies.gmailPatterns.map((pattern) => ({
+      query: pattern.pattern,
+      integrationId: pattern.integrationId,
+      resultType: pattern.resultType,
+    }));
+    const domainQueries = (partner?.emailDomains || []).map((domain) => ({
+      query: `from:${domain}`,
+      integrationId: undefined,
+      resultType: undefined,
+    }));
+
+    const allQueries = [...gmailPatternQueries, ...domainQueries].filter(
+      (entry) => entry.query
+    );
+
+    setStrategyMode(true);
+    setSearchQuery(primaryQuery);
+    setLastSearchTerm(primaryQuery || null);
+    setSearchLoading(true);
+    setError(null);
+    setHasSearched(true);
+    setSelectedResult(null);
+    setSelectedAttachmentKey(null);
+    setSelectedEmail(null);
+    setGmailAuthIssues({});
+
+    if (partnerStrategies.localPatterns.length > 0) {
+      searchLocalFiles("");
+    } else if (primaryQuery) {
+      searchLocalFiles(primaryQuery);
+    }
+
+    if (!hasGmailIntegration || gmailIntegrations.length === 0 || allQueries.length === 0) {
+      setStrategyGmailMessageIds(new Set());
+      setStrategyEmailMessageIds(new Set());
+      setStrategyQueryByMessageId(new Map());
+      setSearchLoading(false);
+      return true;
+    }
+
+    try {
+      const attachmentMessages: EmailMessage[] = [];
+      const emailMessages: EmailMessage[] = [];
+      const strategyMessageIds = new Set<string>();
+      const strategyEmailIds = new Set<string>();
+      const queryMap = new Map<string, string>();
+
+      for (const entry of allQueries) {
+        const targetIntegrations = entry.integrationId
+          ? gmailIntegrations.filter((integration) => integration.id === entry.integrationId)
+          : gmailIntegrations;
+
+        for (const integration of targetIntegrations) {
+          const shouldSearchAttachments =
+            !entry.resultType || entry.resultType === "gmail_attachment";
+          const shouldSearchEmails =
+            entry.resultType === "gmail_html_invoice" ||
+            entry.resultType === "gmail_invoice_link";
+
+          let attachmentResult: { messages: EmailMessage[] } | null = null;
+          if (shouldSearchAttachments) {
+            attachmentResult = await searchGmail(
+              integration,
+              entry.query,
+              true,
+              true,
+              50
+            );
+            for (const message of attachmentResult.messages) {
+              attachmentMessages.push(message);
+              strategyMessageIds.add(message.messageId);
+              if (!queryMap.has(message.messageId)) {
+                queryMap.set(message.messageId, entry.query);
+              }
+            }
+          }
+
+          const hasAnyAttachments = attachmentResult?.messages.some(
+            (message) => message.attachments && message.attachments.length > 0
+          );
+
+          if (shouldSearchEmails || (!hasAnyAttachments && shouldSearchAttachments)) {
+            const emailResult = await searchGmail(
+              integration,
+              entry.query,
+              false,
+              true,
+              shouldSearchEmails ? 20 : 50
+            );
+            for (const message of emailResult.messages) {
+              emailMessages.push(message);
+              strategyEmailIds.add(message.messageId);
+              if (!queryMap.has(message.messageId)) {
+                queryMap.set(message.messageId, entry.query);
+              }
+            }
+          }
+        }
+      }
+
+      setGmailMessages(dedupeMessages(attachmentMessages));
+      setEmails(dedupeMessages(emailMessages));
+      setStrategyGmailMessageIds(strategyMessageIds);
+      setStrategyEmailMessageIds(strategyEmailIds);
+      setStrategyQueryByMessageId(queryMap);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Search failed");
+    } finally {
+      setSearchLoading(false);
+    }
+
+    return true;
+  }, [
+    transaction,
+    partnerStrategies,
+    partner?.emailDomains,
+    simpleSearch,
+    searchLocalFiles,
+    hasGmailIntegration,
+    gmailIntegrations,
+    searchGmail,
+  ]);
+
+  // Track transaction ID to detect changes
+  const lastTransactionIdRef = useRef<string | null>(null);
+
+  // Reset state when overlay opens OR transaction changes
+  useEffect(() => {
+    if (!open) return;
+
+    const transactionChanged = transaction?.id !== lastTransactionIdRef.current;
+    lastTransactionIdRef.current = transaction?.id || null;
+
+    if (transactionChanged) {
+      setActiveTab("files");
+      setSearchQuery("");
+      setSelectedResult(null);
+      setGmailMessages([]);
+      setSelectedAttachmentKey(null);
+      setEmails([]);
+      setSelectedEmail(null);
+      setIsConnecting(false);
+      setHasSearched(false);
+      setError(null);
+      hasTriedAutoSearch.current = false;
+      setStrategyMode(false);
+      setStrategyGmailMessageIds(new Set());
+      setStrategyEmailMessageIds(new Set());
+      setStrategyQueryByMessageId(new Map());
+      clearLocalFiles();
+    }
+  }, [open, transaction?.id, clearLocalFiles]);
+
   // Search handler - searches based on active tab
   const handleSearch = useCallback(async (query?: string, source: "auto" | "manual" = "manual") => {
     const searchWith = query || searchQuery;
     if (!searchWith) return;
+
+    if (source === "manual") {
+      setStrategyMode(false);
+      setStrategyGmailMessageIds(new Set());
+      setStrategyEmailMessageIds(new Set());
+      setStrategyQueryByMessageId(new Map());
+    }
 
     setLastSearchTerm(searchWith);
     setSearchLoading(true);
@@ -735,6 +986,41 @@ export function ConnectFileOverlay({
     buildGmailQueries,
   ]);
 
+  // Auto-search when transaction is ready
+  useEffect(() => {
+    if (!open || hasSearched || hasTriedAutoSearch.current) return;
+    if (!transaction) return;
+    // Wait for suggestions to finish loading before auto-searching
+    if (suggestionsLoading) return;
+
+    hasTriedAutoSearch.current = true;
+
+    const runAutoSearch = async () => {
+      const strategyApplied = await runPartnerStrategySearch();
+      if (strategyApplied) return;
+
+      // Priority: 1) First AI suggestion, 2) Learned pattern, 3) Simple search
+      const queryToUse = suggestedQueries[0] || bestLearnedPattern?.pattern || simpleSearch;
+
+      if (queryToUse) {
+        setSearchQuery(queryToUse);
+        setTimeout(() => handleSearch(queryToUse, "auto"), 50);
+      }
+    };
+
+    runAutoSearch();
+  }, [
+    open,
+    hasSearched,
+    transaction,
+    suggestedQueries,
+    suggestionsLoading,
+    bestLearnedPattern,
+    simpleSearch,
+    runPartnerStrategySearch,
+    handleSearch,
+  ]);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter") handleSearch(undefined, "manual");
   }, [handleSearch]);
@@ -746,23 +1032,13 @@ export function ConnectFileOverlay({
     setIsConnecting(true);
     try {
       if (selectedResult.type === "local" && selectedResult.fileId) {
+        const strategyPattern = getLocalStrategyPattern(selectedResult.filename);
+        const searchPattern = strategyPattern || searchQuery || undefined;
         await onSelect(selectedResult.fileId, {
           sourceType: "local",
-          searchPattern: searchQuery || undefined,
+          searchPattern,
+          resultType: "local_file",
         });
-
-        if (partner && searchQuery && transaction) {
-          try {
-            await learnFileSourcePattern(
-              { db, userId: MOCK_USER_ID },
-              partner.id,
-              transaction.id,
-              { sourceType: "local", searchPattern: searchQuery }
-            );
-          } catch (err) {
-            console.error("Failed to learn pattern:", err);
-          }
-        }
       }
       onClose();
     } catch (error) {
@@ -793,9 +1069,8 @@ export function ConnectFileOverlay({
     const pathname = window.location.pathname;
     const searchParams = new URLSearchParams(window.location.search);
     if (transaction?.id) {
-      if (!searchParams.get("id")) {
-        searchParams.set("id", transaction.id);
-      }
+      // Always set the current transaction ID (overwrite any stale ID from previous transaction)
+      searchParams.set("id", transaction.id);
       if (searchParams.get("connect") !== "true") {
         searchParams.set("connect", "true");
       }
@@ -811,6 +1086,9 @@ export function ConnectFileOverlay({
     setError(null);
 
     try {
+      const integrationEmail = integrationEmails.get(selectedAttachment.integrationId);
+      const strategyPattern = strategyQueryByMessageId.get(selectedAttachment.message.messageId);
+      const searchPattern = strategyPattern || lastSearchTerm || searchQuery || undefined;
       const response = await fetch("/api/gmail/attachment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -821,6 +1099,10 @@ export function ConnectFileOverlay({
           mimeType: selectedAttachment.attachment.mimeType,
           filename: selectedAttachment.attachment.filename,
           gmailMessageSubject: selectedAttachment.message.subject,
+          gmailMessageFrom: selectedAttachment.message.from,
+          gmailMessageFromName: selectedAttachment.message.fromName,
+          searchPattern,
+          resultType: "gmail_attachment",
         }),
       });
 
@@ -830,36 +1112,22 @@ export function ConnectFileOverlay({
       }
 
       const data = await response.json();
-      const searchPattern = lastSearchTerm || searchQuery || undefined;
       await onSelect(data.fileId, {
         sourceType: "gmail",
         searchPattern,
         gmailIntegrationId: selectedAttachment.integrationId,
+        gmailIntegrationEmail: integrationEmail,
         gmailMessageId: selectedAttachment.attachment.messageId,
+        gmailMessageFrom: selectedAttachment.message.from,
+        gmailMessageFromName: selectedAttachment.message.fromName,
+        resultType: "gmail_attachment",
       });
-
-      if (partner && searchPattern && transaction) {
-        try {
-          await learnFileSourcePattern(
-            { db, userId: MOCK_USER_ID },
-            partner.id,
-            transaction.id,
-            {
-              sourceType: "gmail",
-              searchPattern,
-              integrationId: selectedAttachment.integrationId,
-            }
-          );
-        } catch (err) {
-          console.error("Failed to learn file source pattern:", err);
-        }
-      }
 
       const senderDomain = extractEmailDomain(selectedAttachment.message.from);
       if (partner && senderDomain) {
         try {
           await addEmailDomainToPartner(
-            { db, userId: MOCK_USER_ID },
+            { db, userId },
             partner.id,
             senderDomain
           );
@@ -916,12 +1184,18 @@ export function ConnectFileOverlay({
     setError(null);
 
     try {
+      const integrationEmail = integrationEmails.get(selectedEmail.integrationId);
+      const strategyPattern = strategyQueryByMessageId.get(selectedEmail.messageId);
+      const searchPattern = strategyPattern || lastSearchTerm || searchQuery || undefined;
       const response = await fetch("/api/gmail/convert-to-pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           integrationId: selectedEmail.integrationId,
           messageId: selectedEmail.messageId,
+          gmailMessageFrom: selectedEmail.from,
+          gmailMessageFromName: selectedEmail.fromName,
+          searchPattern,
         }),
       });
 
@@ -931,7 +1205,29 @@ export function ConnectFileOverlay({
       }
 
       const data = await response.json();
-      await onSelect(data.fileId, { sourceType: "gmail" });
+      await onSelect(data.fileId, {
+        sourceType: "gmail",
+        searchPattern,
+        gmailIntegrationId: selectedEmail.integrationId,
+        gmailIntegrationEmail: integrationEmail,
+        gmailMessageId: selectedEmail.messageId,
+        gmailMessageFrom: selectedEmail.from,
+        gmailMessageFromName: selectedEmail.fromName,
+        resultType: "gmail_html_invoice",
+      });
+
+      const senderDomain = extractEmailDomain(selectedEmail.from);
+      if (partner && senderDomain) {
+        try {
+          await addEmailDomainToPartner(
+            { db, userId },
+            partner.id,
+            senderDomain
+          );
+        } catch (err) {
+          console.error("Failed to learn email domain:", err);
+        }
+      }
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to convert email");
@@ -978,10 +1274,33 @@ export function ConnectFileOverlay({
       <ContentOverlay open={open} onClose={onClose} title="Connect File to Transaction" subtitle={subtitle}>
       <div className="flex h-full">
         {/* Left sidebar: Search + Tabs + Results */}
-        <div className="w-[350px] shrink-0 border-r flex flex-col min-h-0">
+        <div className="w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
           {/* Search section */}
           <div className="p-4 border-b space-y-3">
-            {/* AI suggestions */}
+            {/* Search input with inline button */}
+            <div className="relative flex gap-1.5">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  className="pl-9"
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => handleSearch(undefined, "manual")}
+                disabled={loading}
+                className="shrink-0"
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+              </Button>
+            </div>
+
+            {/* AI suggestions - shown below search input */}
             {suggestionsLoading ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1007,23 +1326,6 @@ export function ConnectFileOverlay({
                 ))}
               </div>
             ) : null}
-
-            {/* Search input */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={handleKeyDown}
-                className="pl-9"
-              />
-            </div>
-
-            <Button onClick={() => handleSearch(undefined, "manual")} disabled={loading} className="w-full">
-              {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
-              Search
-            </Button>
           </div>
 
           {/* Error */}
@@ -1034,8 +1336,8 @@ export function ConnectFileOverlay({
           )}
 
           {/* Tabs */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex flex-col flex-1 min-h-0">
-            <TabsList className="h-10 w-full grid grid-cols-3 rounded-none border-b shrink-0">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
+            <TabsList className="h-10 w-full grid grid-cols-4 rounded-none border-b shrink-0">
               <TabsTrigger value="files" className="gap-1 text-xs">
                 <HardDrive className="h-3.5 w-3.5" />
                 Files
@@ -1055,6 +1357,13 @@ export function ConnectFileOverlay({
                 Emails
                 {hasSearched && sortedEmails.length > 0 && (
                   <span className="ml-1 text-xs text-muted-foreground">({sortedEmails.length})</span>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="browser" className="gap-1 text-xs">
+                <Globe className="h-3.5 w-3.5" />
+                Browser
+                {partner?.invoiceSources && partner.invoiceSources.length > 0 && (
+                  <span className="ml-1 text-xs text-muted-foreground">({partner.invoiceSources.length})</span>
                 )}
               </TabsTrigger>
             </TabsList>
@@ -1087,8 +1396,8 @@ export function ConnectFileOverlay({
             )}
 
             {/* Files Tab Results */}
-            <TabsContent value="files" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden" forceMount>
-              <ScrollArea className="h-full">
+            <TabsContent value="files" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden overflow-hidden" forceMount>
+              <ScrollArea className="h-full w-full">
                 {!hasSearchedLocalFiles ? (
                   <div className="p-8 text-center text-muted-foreground">
                     <Search className="h-8 w-8 mx-auto mb-2 opacity-30" />
@@ -1100,31 +1409,41 @@ export function ConnectFileOverlay({
                     <p className="text-sm">No files found</p>
                   </div>
                 ) : (
-                  <div className="p-2 space-y-1">
-                    {localFileResults.map((result) => {
-                      const isConnected = isFileConnected(result);
-                      const isSelected = selectedResult?.id === result.id;
-                      const isPdf = result.mimeType === "application/pdf";
+                  <div className="p-2 space-y-1 overflow-hidden">
+                  {localFileResults.map((result) => {
+                    const isConnected = isFileConnected(result);
+                    const isSelected = selectedResult?.id === result.id;
+                    const isPdf = result.mimeType === "application/pdf";
+                    const isStrategyMatch =
+                      result.type === "local" &&
+                      result.fileId &&
+                      localStrategyMatchFileIds.has(result.fileId);
 
-                      return (
-                        <button
-                          key={result.id}
-                          type="button"
-                          disabled={isConnected}
-                          onClick={() => setSelectedResult(result)}
-                          className={cn(
-                            "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors",
-                            isSelected && "bg-primary/10 ring-1 ring-primary",
-                            !isSelected && !isConnected && "hover:bg-muted",
-                            isConnected && "opacity-50 cursor-not-allowed"
-                          )}
-                        >
+                    return (
+                      <button
+                        key={result.id}
+                        type="button"
+                        disabled={isConnected}
+                        onClick={() => setSelectedResult(result)}
+                        className={cn(
+                          "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors overflow-hidden",
+                          isSelected && "bg-primary/10 ring-1 ring-primary",
+                          !isSelected &&
+                            !isConnected &&
+                            !isStrategyMatch &&
+                            "hover:bg-muted",
+                          isStrategyMatch &&
+                            !isSelected &&
+                            "bg-blue-50 dark:bg-blue-950/20",
+                          isConnected && "opacity-50 cursor-not-allowed"
+                        )}
+                      >
                           <div className="flex-shrink-0 w-10 h-10 rounded bg-muted flex items-center justify-center">
                             {isPdf ? <FileText className="h-5 w-5 text-red-500" /> : <Image className="h-5 w-5 text-blue-500" />}
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-medium truncate">{result.filename}</p>
+                          <div className="flex-1 min-w-0 overflow-hidden">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <p className="text-sm font-medium truncate flex-1 min-w-0">{result.filename}</p>
                               {isConnected && (
                                 <Badge variant="secondary" className="text-xs">
                                   <Link2 className="h-3 w-3 mr-1" />
@@ -1140,13 +1459,41 @@ export function ConnectFileOverlay({
                                   <span>{formatAmount(result.amount, result.currency)}</span>
                                 </>
                               )}
+                              {result.score > 0 && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge
+                                      variant="outline"
+                                      className={cn(
+                                        "text-xs py-0 h-4 cursor-help",
+                                        result.score >= 85
+                                          ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/50 dark:text-green-200 dark:border-green-700"
+                                          : result.score >= 70
+                                          ? "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200 dark:border-yellow-700"
+                                          : "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600"
+                                      )}
+                                    >
+                                      {result.score}%
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[260px] text-xs">
+                                    <div className="font-medium mb-1">Match signals</div>
+                                    <div className="space-y-0.5">
+                                      {result.matchReasons?.length ? (
+                                        result.matchReasons.map((reason, idx) => (
+                                          <div key={idx}>{reason}</div>
+                                        ))
+                                      ) : result.matchedFields?.length ? (
+                                        <div>Matched: {result.matchedFields.join(", ")}</div>
+                                      ) : (
+                                        <div>No specific signals</div>
+                                      )}
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
                             </div>
                             {result.partner && <p className="text-xs text-muted-foreground truncate mt-0.5">{result.partner}</p>}
-                            {result.matchedFields && result.matchedFields.length > 0 && (
-                              <p className="text-xs text-primary/70 mt-0.5">
-                                Matched: {result.matchedFields.join(", ")}
-                              </p>
-                            )}
                           </div>
                           {isSelected && <Check className="h-4 w-4 text-primary flex-shrink-0 mt-1" />}
                         </button>
@@ -1158,12 +1505,22 @@ export function ConnectFileOverlay({
             </TabsContent>
 
             {/* Gmail Attachments Tab Results */}
-            <TabsContent value="gmail-attachments" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden" forceMount>
-              <ScrollArea className="h-full">
+            <TabsContent value="gmail-attachments" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden overflow-hidden" forceMount>
+              <ScrollArea className="h-full w-full">
                 {!hasGmailIntegration ? (
-                  <div className="p-8 text-center text-muted-foreground">
-                    <Mail className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">No Gmail connected</p>
+                  <div className="p-6 space-y-4">
+                    <IntegrationStatusBanner
+                      integration={{
+                        id: "gmail",
+                        displayName: "Gmail",
+                        isConnected: false,
+                        needsReauth: false,
+                      }}
+                    />
+                    <div className="text-center text-muted-foreground">
+                      <Paperclip className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">Connect Gmail to search email attachments</p>
+                    </div>
                   </div>
                 ) : !hasSearched ? (
                   <div className="p-8 text-center text-muted-foreground">
@@ -1176,13 +1533,16 @@ export function ConnectFileOverlay({
                     <p className="text-sm">No attachments found</p>
                   </div>
                 ) : (
-                  <div className="p-2 space-y-1">
+                  <div className="p-2 space-y-1 overflow-hidden">
                     {sortedAttachments.map((item) => {
                       const isSelected = selectedAttachmentKey === item.key;
                       const isPdf =
                         item.attachment.mimeType === "application/pdf" ||
                         (item.attachment.mimeType === "application/octet-stream" &&
                           item.attachment.filename.toLowerCase().endsWith(".pdf"));
+                      const isStrategyMatch =
+                        strategyMode &&
+                        strategyGmailMessageIds.has(item.message.messageId);
                       const signal = attachmentSignals.get(item.key);
                       const confidence = signal ? Math.round(signal.score * 100) : null;
 
@@ -1192,9 +1552,14 @@ export function ConnectFileOverlay({
                           type="button"
                           onClick={() => setSelectedAttachmentKey(item.key)}
                           className={cn(
-                            "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors min-w-0 overflow-hidden",
+                            "w-full max-w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors min-w-0 overflow-hidden",
                             isSelected && "bg-primary/10 ring-1 ring-primary",
-                            !isSelected && "hover:bg-muted"
+                            !isSelected &&
+                              !isStrategyMatch &&
+                              "hover:bg-muted",
+                            isStrategyMatch &&
+                              !isSelected &&
+                              "bg-blue-50 dark:bg-blue-950/20"
                           )}
                         >
                           <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
@@ -1250,12 +1615,22 @@ export function ConnectFileOverlay({
             </TabsContent>
 
             {/* Email to PDF Tab Results */}
-            <TabsContent value="email-to-pdf" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden" forceMount>
-              <ScrollArea className="h-full">
+            <TabsContent value="email-to-pdf" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden overflow-hidden" forceMount>
+              <ScrollArea className="h-full w-full">
                 {!hasGmailIntegration ? (
-                  <div className="p-8 text-center text-muted-foreground">
-                    <Mail className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">No Gmail connected</p>
+                  <div className="p-6 space-y-4">
+                    <IntegrationStatusBanner
+                      integration={{
+                        id: "gmail",
+                        displayName: "Gmail",
+                        isConnected: false,
+                        needsReauth: false,
+                      }}
+                    />
+                    <div className="text-center text-muted-foreground">
+                      <Mail className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">Connect Gmail to convert emails to PDF</p>
+                    </div>
                   </div>
                 ) : !hasSearched ? (
                   <div className="p-8 text-center text-muted-foreground">
@@ -1268,9 +1643,11 @@ export function ConnectFileOverlay({
                     <p className="text-sm">No emails found</p>
                   </div>
                 ) : (
-                  <div className="p-2 space-y-1">
+                  <div className="p-2 space-y-1 overflow-hidden">
                     {sortedEmails.map((email) => {
                       const isSelected = selectedEmail?.messageId === email.messageId;
+                      const isStrategyMatch =
+                        strategyMode && strategyEmailMessageIds.has(email.messageId);
 
                       return (
                         <button
@@ -1278,15 +1655,20 @@ export function ConnectFileOverlay({
                           type="button"
                           onClick={() => handleSelectEmail(email)}
                           className={cn(
-                            "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors",
+                            "w-full max-w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors min-w-0 overflow-hidden",
                             isSelected && "bg-primary/10 ring-1 ring-primary",
-                            !isSelected && "hover:bg-muted"
+                            !isSelected &&
+                              !isStrategyMatch &&
+                              "hover:bg-muted",
+                            isStrategyMatch &&
+                              !isSelected &&
+                              "bg-blue-50 dark:bg-blue-950/20"
                           )}
                         >
                           <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
                             <Mail className="h-5 w-5 text-muted-foreground" />
                           </div>
-                          <div className="flex-1 min-w-0">
+                          <div className="flex-1 min-w-0 overflow-hidden">
                             <p className="text-sm font-medium truncate">{email.subject}</p>
                             <p className="text-xs text-muted-foreground truncate">{email.fromName || email.from}</p>
                             <span className="text-xs text-muted-foreground">{format(email.date, "MMM d, yyyy")}</span>
@@ -1295,6 +1677,103 @@ export function ConnectFileOverlay({
                         </button>
                       );
                     })}
+                  </div>
+                )}
+              </ScrollArea>
+            </TabsContent>
+
+            {/* Browser Tab - Invoice Sources */}
+            <TabsContent value="browser" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden overflow-hidden" forceMount>
+              <ScrollArea className="h-full w-full">
+                {browserExtensionStatus === "not_installed" ? (
+                  <div className="p-6 space-y-4">
+                    <IntegrationStatusBanner
+                      integration={{
+                        id: "browser",
+                        displayName: "Browser Extension",
+                        isConnected: false,
+                        needsReauth: false,
+                      }}
+                    />
+                    <div className="text-center text-muted-foreground">
+                      <Globe className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">Install the extension to collect invoices from partner websites</p>
+                    </div>
+                  </div>
+                ) : browserExtensionStatus === "checking" ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    <Loader2 className="h-8 w-8 mx-auto mb-2 animate-spin opacity-30" />
+                    <p className="text-sm">Checking extension status...</p>
+                  </div>
+                ) : !partner ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    <Globe className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">Assign a partner first</p>
+                    <p className="text-xs mt-1">Invoice sources are configured per partner</p>
+                  </div>
+                ) : !partner.invoiceSources || partner.invoiceSources.length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    <Globe className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm font-medium mb-2">No Invoice Sources</p>
+                    <p className="text-xs mb-4">
+                      Configure invoice sources for {partner.name} to automatically collect invoices from their website.
+                    </p>
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={`/partners?id=${partner.id}`}>
+                        <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                        Configure Sources
+                      </a>
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="p-2 space-y-2">
+                    {partner.invoiceSources.map((source) => (
+                      <div
+                        key={source.id}
+                        className="flex items-start gap-3 p-3 rounded-md border bg-card hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                          <Globe className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div className="flex-1 min-w-0 overflow-hidden">
+                          <p className="text-sm font-medium truncate">{source.label || source.url}</p>
+                          <p className="text-xs text-muted-foreground truncate">{source.url}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <Badge variant={source.status === "active" ? "default" : "secondary"} className="text-xs">
+                              {source.status}
+                            </Badge>
+                            {source.lastFetchedAt && (
+                              <span className="text-xs text-muted-foreground">
+                                Last: {format(source.lastFetchedAt.toDate(), "MMM d")}
+                              </span>
+                            )}
+                            {source.successfulFetches > 0 && (
+                              <span className="text-xs text-muted-foreground">
+                                ({source.successfulFetches} fetches)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            // Open the source URL in a new tab for manual collection
+                            window.open(source.url, "_blank", "noopener,noreferrer");
+                          }}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5 mr-1" />
+                          Open
+                        </Button>
+                      </div>
+                    ))}
+                    <div className="pt-2 border-t">
+                      <Button variant="outline" size="sm" asChild className="w-full">
+                        <a href={`/partners?id=${partner.id}`}>
+                          Configure More Sources
+                        </a>
+                      </Button>
+                    </div>
                   </div>
                 )}
               </ScrollArea>
@@ -1380,11 +1859,10 @@ export function ConnectFileOverlay({
                     </div>
                   )}
                 </div>
-                <div className="border-t p-4 flex justify-end gap-2 shrink-0">
-                  <Button variant="outline" onClick={onClose}>Cancel</Button>
+                <div className="border-t p-4 flex justify-end shrink-0">
                   <Button onClick={handleConvertToPdf} disabled={isConverting}>
                     {isConverting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileDown className="h-4 w-4 mr-2" />}
-                    Convert to PDF & Connect
+                    To PDF and Connect
                   </Button>
                 </div>
               </>
@@ -1396,6 +1874,35 @@ export function ConnectFileOverlay({
                 </div>
               </div>
             )
+          )}
+
+          {/* Browser tab info panel */}
+          {activeTab === "browser" && (
+            <div className="flex-1 flex items-center justify-center text-muted-foreground p-8">
+              <div className="text-center max-w-md">
+                <Globe className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <h3 className="text-lg font-medium text-foreground mb-2">Browser Invoice Collection</h3>
+                <p className="text-sm mb-4">
+                  The browser extension can automatically collect invoices from partner websites.
+                  Select an invoice source from the list to open it in a new tab, then use the extension to download invoices.
+                </p>
+                <div className="space-y-2 text-xs text-left bg-muted/50 rounded-lg p-4">
+                  <p className="font-medium text-foreground">How it works:</p>
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>Click &ldquo;Open&rdquo; on an invoice source</li>
+                    <li>Log in to the partner website if needed</li>
+                    <li>The extension will detect available invoices</li>
+                    <li>Select invoices to download and connect</li>
+                  </ol>
+                </div>
+                <Button variant="outline" size="sm" className="mt-4" asChild>
+                  <a href="/integrations/browser" target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                    Extension Settings
+                  </a>
+                </Button>
+              </div>
+            </div>
           )}
         </div>
       </div>

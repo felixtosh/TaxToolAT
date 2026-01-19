@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { doc, getDoc, deleteDoc, collection, query, where, getDocs } from "firebase/firestore";
-import { getServerDb, MOCK_USER_ID } from "@/lib/firebase/config-server";
+import { getServerDb } from "@/lib/firebase/config-server";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import {
   getEmailIntegration,
   softDisconnectEmailIntegration,
@@ -25,6 +26,7 @@ const SYNC_QUEUE_COLLECTION = "gmailSyncQueue";
  */
 export async function DELETE(request: NextRequest) {
   try {
+    const userId = await getServerUserIdWithFallback(request);
     const integrationId = request.nextUrl.searchParams.get("integrationId");
 
     if (!integrationId) {
@@ -34,7 +36,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId: MOCK_USER_ID };
+    const ctx = { db, userId };
 
     // Verify integration exists and belongs to user
     const integration = await getEmailIntegration(ctx, integrationId);
