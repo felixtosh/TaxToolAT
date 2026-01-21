@@ -1,21 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   CalendarDays,
   Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  FileCheck,
   FileText,
+  FileX,
   Filter,
+  Globe,
   History,
+  Inbox,
   Link2,
   Loader2,
   Mail,
   Menu,
   MoreHorizontal,
+  Pause,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Trash2,
@@ -30,11 +36,15 @@ import {
   Info,
   Tag,
   Sparkles,
+  Receipt,
+  Landmark,
+  PartyPopper,
 } from "lucide-react";
 
 // UI Primitives
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConnectButton } from "@/components/ui/connect-button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -103,11 +113,14 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Pill } from "@/components/ui/pill";
+import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
+import { PartnerPill } from "@/components/partners/partner-pill";
 import { SearchButton } from "@/components/ui/search-button";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { TableEmptyState, emptyStatePresets } from "@/components/ui/table-empty-state";
 import { cn } from "@/lib/utils";
 
 // Shared Primitives (Consolidated Patterns)
@@ -124,18 +137,8 @@ import {
   SectionDivider,
   FileListItem,
 } from "@/components/ui/detail-panel-primitives";
-import {
-  FilterButton,
-  FilterOption,
-  FilterOptionsGroup,
-  FilterGroupDivider,
-  FilterToolbar,
-  FilterSeparator,
-  ActiveFilterBadge,
-  ClearFiltersButton,
-} from "@/components/ui/filter-primitives";
 
-// Navigation sections
+// Navigation sections - reorganized for clarity
 const sections = [
   { id: "colors", label: "Colors" },
   { id: "typography", label: "Typography" },
@@ -143,15 +146,12 @@ const sections = [
   { id: "badges", label: "Badges & Pills" },
   { id: "forms", label: "Form Elements" },
   { id: "cards", label: "Cards & Panels" },
-  { id: "tables", label: "Tables" },
-  { id: "transactions", label: "Transactions" },
+  { id: "table-patterns", label: "Table Patterns" },
+  { id: "integrations", label: "Integration Items" },
   { id: "sidebar", label: "Sidebar & Chat" },
   { id: "dialogs", label: "Dialogs & Sheets" },
-  { id: "navigation", label: "Navigation" },
-  { id: "toolbars", label: "Toolbars & Filters" },
   { id: "feedback", label: "Feedback & Status" },
   { id: "overlays", label: "Overlays & Popovers" },
-  { id: "primitives", label: "Shared Primitives" },
 ];
 
 // Color palette from globals.css
@@ -208,17 +208,57 @@ export default function DesignSystemPage() {
   const [selectValue, setSelectValue] = useState("");
   const [tabValue, setTabValue] = useState("tab1");
   const [progress, setProgress] = useState(45);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+  // Use IntersectionObserver for reliable scroll tracking
+  useEffect(() => {
+    const scrollContainer = scrollAreaRef.current;
+    if (!scrollContainer) return;
+
+    const observerOptions = {
+      root: scrollContainer,
+      rootMargin: "-10% 0px -80% 0px", // Trigger when section enters top 20% of viewport
+      threshold: 0,
+    };
+
+    const observerCallback: IntersectionObserverCallback = (entries) => {
+      // Find entries that are intersecting
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          setActiveSection(entry.target.id);
+        }
+      });
+    };
+
+    const observer = new IntersectionObserver(observerCallback, observerOptions);
+
+    // Observe all section elements
+    sections.forEach((section) => {
+      const element = document.getElementById(section.id);
+      if (element) {
+        observer.observe(element);
+      }
+    });
+
+    return () => observer.disconnect();
+  }, []);
 
   const scrollToSection = (sectionId: string) => {
-    setActiveSection(sectionId);
-    document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth" });
+    const element = document.getElementById(sectionId);
+    const scrollContainer = scrollAreaRef.current;
+    if (element && scrollContainer) {
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      const relativeTop = elementRect.top - containerRect.top + scrollContainer.scrollTop;
+      scrollContainer.scrollTo({ top: relativeTop - 20, behavior: "smooth" });
+    }
   };
 
   return (
     <TooltipProvider>
-      <div className="flex h-[calc(100vh-4rem)]">
+      <div className="h-[calc(100vh-3.5rem)] flex overflow-hidden">
         {/* Fixed Navigation Sidebar */}
-        <nav className="w-56 border-r bg-muted/30 p-4 flex-shrink-0 overflow-y-auto">
+        <nav className="w-56 border-r bg-muted/30 p-4 shrink-0 overflow-y-auto">
           <h1 className="text-lg font-semibold mb-4">Design System</h1>
           <ul className="space-y-1">
             {sections.map((section) => (
@@ -239,8 +279,11 @@ export default function DesignSystemPage() {
           </ul>
         </nav>
 
-        {/* Main Content */}
-        <ScrollArea className="flex-1">
+        {/* Main Content - scrollable area */}
+        <div
+          className="flex-1 overflow-y-auto"
+          ref={scrollAreaRef}
+        >
           <div className="max-w-5xl mx-auto p-8 space-y-12">
             {/* ===== COLORS ===== */}
             <SectionHeader id="colors" title="Color Palette" />
@@ -369,6 +412,24 @@ export default function DesignSystemPage() {
               </ComponentRow>
             </ComponentGroup>
 
+            <ComponentGroup title="Connect Button">
+              <p className="text-sm text-muted-foreground mb-3">
+                Standardized button for opening connect overlays. Shows pressed state when overlay is open.
+                Used in TransactionFilesSection and FileConnectionsList.
+              </p>
+              <ComponentRow label="Inactive">
+                <ConnectButton />
+                <ConnectButton label="Add" />
+              </ComponentRow>
+              <ComponentRow label="Active (Open)">
+                <ConnectButton isOpen />
+                <ConnectButton isOpen label="Add" />
+              </ComponentRow>
+              <ComponentRow label="Disabled">
+                <ConnectButton disabled />
+              </ComponentRow>
+            </ComponentGroup>
+
             {/* ===== BADGES & PILLS ===== */}
             <SectionHeader id="badges" title="Badges & Pills" />
             <ComponentGroup title="Badge Variants">
@@ -405,6 +466,84 @@ export default function DesignSystemPage() {
               <ComponentRow label="Interactive">
                 <Pill label="Click me" onClick={() => alert("Clicked!")} />
                 <Pill label="Disabled" disabled />
+              </ComponentRow>
+            </ComponentGroup>
+
+            <ComponentGroup title="Partner Pills">
+              <p className="text-sm text-muted-foreground mb-3">
+                Specialized pill for partner display with match types and confidence levels.
+              </p>
+              <ComponentRow label="Manual">
+                <PartnerPill name="Amazon" matchedBy="manual" />
+                <PartnerPill name="Netflix" matchedBy="manual" onRemove={() => {}} />
+              </ComponentRow>
+              <ComponentRow label="Auto">
+                <PartnerPill name="REWE" confidence={95} matchedBy="auto" />
+                <PartnerPill name="Spotify" confidence={88} matchedBy="auto" onRemove={() => {}} />
+              </ComponentRow>
+              <ComponentRow label="Suggestion">
+                <PartnerPill name="Client Corp" variant="suggestion" confidence={92} />
+                <PartnerPill name="Freelance Inc" variant="suggestion" confidence={78} onClick={() => {}} />
+              </ComponentRow>
+              <ComponentRow label="With Type Icon">
+                <PartnerPill name="My Company" partnerType="user" matchedBy="manual" />
+                <PartnerPill name="Global Partner" partnerType="global" confidence={90} matchedBy="auto" />
+              </ComponentRow>
+            </ComponentGroup>
+
+            <ComponentGroup title="Amount Match Display">
+              <p className="text-sm text-muted-foreground mb-3">
+                File/transaction count pill with amount matching status.
+              </p>
+              <ComponentRow label="Matched">
+                <AmountMatchDisplay
+                  count={1}
+                  countType="file"
+                  primaryAmount={-12550}
+                  primaryCurrency="EUR"
+                  secondaryAmounts={[{ amount: 12550, currency: "EUR" }]}
+                />
+              </ComponentRow>
+              <ComponentRow label="Multiple">
+                <AmountMatchDisplay
+                  count={3}
+                  countType="file"
+                  primaryAmount={-50000}
+                  primaryCurrency="EUR"
+                  secondaryAmounts={[
+                    { amount: 20000, currency: "EUR" },
+                    { amount: 20000, currency: "EUR" },
+                    { amount: 10000, currency: "EUR" }
+                  ]}
+                />
+              </ComponentRow>
+              <ComponentRow label="Mismatch">
+                <AmountMatchDisplay
+                  count={1}
+                  countType="file"
+                  primaryAmount={-10000}
+                  primaryCurrency="EUR"
+                  secondaryAmounts={[{ amount: 8500, currency: "EUR" }]}
+                />
+              </ComponentRow>
+              <ComponentRow label="Extracting">
+                <AmountMatchDisplay
+                  count={1}
+                  countType="file"
+                  primaryAmount={-5000}
+                  primaryCurrency="EUR"
+                  secondaryAmounts={[]}
+                  isExtracting
+                />
+              </ComponentRow>
+              <ComponentRow label="No Amount">
+                <AmountMatchDisplay
+                  count={2}
+                  countType="file"
+                  primaryAmount={-3000}
+                  primaryCurrency="EUR"
+                  secondaryAmounts={[]}
+                />
               </ComponentRow>
             </ComponentGroup>
 
@@ -575,16 +714,17 @@ export default function DesignSystemPage() {
               </div>
             </ComponentGroup>
 
-            {/* ===== TABLES ===== */}
-            <SectionHeader id="tables" title="Tables" />
+            {/* ===== TABLE PATTERNS ===== */}
+            <SectionHeader id="table-patterns" title="Table Patterns" />
             <p className="text-muted-foreground mb-6">
-              Table patterns based on the Transaction table - the primary data display in the application.
-              Uses TanStack Table with virtualization for performance.
+              Reusable table patterns used across the application for data display.
+              Includes headers, cells, row states, and data table components.
             </p>
 
             <ComponentGroup title="Sortable Headers">
               <p className="text-sm text-muted-foreground mb-3">
                 Column headers with sort indicators. Based on <code className="text-xs bg-muted px-1 py-0.5 rounded">SortableHeader</code> component.
+                <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">transaction-columns.tsx</code>, <code className="bg-muted px-1 py-0.5 rounded">file-columns.tsx</code></span>
               </p>
               <div className="flex gap-4 flex-wrap">
                 {/* Unsorted */}
@@ -619,152 +759,11 @@ export default function DesignSystemPage() {
               </div>
             </ComponentGroup>
 
-            <ComponentGroup title="Transaction Table (Reference Pattern)">
-              <div className="border rounded-lg overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-muted/30">
-                      <TableHead className="w-[110px]">
-                        <Button variant="ghost" className="h-8 -mx-2 px-2 w-full justify-between font-medium text-xs">
-                          <span>Date</span>
-                          <ArrowDown className="h-3.5 w-3.5" />
-                        </Button>
-                      </TableHead>
-                      <TableHead className="w-[100px]">
-                        <Button variant="ghost" className="h-8 -mx-2 px-2 w-full justify-between font-medium text-xs">
-                          <span>Amount</span>
-                          <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground/50" />
-                        </Button>
-                      </TableHead>
-                      <TableHead className="w-[220px]">Description</TableHead>
-                      <TableHead className="w-[180px]">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium">Partner</span>
-                          <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
-                        </div>
-                      </TableHead>
-                      <TableHead className="w-[120px]">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium">File</span>
-                          <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
-                        </div>
-                      </TableHead>
-                      <TableHead className="w-[100px] text-xs font-medium">Account</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {/* Completed row (green background) */}
-                    <TableRow className="bg-green-50/70 hover:bg-green-100/70 dark:bg-green-950/20">
-                      <TableCell>
-                        <div>
-                          <p className="text-sm whitespace-nowrap">Jan 15, 2024</p>
-                          <p className="text-sm text-muted-foreground">14:30</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm tabular-nums text-red-600">-€125,50</span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="min-w-0">
-                          <p className="text-sm truncate">Amazon</p>
-                          <p className="text-sm text-muted-foreground truncate">Office Supplies Purchase</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Pill label="Amazon" icon={Building2} />
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <FileText className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-sm">1</span>
-                          <Check className="h-3 w-3 text-green-600" />
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm truncate">Main Account</span>
-                      </TableCell>
-                    </TableRow>
-
-                    {/* Row with partner suggestion */}
-                    <TableRow className="hover:bg-muted/50">
-                      <TableCell>
-                        <p className="text-sm whitespace-nowrap">Jan 14, 2024</p>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm tabular-nums text-green-600">+€2.500,00</span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="min-w-0">
-                          <p className="text-sm truncate">Client Corp</p>
-                          <p className="text-sm text-muted-foreground truncate">Invoice Payment #2024-001</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Pill label="Client Corp" variant="suggestion" confidence={92} />
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm text-muted-foreground">—</span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm truncate">Main Account</span>
-                      </TableCell>
-                    </TableRow>
-
-                    {/* Row with no-receipt category */}
-                    <TableRow className="hover:bg-muted/50">
-                      <TableCell>
-                        <p className="text-sm whitespace-nowrap">Jan 13, 2024</p>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm tabular-nums text-red-600">-€12,50</span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="min-w-0">
-                          <p className="text-sm truncate">Bank</p>
-                          <p className="text-sm text-muted-foreground truncate">Account Fee</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm text-muted-foreground">—</span>
-                      </TableCell>
-                      <TableCell>
-                        <Pill label="Bank Fees" icon={Tag} />
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm truncate">Main Account</span>
-                      </TableCell>
-                    </TableRow>
-
-                    {/* Selected row */}
-                    <TableRow className="bg-muted/50 hover:bg-muted">
-                      <TableCell>
-                        <p className="text-sm whitespace-nowrap">Jan 12, 2024</p>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm tabular-nums text-red-600">-€15,99</span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="min-w-0">
-                          <p className="text-sm truncate">Netflix</p>
-                          <p className="text-sm text-muted-foreground truncate">Monthly Subscription</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Pill label="Netflix" icon={Building2} />
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm text-muted-foreground">—</span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm truncate">Main Account</span>
-                      </TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-            </ComponentGroup>
-
             <ComponentGroup title="Cell Patterns">
+              <p className="text-sm text-muted-foreground mb-3">
+                Standard cell rendering patterns for different data types.
+                <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">transaction-columns.tsx</code>, <code className="bg-muted px-1 py-0.5 rounded">file-columns.tsx</code></span>
+              </p>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 {/* Date Cell */}
                 <div className="border rounded-lg p-3">
@@ -778,13 +777,13 @@ export default function DesignSystemPage() {
                 {/* Amount Cell - Negative */}
                 <div className="border rounded-lg p-3">
                   <p className="text-xs text-muted-foreground mb-2 uppercase">Amount (Expense)</p>
-                  <span className="text-sm tabular-nums text-red-600">-€125,50</span>
+                  <span className="text-sm tabular-nums whitespace-nowrap text-red-600">-€125,50</span>
                 </div>
 
                 {/* Amount Cell - Positive */}
                 <div className="border rounded-lg p-3">
                   <p className="text-xs text-muted-foreground mb-2 uppercase">Amount (Income)</p>
-                  <span className="text-sm tabular-nums text-green-600">+€2.500,00</span>
+                  <span className="text-sm tabular-nums whitespace-nowrap text-green-600">+€2.500,00</span>
                 </div>
 
                 {/* Description Cell */}
@@ -796,14 +795,87 @@ export default function DesignSystemPage() {
                   </div>
                 </div>
 
-                {/* File Cell - With file */}
+                {/* Partner Cell - Manual */}
                 <div className="border rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground mb-2 uppercase">File (Connected)</p>
-                  <div className="flex items-center gap-1.5">
-                    <FileText className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm">1</span>
-                    <Check className="h-3 w-3 text-green-600" />
-                  </div>
+                  <p className="text-xs text-muted-foreground mb-2 uppercase">Partner (Manual)</p>
+                  <PartnerPill name="Amazon" matchedBy="manual" />
+                </div>
+
+                {/* Partner Cell - Auto */}
+                <div className="border rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-2 uppercase">Partner (Auto)</p>
+                  <PartnerPill name="Netflix" confidence={95} matchedBy="auto" />
+                </div>
+
+                {/* Partner Cell - Suggestion */}
+                <div className="border rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-2 uppercase">Partner (Suggestion)</p>
+                  <PartnerPill name="Client Corp" variant="suggestion" confidence={92} />
+                </div>
+
+                {/* Partner Cell - Empty */}
+                <div className="border rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-2 uppercase">Partner (Empty)</p>
+                  <span className="text-sm text-muted-foreground">—</span>
+                </div>
+
+                {/* File Cell - Matched */}
+                <div className="border rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-2 uppercase">File (Matched)</p>
+                  <AmountMatchDisplay
+                    count={1}
+                    countType="file"
+                    primaryAmount={-12550}
+                    primaryCurrency="EUR"
+                    secondaryAmounts={[{ amount: 12550, currency: "EUR" }]}
+                  />
+                </div>
+
+                {/* File Cell - Multiple files */}
+                <div className="border rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-2 uppercase">File (Multiple)</p>
+                  <AmountMatchDisplay
+                    count={3}
+                    countType="file"
+                    primaryAmount={-50000}
+                    primaryCurrency="EUR"
+                    secondaryAmounts={[
+                      { amount: 20000, currency: "EUR" },
+                      { amount: 20000, currency: "EUR" },
+                      { amount: 10000, currency: "EUR" }
+                    ]}
+                  />
+                </div>
+
+                {/* File Cell - Amount Mismatch */}
+                <div className="border rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-2 uppercase">File (Mismatch)</p>
+                  <AmountMatchDisplay
+                    count={1}
+                    countType="file"
+                    primaryAmount={-10000}
+                    primaryCurrency="EUR"
+                    secondaryAmounts={[{ amount: 8500, currency: "EUR" }]}
+                  />
+                </div>
+
+                {/* File Cell - Extracting */}
+                <div className="border rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-2 uppercase">File (Extracting)</p>
+                  <AmountMatchDisplay
+                    count={1}
+                    countType="file"
+                    primaryAmount={-5000}
+                    primaryCurrency="EUR"
+                    secondaryAmounts={[]}
+                    isExtracting
+                  />
+                </div>
+
+                {/* File Cell - No Receipt Category */}
+                <div className="border rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-2 uppercase">No Receipt Category</p>
+                  <Pill label="Bank Fees" icon={Tag} />
                 </div>
 
                 {/* File Cell - Empty */}
@@ -815,6 +887,10 @@ export default function DesignSystemPage() {
             </ComponentGroup>
 
             <ComponentGroup title="Row States">
+              <p className="text-sm text-muted-foreground mb-3">
+                Visual states for table rows based on selection, completion, and highlight status.
+                <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">transaction-table.tsx</code>, <code className="bg-muted px-1 py-0.5 rounded">file-table.tsx</code></span>
+              </p>
               <div className="space-y-2">
                 <div className="p-3 border rounded flex items-center gap-4">
                   <span className="text-sm w-28 shrink-0">Default</span>
@@ -835,36 +911,34 @@ export default function DesignSystemPage() {
               </div>
             </ComponentGroup>
 
-            {/* ===== TRANSACTIONS (Priority Section) ===== */}
-            <SectionHeader id="transactions" title="Transaction Patterns" />
-            <p className="text-muted-foreground mb-6">
-              Core patterns used in the Transaction overview and detail views. These are the most important UI patterns in the application.
-            </p>
-
-            <ComponentGroup title="Transaction Table Row">
+            <ComponentGroup title="Data Table Row Example">
+              <p className="text-sm text-muted-foreground mb-3">
+                Complete table row showing all cell patterns combined.
+                <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">transaction-table.tsx</code></span>
+              </p>
               <div className="border rounded-lg overflow-hidden">
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[100px]">Date</TableHead>
+                    <TableRow className="bg-muted/30">
+                      <TableHead className="w-[110px]">Date</TableHead>
                       <TableHead className="w-[100px]">Amount</TableHead>
-                      <TableHead>Description</TableHead>
-                      <TableHead>Partner</TableHead>
-                      <TableHead>File</TableHead>
-                      <TableHead className="w-[100px]">Account</TableHead>
+                      <TableHead className="w-[220px]">Description</TableHead>
+                      <TableHead className="w-[240px]">Partner</TableHead>
+                      <TableHead className="w-[140px]">File</TableHead>
+                      <TableHead className="w-[120px]">Account</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {/* Completed transaction (green background) */}
-                    <TableRow className="bg-green-50/50">
+                    <TableRow className="bg-green-50/70 hover:bg-green-100/70 dark:bg-green-950/20">
                       <TableCell>
                         <div>
-                          <p className="text-sm">Jan 15, 2024</p>
+                          <p className="text-sm whitespace-nowrap">Jan 15, 2024</p>
                           <p className="text-sm text-muted-foreground">14:30</p>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <span className="text-sm tabular-nums text-red-600">-125.50</span>
+                        <span className="text-sm tabular-nums whitespace-nowrap text-red-600">-€125,50</span>
                       </TableCell>
                       <TableCell>
                         <div className="min-w-0">
@@ -873,28 +947,30 @@ export default function DesignSystemPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Pill label="Amazon" icon={Building2} />
+                        <PartnerPill name="Amazon" matchedBy="manual" />
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <FileText className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-sm">1</span>
-                          <Check className="h-3 w-3 text-green-600" />
-                        </div>
+                        <AmountMatchDisplay
+                          count={1}
+                          countType="file"
+                          primaryAmount={-12550}
+                          primaryCurrency="EUR"
+                          secondaryAmounts={[{ amount: 12550, currency: "EUR" }]}
+                        />
                       </TableCell>
                       <TableCell>
                         <span className="text-sm truncate">Main Account</span>
                       </TableCell>
                     </TableRow>
                     {/* Transaction with suggestion */}
-                    <TableRow>
+                    <TableRow className="hover:bg-muted/50">
                       <TableCell>
                         <div>
-                          <p className="text-sm">Jan 14, 2024</p>
+                          <p className="text-sm whitespace-nowrap">Jan 14, 2024</p>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <span className="text-sm tabular-nums text-green-600">+2,500.00</span>
+                        <span className="text-sm tabular-nums whitespace-nowrap text-green-600">+€2.500,00</span>
                       </TableCell>
                       <TableCell>
                         <div className="min-w-0">
@@ -903,24 +979,24 @@ export default function DesignSystemPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Pill label="Client Corp" variant="suggestion" confidence={92} />
+                        <PartnerPill name="Client Corp" variant="suggestion" confidence={92} />
                       </TableCell>
                       <TableCell>
-                        <span className="text-sm text-muted-foreground">-</span>
+                        <span className="text-sm text-muted-foreground">—</span>
                       </TableCell>
                       <TableCell>
                         <span className="text-sm truncate">Main Account</span>
                       </TableCell>
                     </TableRow>
-                    {/* Selected transaction */}
-                    <TableRow data-state="selected" className="bg-muted/50">
+                    {/* Selected transaction with no-receipt category */}
+                    <TableRow data-state="selected" className="bg-muted/50 hover:bg-muted">
                       <TableCell>
                         <div>
-                          <p className="text-sm">Jan 13, 2024</p>
+                          <p className="text-sm whitespace-nowrap">Jan 13, 2024</p>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <span className="text-sm tabular-nums text-red-600">-15.99</span>
+                        <span className="text-sm tabular-nums whitespace-nowrap text-red-600">-€15,99</span>
                       </TableCell>
                       <TableCell>
                         <div className="min-w-0">
@@ -929,10 +1005,10 @@ export default function DesignSystemPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Pill label="Netflix" icon={Building2} />
+                        <PartnerPill name="Netflix" confidence={95} matchedBy="auto" />
                       </TableCell>
                       <TableCell>
-                        <Pill label="Subscription" icon={FileText} />
+                        <Pill label="Subscription" icon={Tag} />
                       </TableCell>
                       <TableCell>
                         <span className="text-sm truncate">Main Account</span>
@@ -943,7 +1019,11 @@ export default function DesignSystemPage() {
               </div>
             </ComponentGroup>
 
-            <ComponentGroup title="Transaction Detail Panel">
+            <ComponentGroup title="Detail Panel Pattern">
+              <p className="text-sm text-muted-foreground mb-3">
+                Standard detail panel layout with header, field rows, and section headers.
+                <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">transaction-detail-panel.tsx</code>, <code className="bg-muted px-1 py-0.5 rounded">file-detail-panel.tsx</code>, <code className="bg-muted px-1 py-0.5 rounded">partner-detail-panel.tsx</code></span>
+              </p>
               <div className="border rounded-lg max-w-md">
                 <PanelHeader
                   title="Transaction Details"
@@ -956,47 +1036,95 @@ export default function DesignSystemPage() {
                 <div className="p-4 space-y-4">
                   {/* Amount display */}
                   <div className="text-center py-2">
-                    <p className="text-3xl font-bold text-red-600">-125.50</p>
+                    <p className="text-3xl font-bold text-red-600">-€125,50</p>
                     <p className="text-sm text-muted-foreground">EUR</p>
                   </div>
 
                   <Separator />
 
-                  {/* Transaction details */}
-                  <div className="space-y-1">
-                    <FieldRow label="Date">Jan 15, 2024 14:30</FieldRow>
-                    <FieldRow label="Description">Office Supplies Purchase</FieldRow>
-                    <FieldRow label="Partner">
-                      <Pill label="Amazon" icon={Building2} />
+                  {/* Transaction details - uses labelWidth="w-32" */}
+                  <div className="space-y-3">
+                    <FieldRow label="Date" labelWidth="w-32">Jan 15, 2024 14:30</FieldRow>
+                    <FieldRow label="Amount" labelWidth="w-32">
+                      <span className="tabular-nums text-red-600">-€125,50</span>
                     </FieldRow>
-                    <FieldRow label="Account">Main Account (DE89...4321)</FieldRow>
+                    <FieldRow label="Counterparty" labelWidth="w-32">Amazon Marketplace</FieldRow>
+                    <FieldRow label="IBAN" labelWidth="w-32">
+                      <span className="font-mono text-xs">DE89 3704 0044 0532 0130 00</span>
+                    </FieldRow>
+                    <FieldRow label="Description" labelWidth="w-32">Office Supplies Purchase</FieldRow>
+                    <FieldRow label="Account" labelWidth="w-32">
+                      <a href="#" className="text-primary hover:underline inline-flex items-center gap-1">
+                        Main Account
+                        <ChevronRight className="h-3 w-3" />
+                      </a>
+                    </FieldRow>
                   </div>
 
-                  <SectionDivider />
+                  {/* Partner section - uses h3 not PanelSectionHeader */}
+                  <div className="border-t pt-3 mt-3 -mx-4 px-4">
+                    <h3 className="text-sm font-medium mb-2">Partner</h3>
+                    <FieldRow label="Connect" labelWidth="w-32">
+                      <PartnerPill name="Amazon" matchedBy="manual" onClick={() => {}} onRemove={() => {}} />
+                    </FieldRow>
+                  </div>
 
-                  {/* Files section */}
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <PanelSectionHeader>Connected Files</PanelSectionHeader>
-                      <Button variant="outline" size="sm">
-                        <Plus className="h-3 w-3 mr-1" />
-                        Connect
-                      </Button>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3 p-2 border rounded hover:bg-muted/50 cursor-pointer">
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm truncate">amazon_invoice_2024.pdf</p>
-                          <p className="text-xs text-muted-foreground">Matched amount: 125.50</p>
-                        </div>
-                        <Check className="h-4 w-4 text-green-600" />
+                  {/* File section - uses h3 not PanelSectionHeader */}
+                  <div className="border-t pt-3 mt-3 -mx-4 px-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-medium">File</h3>
+                      <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="icon" className="h-6 w-6">
+                          <Info className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6">
+                          <History className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6">
+                          <Search className="h-3.5 w-3.5" />
+                        </Button>
                       </div>
                     </div>
+
+                    {/* Connected files list */}
+                    <div className="space-y-0.5">
+                      <FileListItem
+                        href="/files/123"
+                        fileName="amazon_invoice_2024.pdf"
+                        date="Jan 15, 2024"
+                        amount={12550}
+                        onRemove={() => {}}
+                      />
+                    </div>
+
+                    {/* Sum area - shows file totals vs transaction amount */}
+                    <div className="bg-muted/50 rounded-lg p-3 space-y-1.5">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Transaction</span>
+                        <span className="tabular-nums font-medium">€125,50</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Files (1)</span>
+                        <span className="tabular-nums font-medium">€125,50</span>
+                      </div>
+                      <Separator />
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Difference</span>
+                        <span className="tabular-nums font-medium text-green-600">€0,00 ✓</span>
+                      </div>
+                    </div>
+
+                    {/* No Receipt row */}
+                    <FieldRow label="No Receipt" labelWidth="w-32">
+                      <Button variant="outline" size="sm" className="h-7 px-3">
+                        <Plus className="h-3 w-3 mr-1" />
+                        Select
+                      </Button>
+                    </FieldRow>
                   </div>
                 </div>
                 <PanelFooter>
-                  <Button variant="ghost" size="sm" className="w-full justify-start gap-2">
+                  <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground">
                     <History className="h-4 w-4" />
                     <span>Edit History</span>
                   </Button>
@@ -1004,70 +1132,215 @@ export default function DesignSystemPage() {
               </div>
             </ComponentGroup>
 
-            <ComponentGroup title="Transaction Toolbar">
-              <FilterToolbar>
+            <ComponentGroup title="File Suggestion Row">
+              <p className="text-sm text-muted-foreground mb-3">
+                Row pattern for displaying file suggestions with confidence scores and accept/decline actions.
+                <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">transaction-files-section.tsx</code></span>
+              </p>
+              <div className="space-y-2 max-w-md">
+                {/* High confidence suggestion */}
+                <div className="flex items-center justify-between gap-2 p-2 rounded bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/30 group overflow-hidden">
+                  <div className="min-w-0 flex-1 overflow-hidden w-0">
+                    <p className="text-sm truncate">amazon_invoice_2024.pdf</p>
+                    <p className="text-xs text-muted-foreground">Jan 15, 2024</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-sm font-medium tabular-nums text-foreground">€125,50</span>
+                    <Badge
+                      variant="outline"
+                      className="text-xs px-1.5 py-0 cursor-help bg-green-100 text-green-800 border-green-300 dark:bg-green-900/50 dark:text-green-200 dark:border-green-700"
+                    >
+                      92%
+                    </Badge>
+                    <button
+                      type="button"
+                      className="p-1 rounded hover:bg-destructive/10 transition-colors"
+                      title="Decline suggestion"
+                    >
+                      <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                    </button>
+                    <button
+                      type="button"
+                      className="p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+                      title="Connect file"
+                    >
+                      <Check className="h-4 w-4 text-muted-foreground hover:text-green-600" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Medium confidence suggestion */}
+                <div className="flex items-center justify-between gap-2 p-2 rounded bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/30 group overflow-hidden">
+                  <div className="min-w-0 flex-1 overflow-hidden w-0">
+                    <p className="text-sm truncate">receipt_jan_2024.pdf</p>
+                    <p className="text-xs text-muted-foreground">Jan 14, 2024</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-sm font-medium tabular-nums text-foreground">€120,00</span>
+                    <Badge
+                      variant="outline"
+                      className="text-xs px-1.5 py-0 cursor-help bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200 dark:border-yellow-700"
+                    >
+                      75%
+                    </Badge>
+                    <button
+                      type="button"
+                      className="p-1 rounded hover:bg-destructive/10 transition-colors"
+                    >
+                      <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                    </button>
+                    <button
+                      type="button"
+                      className="p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+                    >
+                      <Check className="h-4 w-4 text-muted-foreground hover:text-green-600" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </ComponentGroup>
+
+            <ComponentGroup title="Category Suggestion Pill">
+              <p className="text-sm text-muted-foreground mb-3">
+                Clickable pill for no-receipt category suggestions with confidence scores.
+                <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">transaction-files-section.tsx</code></span>
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  className="inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm bg-info border-info-border text-info-foreground cursor-pointer hover:bg-info/80 transition-colors"
+                >
+                  <Sparkles className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span className="truncate max-w-[120px]">Bank Fees</span>
+                  <span className="text-xs opacity-75">95%</span>
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm bg-info border-info-border text-info-foreground cursor-pointer hover:bg-info/80 transition-colors"
+                >
+                  <Sparkles className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span className="truncate max-w-[120px]">Subscription</span>
+                  <span className="text-xs opacity-75">82%</span>
+                </button>
+              </div>
+            </ComponentGroup>
+
+            <ComponentGroup title="Toolbar Pattern">
+              <p className="text-sm text-muted-foreground mb-3">
+                Filter toolbar using Popover/Button for search and filtering. Active filters use secondary variant with X to clear.
+                <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">transaction-toolbar.tsx</code>, <code className="bg-muted px-1 py-0.5 rounded">file-toolbar.tsx</code></span>
+              </p>
+              <div className="flex items-center gap-2 px-4 py-2 border-b bg-background flex-wrap rounded-t-lg border-x border-t">
                 <SearchButton
                   value=""
                   onSearch={() => {}}
-                  placeholder="Search transactions..."
+                  placeholder="Search..."
                 />
 
-                <FilterButton
-                  icon={<CalendarDays className="h-4 w-4" />}
-                  label="Jan 1 - Mar 31"
-                  isActive={true}
-                  onClear={() => {}}
-                >
-                  <FilterOptionsGroup>
-                    <FilterOption label="All time" onClick={() => {}} />
-                    <FilterOption label="Last 30 days" onClick={() => {}} />
-                    <FilterOption label="This year" isSelected onClick={() => {}} />
-                    <FilterOption label="Last year" onClick={() => {}} />
-                  </FilterOptionsGroup>
-                </FilterButton>
+                {/* Date filter - active state */}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="secondary" size="sm" className="h-9 gap-2">
+                      <CalendarDays className="h-4 w-4" />
+                      <span>Jan 1 - Mar 31</span>
+                      <span
+                        role="button"
+                        className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
+                      >
+                        <X className="h-3 w-3" />
+                      </span>
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-2" align="start">
+                    <div className="flex flex-col gap-1">
+                      <Button variant="ghost" size="sm" className="justify-start h-8">All time</Button>
+                      <Button variant="ghost" size="sm" className="justify-start h-8">Last 30 days</Button>
+                      <Button variant="secondary" size="sm" className="justify-start h-8">This year</Button>
+                      <Button variant="ghost" size="sm" className="justify-start h-8">Last year</Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
 
-                <FilterButton
-                  icon={<FileText className="h-4 w-4" />}
-                  label="No file"
-                  isActive={true}
-                  onClear={() => {}}
-                >
-                  <FilterOptionsGroup>
-                    <FilterOption label="All" onClick={() => {}} />
-                    <FilterOption label="Has file" onClick={() => {}} />
-                    <FilterOption label="No file" isSelected onClick={() => {}} />
-                  </FilterOptionsGroup>
-                </FilterButton>
+                {/* File filter - active state */}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="secondary" size="sm" className="h-9 gap-2">
+                      <FileText className="h-4 w-4" />
+                      <span>No file</span>
+                      <span
+                        role="button"
+                        className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
+                      >
+                        <X className="h-3 w-3" />
+                      </span>
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-2" align="start">
+                    <div className="flex flex-col gap-1">
+                      <Button variant="ghost" size="sm" className="justify-start h-8">All</Button>
+                      <Button variant="ghost" size="sm" className="justify-start h-8">Has file</Button>
+                      <Button variant="secondary" size="sm" className="justify-start h-8">No file</Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
 
-                <FilterButton
-                  icon={<ArrowUpDown className="h-4 w-4" />}
-                  label="Expenses"
-                  isActive={true}
-                  onClear={() => {}}
-                >
-                  <FilterOptionsGroup>
-                    <FilterOption label="All" onClick={() => {}} />
-                    <FilterOption label="Income" onClick={() => {}} />
-                    <FilterOption label="Expenses" isSelected onClick={() => {}} />
-                  </FilterOptionsGroup>
-                </FilterButton>
+                {/* Type filter - inactive state */}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-9 gap-2">
+                      <ArrowUpDown className="h-4 w-4" />
+                      <span>Type</span>
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-2" align="start">
+                    <div className="flex flex-col gap-1">
+                      <Button variant="secondary" size="sm" className="justify-start h-8">All</Button>
+                      <Button variant="ghost" size="sm" className="justify-start h-8">Income</Button>
+                      <Button variant="ghost" size="sm" className="justify-start h-8">Expenses</Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
 
-                <FilterButton label="Partner">
-                  <div className="space-y-2 p-1">
-                    <SearchInput value="" onChange={() => {}} placeholder="Search partners..." />
-                    <FilterOptionsGroup>
-                      <FilterOption label="Amazon" onClick={() => {}} />
-                      <FilterOption label="Netflix" onClick={() => {}} />
-                      <FilterOption label="Client Corp" onClick={() => {}} />
-                    </FilterOptionsGroup>
-                  </div>
-                </FilterButton>
-              </FilterToolbar>
+                {/* Partner filter - inactive state */}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-9 gap-2">
+                      <span>Partner</span>
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-72 p-3" align="start">
+                    <div className="space-y-3">
+                      <SearchInput value="" onChange={() => {}} placeholder="Search partners..." />
+                      <div className="max-h-56 overflow-y-auto space-y-1">
+                        <button className="w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted/50">
+                          <span className="h-4 w-4 rounded border flex items-center justify-center border-muted-foreground/40 text-transparent">
+                            <Check className="h-3 w-3" />
+                          </span>
+                          <span>Amazon</span>
+                        </button>
+                        <button className="w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-sm bg-muted">
+                          <span className="h-4 w-4 rounded border flex items-center justify-center border-primary text-primary">
+                            <Check className="h-3 w-3" />
+                          </span>
+                          <span>Netflix</span>
+                        </button>
+                        <button className="w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted/50">
+                          <span className="h-4 w-4 rounded border flex items-center justify-center border-muted-foreground/40 text-transparent">
+                            <Check className="h-3 w-3" />
+                          </span>
+                          <span>Client Corp</span>
+                        </button>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </ComponentGroup>
 
-            <ComponentGroup title="Connect File Overlay (Table-Overlay Dialog)">
+            <ComponentGroup title="Detail Panel Overlay">
               <p className="text-sm text-muted-foreground mb-4">
-                This overlay appears when connecting a file to a transaction. It's a multi-tab dialog that slides over the detail panel.
+                Overlay pattern that slides over the detail panel for secondary actions.
+                <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">connect-file-overlay.tsx</code>, <code className="bg-muted px-1 py-0.5 rounded">connect-transaction-overlay.tsx</code>, <code className="bg-muted px-1 py-0.5 rounded">email-search-panel.tsx</code></span>
               </p>
               <div className="border rounded-lg max-w-lg bg-background">
                 {/* Overlay header */}
@@ -1152,10 +1425,317 @@ export default function DesignSystemPage() {
               </div>
             </ComponentGroup>
 
+            {/* ===== INTEGRATION ITEMS ===== */}
+            <SectionHeader id="integrations" title="Integration Items" />
+            <p className="text-muted-foreground mb-6">
+              Standardized integration item cards used on the integrations page. Each item follows a consistent layout with icon, title, status badge, and action area.
+              <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">/app/(dashboard)/integrations/page.tsx</code></span>
+            </p>
+
+            <ComponentGroup title="Gmail Integration Item">
+              <p className="text-sm text-muted-foreground mb-3">
+                Gmail account cards showing different sync states. Right side shows stats or refresh button based on state.
+              </p>
+              <div className="space-y-3 max-w-2xl">
+                {/* Connected state */}
+                <div className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                        <Mail className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">user@example.com</span>
+                          <Badge variant="secondary" className="text-xs border-green-500 text-green-600">
+                            <Check className="h-3 w-3 mr-1" />
+                            Connected
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">Connected 2 hours ago</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right">
+                        <div className="flex items-center gap-3 text-xs">
+                          <span className="text-muted-foreground"><span className="font-medium text-foreground">42</span> imported</span>
+                          <span className="text-muted-foreground"><span className="font-medium text-foreground">38</span> extracted</span>
+                          <span className="text-muted-foreground"><span className="font-medium text-foreground">35</span> matched</span>
+                        </div>
+                        <div className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground mt-1">
+                          <FileCheck className="h-3 w-3" />
+                          <span>Last synced 5 minutes ago</span>
+                        </div>
+                      </div>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Syncing state */}
+                <div className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                        <Mail className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">work@company.com</span>
+                          <Badge variant="secondary" className="text-xs border-blue-500 text-blue-600">
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                            Syncing
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">Connected 1 day ago</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2 text-sm text-blue-600">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Syncing... (12 files)</span>
+                      </div>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Paused state */}
+                <div className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                        <Mail className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">felix@i7v6.com</span>
+                          <Badge variant="secondary" className="text-xs border-amber-500 text-amber-600">
+                            <Pause className="h-3 w-3 mr-1" />
+                            Paused
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">Connected 18 minutes ago</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <Button variant="ghost" size="sm">
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Reconnect required state */}
+                <div className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                        <Mail className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">expired@example.com</span>
+                          <Badge variant="destructive" className="text-xs">
+                            <AlertCircle className="h-3 w-3 mr-1" />
+                            Reconnect Required
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">Connected 30 days ago</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <Button variant="outline" size="sm">
+                        <RefreshCw className="h-4 w-4" />
+                        <span className="ml-2">Reconnect</span>
+                      </Button>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </ComponentGroup>
+
+            <ComponentGroup title="Browser Extension Item">
+              <p className="text-sm text-muted-foreground mb-3">
+                Chrome extension integration status. Shows install state and refresh button.
+              </p>
+              <div className="space-y-3 max-w-2xl">
+                {/* Installed state */}
+                <div className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                        <Globe className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">Chrome Extension</span>
+                          <Badge variant="secondary" className="text-xs border-green-500 text-green-600">
+                            <Check className="h-3 w-3 mr-1" />
+                            Installed
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">Extension connected and ready to pull invoices</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <Button variant="ghost" size="sm">
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Checking state */}
+                <div className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                        <Globe className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">Chrome Extension</span>
+                          <Badge variant="secondary" className="text-xs border-blue-500 text-blue-600">
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                            Checking
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">Checking extension status...</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Not installed state */}
+                <div className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                        <Globe className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">Chrome Extension</span>
+                          <Badge variant="secondary" className="text-xs border-amber-500 text-amber-600">
+                            <AlertCircle className="h-3 w-3 mr-1" />
+                            Not installed
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">Install the plugin to start scanning invoice portals</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <Button variant="ghost" size="sm">
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </ComponentGroup>
+
+            <ComponentGroup title="Email Forwarding Item">
+              <p className="text-sm text-muted-foreground mb-3">
+                Email forwarding service status with unique forwarding address display.
+              </p>
+              <div className="space-y-3 max-w-2xl">
+                {/* Active state */}
+                <div className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                        <Inbox className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <code className="font-medium text-sm bg-muted px-2 py-1 rounded">abc123@inbound.fibuki.com</code>
+                          <Badge variant="secondary" className="text-xs border-green-500 text-green-600">
+                            <Check className="h-3 w-3 mr-1" />
+                            Active
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">24 emails received · 18 files created</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right text-xs text-muted-foreground">
+                        Last email 2 hours ago
+                      </div>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Paused state */}
+                <div className="rounded-lg border bg-card p-4 cursor-pointer hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                        <Inbox className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <code className="font-medium text-sm bg-muted px-2 py-1 rounded">xyz789@inbound.fibuki.com</code>
+                          <Badge variant="secondary" className="text-xs border-amber-500 text-amber-600">
+                            <Pause className="h-3 w-3 mr-1" />
+                            Paused
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">12 emails received · 8 files created</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </ComponentGroup>
+
+            <ComponentGroup title="Integration Item Structure">
+              <p className="text-sm text-muted-foreground mb-3">
+                Standard layout pattern for all integration items:
+              </p>
+              <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3 flex-1">
+                    <div className="h-10 w-10 rounded-full border-2 border-dashed border-muted-foreground/30 flex items-center justify-center text-xs text-muted-foreground">
+                      Icon
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <div className="h-4 w-32 bg-muted-foreground/20 rounded text-xs flex items-center justify-center">Title</div>
+                        <div className="h-5 w-20 bg-muted-foreground/20 rounded text-xs flex items-center justify-center">Badge</div>
+                      </div>
+                      <div className="h-3 w-48 bg-muted-foreground/10 rounded text-xs flex items-center justify-center">Subtitle/Description</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="h-8 w-24 bg-muted-foreground/10 rounded text-xs flex items-center justify-center">Stats/Action</div>
+                    <div className="h-5 w-5 bg-muted-foreground/10 rounded flex items-center justify-center text-xs">→</div>
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <p><strong>Left side:</strong> Icon (40x40 rounded-full) + Title with Badge + Subtitle</p>
+                  <p><strong>Right side:</strong> Stats/Action area (context-dependent) + ChevronRight navigation</p>
+                  <p><strong>States:</strong> Connected (green), Syncing (blue), Paused (amber), Error (red)</p>
+                </div>
+              </div>
+            </ComponentGroup>
+
             {/* ===== SIDEBAR & CHAT ===== */}
             <SectionHeader id="sidebar" title="Sidebar & Chat" />
             <p className="text-muted-foreground mb-6">
               Resizable AI chat sidebar patterns used for assistant interactions.
+              Real implementation components: <code className="text-xs bg-muted px-1 py-0.5 rounded">ChatTabs</code>, <code className="text-xs bg-muted px-1 py-0.5 rounded">MessageBubble</code>, <code className="text-xs bg-muted px-1 py-0.5 rounded">ConfirmationCard</code>, <code className="text-xs bg-muted px-1 py-0.5 rounded">NotificationsList</code> in <code className="text-xs bg-muted px-1 py-0.5 rounded">/components/chat/</code>
             </p>
 
             <ComponentGroup title="Chat Sidebar Layout">
@@ -1372,50 +1952,26 @@ export default function DesignSystemPage() {
               </div>
             </ComponentGroup>
 
-            {/* ===== NAVIGATION ===== */}
-            <SectionHeader id="navigation" title="Navigation" />
-            <ComponentGroup title="Tabs">
-              <Tabs value={tabValue} onValueChange={setTabValue}>
-                <TabsList>
-                  <TabsTrigger value="tab1">Overview</TabsTrigger>
-                  <TabsTrigger value="tab2">Details</TabsTrigger>
-                  <TabsTrigger value="tab3">History</TabsTrigger>
-                </TabsList>
-                <TabsContent value="tab1" className="p-4 border rounded-lg mt-2">
-                  Overview content goes here
-                </TabsContent>
-                <TabsContent value="tab2" className="p-4 border rounded-lg mt-2">
-                  Details content goes here
-                </TabsContent>
-                <TabsContent value="tab3" className="p-4 border rounded-lg mt-2">
-                  History content goes here
-                </TabsContent>
-              </Tabs>
-            </ComponentGroup>
-
-            <ComponentGroup title="Dropdown Menu">
+            {/* Row Actions Dropdown - used in table columns */}
+            <ComponentGroup title="Row Actions Dropdown">
+              <p className="text-sm text-muted-foreground mb-3">
+                Used in table column definitions for row-level actions. See <code>/components/ui/column-factories.tsx</code>
+              </p>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline">
-                    <Menu className="mr-2 h-4 w-4" />
-                    Menu
+                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <MoreHorizontal className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
+                <DropdownMenuContent align="end">
                   <DropdownMenuItem>
                     <User className="mr-2 h-4 w-4" />
-                    Profile
+                    View details
                   </DropdownMenuItem>
                   <DropdownMenuItem>
                     <Settings className="mr-2 h-4 w-4" />
-                    Settings
+                    Edit
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuCheckboxItem checked>
-                    Show completed
-                  </DropdownMenuCheckboxItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem className="text-destructive">
                     <Trash2 className="mr-2 h-4 w-4" />
@@ -1423,93 +1979,6 @@ export default function DesignSystemPage() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            </ComponentGroup>
-
-            {/* ===== TOOLBARS & FILTERS ===== */}
-            <SectionHeader id="toolbars" title="Toolbars & Filters" />
-            <ComponentGroup title="Standard Toolbar Pattern">
-              <div className="flex items-center gap-2 p-2 border rounded-lg bg-background flex-wrap">
-                <SearchButton
-                  value=""
-                  onSearch={() => {}}
-                  placeholder="Search..."
-                />
-
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="h-9 gap-2">
-                      <CalendarDays className="h-4 w-4" />
-                      <span>Date</span>
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-3" align="start">
-                    <div className="space-y-2">
-                      <Button variant="outline" size="sm" className="w-full justify-start">All time</Button>
-                      <Button variant="outline" size="sm" className="w-full justify-start">Last 30 days</Button>
-                      <Button variant="outline" size="sm" className="w-full justify-start">This year</Button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="h-9 gap-2">
-                      <FileText className="h-4 w-4" />
-                      <span>File</span>
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-2" align="start">
-                    <div className="flex flex-col gap-1">
-                      <Button variant="ghost" size="sm" className="justify-start">All</Button>
-                      <Button variant="ghost" size="sm" className="justify-start">Has file</Button>
-                      <Button variant="ghost" size="sm" className="justify-start">No file</Button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="h-9 gap-2">
-                      <ArrowUpDown className="h-4 w-4" />
-                      <span>Type</span>
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-2" align="start">
-                    <div className="flex flex-col gap-1">
-                      <Button variant="ghost" size="sm" className="justify-start">All</Button>
-                      <Button variant="ghost" size="sm" className="justify-start">Income</Button>
-                      <Button variant="ghost" size="sm" className="justify-start">Expenses</Button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-
-                <div className="flex-1" />
-
-                <Button size="sm">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add New
-                </Button>
-              </div>
-            </ComponentGroup>
-
-            <ComponentGroup title="Active Filter Badges">
-              <div className="flex items-center gap-2 p-2 border rounded-lg bg-background flex-wrap">
-                <Button variant="secondary" size="sm" className="h-9 gap-2">
-                  <CalendarDays className="h-4 w-4" />
-                  <span>Jan 1 - Mar 31</span>
-                  <X className="h-3 w-3 ml-1" />
-                </Button>
-                <Badge variant="secondary" className="gap-1 h-8">
-                  Has file
-                  <X className="h-3 w-3 cursor-pointer" />
-                </Badge>
-                <Badge variant="secondary" className="gap-1 h-8">
-                  Partner: Amazon
-                  <X className="h-3 w-3 cursor-pointer" />
-                </Badge>
-                <div className="h-4 w-px bg-border" />
-                <Button variant="ghost" size="sm">Clear all</Button>
-              </div>
             </ComponentGroup>
 
             {/* ===== FEEDBACK & STATUS ===== */}
@@ -1559,17 +2028,171 @@ export default function DesignSystemPage() {
               </ComponentRow>
             </ComponentGroup>
 
-            <ComponentGroup title="Empty States">
-              <div className="border rounded-lg p-8 text-center">
-                <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">No files found</h3>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Upload files or connect your email to get started.
-                </p>
-                <Button>
-                  <Upload className="mr-2 h-4 w-4" />
-                  Upload Files
-                </Button>
+            <ComponentGroup title="Empty States (Animated)">
+              <p className="text-sm text-muted-foreground mb-3">
+                Animated empty states with CTAs for tables. Uses <code className="text-xs bg-muted px-1 py-0.5 rounded">TableEmptyState</code> component.
+                <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">data-table.tsx</code>, <code className="bg-muted px-1 py-0.5 rounded">files-data-table.tsx</code></span>
+              </p>
+
+              <Tabs defaultValue="transactions" className="w-full">
+                <TabsList className="mb-4">
+                  <TabsTrigger value="transactions">Transactions</TabsTrigger>
+                  <TabsTrigger value="files">Files</TabsTrigger>
+                  <TabsTrigger value="partners">Partners</TabsTrigger>
+                  <TabsTrigger value="sizes">Size Variants</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="transactions" className="space-y-4">
+                  {/* Transactions - No Data */}
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-muted/30 px-3 py-1.5 border-b text-xs font-medium text-muted-foreground">
+                      No Data (First Time User)
+                    </div>
+                    <TableEmptyState
+                      icon={<Receipt className="h-full w-full" />}
+                      title={emptyStatePresets.transactions.noData.title}
+                      description={emptyStatePresets.transactions.noData.description}
+                      action={{
+                        label: emptyStatePresets.transactions.noData.actionLabel,
+                        onClick: () => {},
+                        icon: <Landmark className="h-4 w-4" />,
+                      }}
+                    />
+                  </div>
+
+                  {/* Transactions - No Results */}
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-muted/30 px-3 py-1.5 border-b text-xs font-medium text-muted-foreground">
+                      No Filter Results
+                    </div>
+                    <TableEmptyState
+                      icon={<Search className="h-full w-full" />}
+                      title={emptyStatePresets.transactions.noResults.title}
+                      description={emptyStatePresets.transactions.noResults.description}
+                      action={{
+                        label: emptyStatePresets.transactions.noResults.actionLabel,
+                        onClick: () => {},
+                      }}
+                      size="sm"
+                    />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="files" className="space-y-4">
+                  {/* Files - No Data */}
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-muted/30 px-3 py-1.5 border-b text-xs font-medium text-muted-foreground">
+                      No Data (First Time User)
+                    </div>
+                    <TableEmptyState
+                      icon={<FileText className="h-full w-full" />}
+                      title={emptyStatePresets.files.noData.title}
+                      description={emptyStatePresets.files.noData.description}
+                      action={{
+                        label: emptyStatePresets.files.noData.actionLabel,
+                        onClick: () => {},
+                        icon: <Upload className="h-4 w-4" />,
+                      }}
+                    />
+                  </div>
+
+                  {/* Files - No Results */}
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-muted/30 px-3 py-1.5 border-b text-xs font-medium text-muted-foreground">
+                      No Filter Results
+                    </div>
+                    <TableEmptyState
+                      icon={<Search className="h-full w-full" />}
+                      title={emptyStatePresets.files.noResults.title}
+                      description={emptyStatePresets.files.noResults.description}
+                      action={{
+                        label: emptyStatePresets.files.noResults.actionLabel,
+                        onClick: () => {},
+                      }}
+                      size="sm"
+                    />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="partners" className="space-y-4">
+                  {/* Partners - No Data */}
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-muted/30 px-3 py-1.5 border-b text-xs font-medium text-muted-foreground">
+                      No Data
+                    </div>
+                    <TableEmptyState
+                      icon={<User className="h-full w-full" />}
+                      title={emptyStatePresets.partners.noData.title}
+                      description={emptyStatePresets.partners.noData.description}
+                      action={{
+                        label: emptyStatePresets.partners.noData.actionLabel,
+                        onClick: () => {},
+                        icon: <Plus className="h-4 w-4" />,
+                      }}
+                    />
+                  </div>
+
+                  {/* Partners - No Results */}
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-muted/30 px-3 py-1.5 border-b text-xs font-medium text-muted-foreground">
+                      No Search Results
+                    </div>
+                    <TableEmptyState
+                      icon={<Search className="h-full w-full" />}
+                      title={emptyStatePresets.partners.noResults.title}
+                      description={emptyStatePresets.partners.noResults.description}
+                      action={{
+                        label: emptyStatePresets.partners.noResults.actionLabel,
+                        onClick: () => {},
+                      }}
+                      size="sm"
+                    />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="sizes">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="border rounded-lg overflow-hidden">
+                      <div className="bg-muted/30 px-3 py-1.5 border-b text-xs font-medium text-muted-foreground">
+                        Small
+                      </div>
+                      <TableEmptyState
+                        icon={<FileText className="h-full w-full" />}
+                        title="No files"
+                        size="sm"
+                      />
+                    </div>
+                    <div className="border rounded-lg overflow-hidden">
+                      <div className="bg-muted/30 px-3 py-1.5 border-b text-xs font-medium text-muted-foreground">
+                        Default
+                      </div>
+                      <TableEmptyState
+                        icon={<FileText className="h-full w-full" />}
+                        title="No files"
+                        size="default"
+                      />
+                    </div>
+                    <div className="border rounded-lg overflow-hidden">
+                      <div className="bg-muted/30 px-3 py-1.5 border-b text-xs font-medium text-muted-foreground">
+                        Large
+                      </div>
+                      <TableEmptyState
+                        icon={<FileText className="h-full w-full" />}
+                        title="No files"
+                        size="lg"
+                      />
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </ComponentGroup>
+
+            <ComponentGroup title="Empty States (Simple)">
+              <p className="text-sm text-muted-foreground mb-3">
+                Simple text-only empty state for inline/minimal contexts.
+              </p>
+              <div className="border rounded-lg p-6 text-center bg-muted/30">
+                <p className="text-sm text-muted-foreground">No transactions match your filters.</p>
               </div>
             </ComponentGroup>
 
@@ -1635,197 +2258,12 @@ export default function DesignSystemPage() {
               </div>
             </ComponentGroup>
 
-            {/* ===== SHARED PRIMITIVES ===== */}
-            <SectionHeader id="primitives" title="Shared Primitives" />
-            <p className="text-muted-foreground mb-6">
-              Consolidated, reusable components extracted from common patterns across the codebase.
-              These primitives reduce code duplication and ensure consistent styling.
-            </p>
 
-            <ComponentGroup title="Detail Panel Primitives">
-              <div className="border rounded-lg max-w-md">
-                <PanelHeader
-                  title="Panel Header"
-                  onClose={() => {}}
-                  onNavigatePrevious={() => {}}
-                  onNavigateNext={() => {}}
-                  hasPrevious={true}
-                  hasNext={true}
-                />
-                <div className="p-4 space-y-4">
-                  <PanelSectionHeader>Section Header</PanelSectionHeader>
-                  <FieldRow label="Name" icon={<User className="h-3 w-3" />}>
-                    John Doe
-                  </FieldRow>
-                  <FieldRow label="Email">john@example.com</FieldRow>
-                  <FieldRow label="Status">
-                    <Badge variant="secondary">Active</Badge>
-                  </FieldRow>
-                  <SectionDivider />
-                  <CollapsibleListSection
-                    title="Transactions"
-                    icon={<FileText className="h-4 w-4" />}
-                    count={3}
-                    defaultOpen={true}
-                  >
-                    <ListItem
-                      title="Invoice Payment"
-                      subtitle="Jan 15, 2024"
-                      amount={25000}
-                      isNegative={false}
-                    />
-                    <ListItem
-                      title="Subscription"
-                      subtitle="Jan 14, 2024"
-                      amount={1599}
-                      isNegative={true}
-                    />
-                    <ListItem
-                      title="Office Supplies"
-                      subtitle="Jan 13, 2024"
-                      amount={12550}
-                      isNegative={true}
-                    />
-                  </CollapsibleListSection>
-                </div>
-                <PanelFooter>
-                  <Button variant="ghost" size="sm" className="w-full justify-start gap-2">
-                    <History className="h-4 w-4" />
-                    <span>Edit History</span>
-                  </Button>
-                </PanelFooter>
-              </div>
-            </ComponentGroup>
-
-            <ComponentGroup title="File List Item Primitive">
-              <div className="border rounded-lg p-4 max-w-md space-y-2">
-                <PanelSectionHeader>Connected Files</PanelSectionHeader>
-                <FileListItem
-                  href="/files/123"
-                  fileName="Invoice_2024_001.pdf"
-                  date="Jan 15, 2024"
-                  amount={12500}
-                  onRemove={() => {}}
-                />
-                <FileListItem
-                  href="/files/124"
-                  fileName="Receipt_Amazon_Order_12345678901234.pdf"
-                  date="Jan 14, 2024"
-                  amount={4999}
-                  onRemove={() => {}}
-                />
-                <FileListItem
-                  fileName="Processing_document.pdf"
-                  date="Jan 13, 2024"
-                  isExtracting={true}
-                  onRemove={() => {}}
-                />
-                <FileListItem
-                  fileName="Removing_this_file.pdf"
-                  date="Jan 12, 2024"
-                  amount={999}
-                  isRemoving={true}
-                  onRemove={() => {}}
-                />
-              </div>
-            </ComponentGroup>
-
-            <ComponentGroup title="Filter Primitives">
-              <FilterToolbar>
-                <SearchButton
-                  value=""
-                  onSearch={() => {}}
-                  placeholder="Search..."
-                />
-
-                <FilterButton
-                  icon={<CalendarDays className="h-4 w-4" />}
-                  label="Date"
-                >
-                  <FilterOptionsGroup>
-                    <FilterOption label="All time" isSelected onClick={() => {}} />
-                    <FilterOption label="Last 30 days" onClick={() => {}} />
-                    <FilterOption label="This year" onClick={() => {}} />
-                    <FilterOption label="Last year" onClick={() => {}} />
-                  </FilterOptionsGroup>
-                </FilterButton>
-
-                <FilterButton
-                  icon={<FileText className="h-4 w-4" />}
-                  label="Has file"
-                  isActive={true}
-                  onClear={() => {}}
-                >
-                  <FilterOptionsGroup>
-                    <FilterOption label="All" onClick={() => {}} />
-                    <FilterOption label="Has file" isSelected onClick={() => {}} />
-                    <FilterOption label="No file" onClick={() => {}} />
-                  </FilterOptionsGroup>
-                </FilterButton>
-
-                <FilterButton
-                  icon={<ArrowUpDown className="h-4 w-4" />}
-                  label="Type"
-                >
-                  <FilterOptionsGroup>
-                    <FilterOption label="All" isSelected onClick={() => {}} />
-                    <FilterGroupDivider />
-                    <FilterOption label="Income" onClick={() => {}} />
-                    <FilterOption label="Expenses" onClick={() => {}} />
-                  </FilterOptionsGroup>
-                </FilterButton>
-
-                <FilterSeparator />
-
-                <ActiveFilterBadge label="Has file" onClear={() => {}} />
-
-                <div className="flex-1" />
-
-                <ClearFiltersButton onClick={() => {}} />
-              </FilterToolbar>
-            </ComponentGroup>
-
-            <ComponentGroup title="Empty State Primitive">
-              <div className="border rounded-lg">
-                <EmptyState
-                  icon={<FileText className="h-12 w-12" />}
-                  title="No files found"
-                  description="Upload files or connect your email to get started."
-                  action={
-                    <Button>
-                      <Upload className="mr-2 h-4 w-4" />
-                      Upload Files
-                    </Button>
-                  }
-                />
-              </div>
-            </ComponentGroup>
-
-            <ComponentGroup title="Usage Guidelines">
-              <div className="prose prose-sm max-w-none">
-                <Alert>
-                  <Info className="h-4 w-4" />
-                  <AlertTitle>When to use these primitives</AlertTitle>
-                  <AlertDescription>
-                    <ul className="list-disc pl-4 mt-2 space-y-1 text-sm">
-                      <li><strong>PanelHeader</strong>: All detail panels (Transaction, File, Partner, Category)</li>
-                      <li><strong>FieldRow</strong>: Displaying label-value pairs in panels</li>
-                      <li><strong>CollapsibleListSection</strong>: Lists of related items (files, transactions)</li>
-                      <li><strong>ListItem</strong>: Clickable items in lists with amount display</li>
-                      <li><strong>FileListItem</strong>: File displays with name, date, amount, and remove action</li>
-                      <li><strong>FilterButton</strong>: Toolbar filter dropdowns with popover</li>
-                      <li><strong>ActiveFilterBadge</strong>: Showing applied filters with clear option</li>
-                      <li><strong>EmptyState</strong>: When no data is available</li>
-                    </ul>
-                  </AlertDescription>
-                </Alert>
-              </div>
-            </ComponentGroup>
 
             {/* Spacer at bottom */}
             <div className="h-20" />
           </div>
-        </ScrollArea>
+        </div>
       </div>
     </TooltipProvider>
   );

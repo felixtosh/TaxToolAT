@@ -24,6 +24,18 @@ function getProjectId(): string {
 
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
+/**
+ * Fix common JSON issues from LLM output (trailing commas, etc.)
+ */
+function fixLlmJson(text: string): string {
+  return text
+    // Remove trailing commas before ] or }
+    .replace(/,(\s*[}\]])/g, "$1")
+    // Remove markdown code blocks if present
+    .replace(/```json\s*/g, "")
+    .replace(/```\s*/g, "");
+}
+
 export interface GeminiUsage {
   inputTokens: number;
   outputTokens: number;
@@ -126,8 +138,9 @@ Return JSON only:
   };
 
   try {
-    // Extract JSON from response
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    // Extract JSON from response and fix common LLM issues
+    const cleanedText = fixLlmJson(text);
+    const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return { queries: [], reasoning: "Failed to parse response", usage };
     }
@@ -218,7 +231,8 @@ Return JSON only:
   };
 
   try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const cleanedText = fixLlmJson(text);
+    const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return {
         hasInvoiceLink: false,
@@ -333,7 +347,8 @@ Return JSON only:
   };
 
   try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const cleanedText = fixLlmJson(text);
+    const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return { matches: [], unmatched: [], usage };
     }

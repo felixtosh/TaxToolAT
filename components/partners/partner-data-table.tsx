@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { forwardRef } from "react";
+import { forwardRef, ReactNode } from "react";
 import { UserPartner } from "@/types/partner";
 import {
   ResizableDataTable,
@@ -17,6 +17,8 @@ interface PartnerDataTableProps {
   onDelete?: (partnerId: string) => void;
   /** Partner IDs marked as "my company" */
   markedAsMe?: string[];
+  /** Custom empty state component */
+  emptyState?: ReactNode;
 }
 
 export interface PartnerDataTableHandle {
@@ -33,7 +35,7 @@ const DEFAULT_PARTNER_COLUMN_SIZES: Record<string, number> = {
 };
 
 function PartnerDataTableInner(
-  { data, onRowClick, selectedRowId, onEdit, onDelete, markedAsMe }: PartnerDataTableProps,
+  { data, onRowClick, selectedRowId, onEdit, onDelete, markedAsMe, emptyState }: PartnerDataTableProps,
   ref: React.ForwardedRef<PartnerDataTableHandle>
 ) {
   const columns = React.useMemo(
@@ -55,6 +57,7 @@ function PartnerDataTableInner(
       selectedRowId={selectedRowId}
       defaultColumnSizes={DEFAULT_PARTNER_COLUMN_SIZES}
       getRowDataAttributes={getRowDataAttributes}
+      emptyState={emptyState}
       emptyMessage="No partners found."
     />
   );

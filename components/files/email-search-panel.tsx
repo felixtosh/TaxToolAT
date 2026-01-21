@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { format, subDays, addDays } from "date-fns";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 import {
   Search,
   Mail,
@@ -29,7 +30,7 @@ import { cn } from "@/lib/utils";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
 import { EmailMessage, EmailAttachment } from "@/types/email-integration";
 import { isPdfOrImageAttachment } from "@/lib/email-providers/interface";
-import { FilePreview } from "./file-preview";
+import { GmailAttachmentPreview } from "./gmail-attachment-preview";
 
 interface EmailSearchPanelProps {
   /** Called when user selects an attachment to save and connect */
@@ -146,9 +147,8 @@ export function EmailSearchPanel({
       const results = await Promise.all(
         gmailIntegrations.map(async (integration) => {
           try {
-            const response = await fetch("/api/gmail/search", {
+            const response = await fetchWithAuth("/api/gmail/search", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 integrationId: integration.id,
                 query: searchQuery || undefined,
@@ -215,26 +215,13 @@ export function EmailSearchPanel({
     }
   };
 
-  // Get preview URL for attachment
-  const getPreviewUrl = (attachment: EmailAttachment, integrationId: string): string => {
-    const params = new URLSearchParams({
-      integrationId,
-      messageId: attachment.messageId,
-      attachmentId: attachment.attachmentId,
-      mimeType: attachment.mimeType,
-      filename: attachment.filename,
-    });
-    return `/api/gmail/attachment?${params.toString()}`;
-  };
-
   const handleSaveAttachment = async () => {
     if (!selectedItem) return;
 
     setIsSaving(true);
     try {
-      const response = await fetch("/api/gmail/attachment", {
+      const response = await fetchWithAuth("/api/gmail/attachment", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           integrationId: selectedItem.integrationId,
           messageId: selectedItem.attachment.messageId,
@@ -432,10 +419,12 @@ export function EmailSearchPanel({
           <>
             {/* Preview */}
             <div className="flex-1 overflow-hidden">
-              <FilePreview
-                downloadUrl={getPreviewUrl(selectedItem.attachment, selectedItem.integrationId)}
-                fileType={selectedItem.attachment.mimeType}
-                fileName={selectedItem.attachment.filename}
+              <GmailAttachmentPreview
+                integrationId={selectedItem.integrationId}
+                messageId={selectedItem.attachment.messageId}
+                attachmentId={selectedItem.attachment.attachmentId}
+                mimeType={selectedItem.attachment.mimeType}
+                filename={selectedItem.attachment.filename}
                 fullSize
               />
             </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, startTransition } from "react";
 import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { UserPartner, PartnerFormData } from "@/types/partner";
@@ -55,8 +55,12 @@ export function usePartners() {
           ...doc.data(),
         })) as UserPartner[];
 
-        setPartners(data);
-        setLoading(false);
+        // Use startTransition to batch updates and prevent flicker
+        // where loading=false but partners is still empty
+        startTransition(() => {
+          setPartners(data);
+          setLoading(false);
+        });
       },
       (err) => {
         console.error("Error fetching partners:", err);

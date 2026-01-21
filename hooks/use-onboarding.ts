@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import {
   OnboardingState,
@@ -13,12 +13,14 @@ import {
   OperationsContext,
   initializeOnboarding,
   completeOnboardingStep,
+  uncompleteOnboardingStep,
   markOnboardingCompletionSeen,
   calculateProgress,
 } from "@/lib/operations";
 import { useAuth } from "@/components/auth";
 import { useSources } from "./use-sources";
 import { useTransactions } from "./use-transactions";
+import { useUserData } from "./use-user-data";
 
 /**
  * Hook for managing onboarding state and auto-detecting step completion
@@ -32,6 +34,7 @@ export function useOnboarding() {
   // Dependencies for auto-detection
   const { sources, loading: sourcesLoading } = useSources();
   const { transactions, loading: transactionsLoading } = useTransactions();
+  const { userData, loading: userDataLoading, isConfigured: hasIdentity } = useUserData();
 
   // Track if we've done initial check to avoid duplicate calls
   const hasCheckedInitial = useRef(false);
@@ -61,7 +64,13 @@ export function useOnboarding() {
       docRef,
       async (snapshot) => {
         if (snapshot.exists()) {
-          setState(snapshot.data() as OnboardingState);
+          const nextState = snapshot.data() as OnboardingState;
+          console.log("[Onboarding] Snapshot update:", {
+            isComplete: nextState.isComplete,
+            hasSeenCompletion: nextState.hasSeenCompletion,
+            currentStep: nextState.currentStep,
+          });
+          setState(nextState);
         } else {
           // Initialize onboarding for new users
           try {
@@ -84,71 +93,91 @@ export function useOnboarding() {
     return () => unsubscribe();
   }, [userId, ctx]);
 
-  // Auto-detect and complete steps based on existing data
+  // Auto-detect step completion/uncompletion based on existing data
   useEffect(() => {
     // Wait until everything is loaded
     if (
       !state ||
-      state.isComplete ||
       loading ||
       sourcesLoading ||
       transactionsLoading ||
+      userDataLoading ||
       !userId
     ) {
       return;
     }
 
-    // Check each step in order and complete if conditions are met
-    const checkAndCompleteSteps = async () => {
-      // Step 1: Add bank account
-      if (
-        !state.completedSteps.add_bank_account &&
-        sources.length > 0
-      ) {
-        await completeOnboardingStep(ctx, "add_bank_account", sources[0]?.id);
-        return; // State will update, effect will re-run
+    // Check each step and complete/uncomplete based on current conditions
+    const syncStepsWithData = async () => {
+      // Step 0: Set identity (name/company)
+      if (state.completedSteps.set_identity && !hasIdentity) {
+        await uncompleteOnboardingStep(ctx, "set_identity");
+        return;
       }
-
-      // Step 2: Import transactions (only check if step 1 is done)
-      if (
-        state.completedSteps.add_bank_account &&
-        !state.completedSteps.import_transactions &&
-        transactions.length > 0
-      ) {
-        await completeOnboardingStep(ctx, "import_transactions");
+      if (!state.completedSteps.set_identity && hasIdentity) {
+        await completeOnboardingStep(ctx, "set_identity");
         return;
       }
 
+      // Step 1: Add bank account (only check if step 0 is done)
+      const hasSources = sources.length > 0;
+      if (!state.completedSteps.set_identity) return;
+      if (state.completedSteps.add_bank_account && !hasSources) {
+        // Uncomplete if no longer has sources
+        await uncompleteOnboardingStep(ctx, "add_bank_account");
+        return; // State will update, effect will re-run
+      }
+      if (!state.completedSteps.add_bank_account && hasSources) {
+        // Complete if has sources
+        await completeOnboardingStep(ctx, "add_bank_account", sources[0]?.id);
+        return;
+      }
+
+      // Step 2: Import transactions (only check if step 1 is done)
+      const hasTransactions = transactions.length > 0;
+      if (state.completedSteps.add_bank_account) {
+        if (state.completedSteps.import_transactions && !hasTransactions) {
+          await uncompleteOnboardingStep(ctx, "import_transactions");
+          return;
+        }
+        if (!state.completedSteps.import_transactions && hasTransactions) {
+          await completeOnboardingStep(ctx, "import_transactions");
+          return;
+        }
+      }
+
       // Step 3: Assign partner (only check if step 2 is done)
-      if (
-        state.completedSteps.import_transactions &&
-        !state.completedSteps.assign_partner
-      ) {
-        const transactionWithPartner = transactions.find((t) => t.partnerId);
-        if (transactionWithPartner) {
+      const transactionWithPartner = transactions.find((t) => t.partnerId);
+      if (state.completedSteps.import_transactions) {
+        if (state.completedSteps.assign_partner && !transactionWithPartner) {
+          await uncompleteOnboardingStep(ctx, "assign_partner");
+          return;
+        }
+        if (!state.completedSteps.assign_partner && transactionWithPartner) {
           await completeOnboardingStep(ctx, "assign_partner", transactionWithPartner.id);
           return;
         }
       }
 
       // Step 4: Attach file or no-receipt category (only check if step 3 is done)
-      if (
-        state.completedSteps.assign_partner &&
-        !state.completedSteps.attach_file
-      ) {
-        const transactionWithFileOrCategory = transactions.find(
-          (t) =>
-            (t.fileIds && t.fileIds.length > 0) ||
-            t.noReceiptCategoryId
-        );
-        if (transactionWithFileOrCategory) {
+      const transactionWithFileOrCategory = transactions.find(
+        (t) =>
+          (t.fileIds && t.fileIds.length > 0) ||
+          t.noReceiptCategoryId
+      );
+      if (state.completedSteps.assign_partner) {
+        if (state.completedSteps.attach_file && !transactionWithFileOrCategory) {
+          await uncompleteOnboardingStep(ctx, "attach_file");
+          return;
+        }
+        if (!state.completedSteps.attach_file && transactionWithFileOrCategory) {
           await completeOnboardingStep(ctx, "attach_file", transactionWithFileOrCategory.id);
           return;
         }
       }
     };
 
-    checkAndCompleteSteps();
+    syncStepsWithData();
   }, [
     state,
     sources,
@@ -156,6 +185,8 @@ export function useOnboarding() {
     loading,
     sourcesLoading,
     transactionsLoading,
+    userDataLoading,
+    hasIdentity,
     userId,
     ctx,
   ]);
@@ -180,22 +211,27 @@ export function useOnboarding() {
   // Mark completion seen
   const dismissCompletion = useCallback(async () => {
     try {
+      console.log("[Onboarding] Dismissing completion dialog.");
       await markOnboardingCompletionSeen(ctx);
+      console.log("[Onboarding] Marked completion as seen.");
+      const docRef = doc(db, "users", userId ?? "", "settings", "onboarding");
+      const snapshot = await getDoc(docRef);
+      console.log("[Onboarding] Readback after dismiss:", snapshot.data());
     } catch (err) {
       console.error("Error dismissing completion:", err);
     }
-  }, [ctx]);
+  }, [ctx, userId]);
 
   return {
     // State
     state,
-    loading: loading || sourcesLoading || transactionsLoading,
+    loading: loading || sourcesLoading || transactionsLoading || userDataLoading,
     error,
 
     // Derived state
     isOnboarding: state ? !state.isComplete : false,
     isComplete: state?.isComplete ?? false,
-    showCompletion: state?.isComplete && !state.hasSeenCompletion,
+    showCompletion: state?.isComplete === true && state?.hasSeenCompletion === false,
     currentStep: state?.currentStep ?? null,
     currentStepConfig,
 

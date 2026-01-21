@@ -148,8 +148,8 @@ export function currencyColumn<TData>({
       const isNegative = amount < 0;
       const colorClass = colorize
         ? isNegative
-          ? "text-red-600"
-          : "text-green-600"
+          ? "text-amount-negative"
+          : "text-amount-positive"
         : "";
 
       return (

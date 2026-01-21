@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, getDoc } from "firebase/firestore";
-import { getServerDb } from "@/lib/firebase/config-server";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import { getEmailIntegration, markIntegrationAccessed, markIntegrationNeedsReauth } from "@/lib/operations";
 import { GmailClient } from "@/lib/email-providers/gmail-client";
 
-const db = getServerDb();
+const db = getAdminDb();
+const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const TOKENS_COLLECTION = "emailTokens";
+const FILES_COLLECTION = "files";
 
 /**
  * POST /api/gmail/search
@@ -59,11 +60,20 @@ export async function POST(request: NextRequest) {
     }
 
     const userId = await getServerUserIdWithFallback(request);
-    const ctx = { db, userId };
 
     // Verify integration exists and belongs to user
-    const integration = await getEmailIntegration(ctx, integrationId);
-    if (!integration) {
+    const integrationRef = db.collection(INTEGRATIONS_COLLECTION).doc(integrationId);
+    const integrationSnap = await integrationRef.get();
+
+    if (!integrationSnap.exists) {
+      return NextResponse.json(
+        { error: "Integration not found" },
+        { status: 404 }
+      );
+    }
+
+    const integration = integrationSnap.data()!;
+    if (integration.userId !== userId) {
       return NextResponse.json(
         { error: "Integration not found" },
         { status: 404 }
@@ -82,8 +92,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Get tokens from secure storage
-    const tokens = await getTokens(integrationId);
-    if (!tokens) {
+    const tokenRef = db.collection(TOKENS_COLLECTION).doc(integrationId);
+    const tokenSnap = await tokenRef.get();
+
+    if (!tokenSnap.exists) {
       console.log("[Gmail Search] 403: Tokens not found for", integrationId);
       return NextResponse.json(
         {
@@ -94,12 +106,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const tokens = tokenSnap.data()!;
+
     // Check if token is expired
     const expiresAt = tokens.expiresAt.toDate();
     const now = new Date();
     if (expiresAt < now) {
       console.log("[Gmail Search] 403: Token expired", { integrationId, expiresAt, now });
-      await markIntegrationNeedsReauth(ctx, integrationId, "Access token expired");
+      await integrationRef.update({
+        needsReauth: true,
+        lastError: "Access token expired",
+        updatedAt: Timestamp.now(),
+      });
       return NextResponse.json(
         {
           error: "Access token expired. Please reconnect Gmail.",
@@ -128,22 +146,68 @@ export async function POST(request: NextRequest) {
       expandThreads,
     });
 
-    // Update last accessed time
-    await markIntegrationAccessed(ctx, integrationId);
+    // Update last accessed time (fire and forget - don't block response)
+    integrationRef.update({
+      lastAccessedAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    }).catch((err) => console.error("[Gmail Search] Failed to update lastAccessedAt:", err));
+
+    // Collect all attachment IDs to check for existing imports
+    const attachmentKeys: { messageId: string; attachmentId: string }[] = [];
+    for (const msg of result.messages) {
+      for (const att of msg.attachments) {
+        attachmentKeys.push({ messageId: msg.messageId, attachmentId: att.attachmentId });
+      }
+    }
+
+    // Query for existing files with these Gmail references
+    const existingFilesMap = new Map<string, string>(); // key: "messageId:attachmentId" -> fileId
+    if (attachmentKeys.length > 0) {
+      // Query in batches of 30 (Firestore 'in' query limit)
+      const messageIds = [...new Set(attachmentKeys.map(k => k.messageId))];
+      for (let i = 0; i < messageIds.length; i += 30) {
+        const batch = messageIds.slice(i, i + 30);
+        const existingQuery = await db
+          .collection(FILES_COLLECTION)
+          .where("userId", "==", userId)
+          .where("gmailMessageId", "in", batch)
+          .get();
+
+        for (const doc of existingQuery.docs) {
+          const data = doc.data();
+          if (data.gmailAttachmentId) {
+            const key = `${data.gmailMessageId}:${data.gmailAttachmentId}`;
+            existingFilesMap.set(key, doc.id);
+          }
+        }
+      }
+    }
+
+    // Enrich attachments with existing file info
+    const enrichedMessages = result.messages.map((msg) => ({
+      ...msg,
+      date: msg.date.toISOString(),
+      attachments: msg.attachments.map((att) => {
+        const key = `${msg.messageId}:${att.attachmentId}`;
+        const existingFileId = existingFilesMap.get(key);
+        return {
+          ...att,
+          existingFileId: existingFileId || null,
+        };
+      }),
+    }));
 
     console.log("[Gmail Search] Response", {
       integrationId,
       messageCount: result.messages.length,
       totalEstimate: result.totalEstimate,
       nextPageToken: result.nextPageToken,
+      existingFilesFound: existingFilesMap.size,
     });
 
     return NextResponse.json({
       success: true,
-      messages: result.messages.map((msg) => ({
-        ...msg,
-        date: msg.date.toISOString(),
-      })),
+      messages: enrichedMessages,
       nextPageToken: result.nextPageToken,
       totalEstimate: result.totalEstimate,
     });
@@ -167,27 +231,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-/**
- * Get tokens from secure storage
- */
-async function getTokens(integrationId: string): Promise<{
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt: { toDate: () => Date };
-} | null> {
-  const tokenDoc = doc(db, TOKENS_COLLECTION, integrationId);
-  const snapshot = await getDoc(tokenDoc);
-
-  if (!snapshot.exists()) {
-    return null;
-  }
-
-  const data = snapshot.data();
-  return {
-    accessToken: data.accessToken,
-    refreshToken: data.refreshToken,
-    expiresAt: data.expiresAt,
-  };
 }

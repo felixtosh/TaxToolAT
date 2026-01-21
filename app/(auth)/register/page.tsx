@@ -79,7 +79,7 @@ export default function RegisterPage() {
         <div className="flex justify-center mb-4">
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="h-8 w-8 text-primary" />
-            <span className="font-bold text-2xl">TaxStudio</span>
+            <span className="font-bold text-2xl">FiBuKI</span>
           </div>
         </div>
         <CardTitle className="text-2xl">Create an account</CardTitle>

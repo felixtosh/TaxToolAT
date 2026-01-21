@@ -11,6 +11,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { convertCurrency } from "@/lib/currency";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 // Consistent field row component (matching transaction-details.tsx)
 function FieldRow({
@@ -163,6 +169,58 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
     }).format(signedAmount);
   };
 
+  // Format amount with EUR conversion - EUR is always primary display
+  const formatAmountWithConversion = (
+    amount: number | null | undefined,
+    currency: string | null | undefined,
+    direction?: string,
+    conversionDate?: Date
+  ): {
+    display: string;
+    isNegative: boolean;
+    conversionInfo: { original: string; converted: string; rate: number; rateCurrency: string } | null
+  } => {
+    if (amount == null) return { display: "—", isNegative: false, conversionInfo: null };
+
+    const normalizedCurrency = (currency || "EUR").toUpperCase();
+    const originalFormatted = formatAmount(amount, currency, direction);
+    const isNegative = direction === "incoming";
+
+    // No conversion needed if already EUR
+    if (normalizedCurrency === "EUR") {
+      return { display: originalFormatted, isNegative, conversionInfo: null };
+    }
+
+    // Convert to EUR - EUR becomes primary display
+    const dateForConversion = conversionDate || new Date();
+    const conversion = convertCurrency(
+      Math.abs(amount),
+      normalizedCurrency,
+      "EUR",
+      dateForConversion
+    );
+
+    if (conversion) {
+      const signedConverted = isNegative ? -(conversion.amount / 100) : conversion.amount / 100;
+      const convertedStr = "~" + new Intl.NumberFormat("de-DE", {
+        style: "currency",
+        currency: "EUR",
+      }).format(signedConverted);
+      return {
+        display: convertedStr,
+        isNegative,
+        conversionInfo: {
+          original: originalFormatted,
+          converted: convertedStr,
+          rate: conversion.rate,
+          rateCurrency: normalizedCurrency,
+        }
+      };
+    }
+
+    return { display: originalFormatted, isNegative, conversionInfo: null };
+  };
+
   // Get raw search text directly - no fallbacks, only use extracted raw text
   // Only works with string fields, not entity objects (issuer/recipient)
   type StringRawFields = "date" | "amount" | "vatPercent" | "partner" | "vatId" | "iban" | "address" | "website";
@@ -266,7 +324,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
               : "—"}
           </FieldRow>
 
-          {/* Amount - simple display without direction toggle */}
+          {/* Amount - shows EUR (converted if needed), with tooltip for conversion details */}
           <FieldRow
             label="Amount"
             onClick={onFieldClick}
@@ -277,12 +335,46 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
             inputType="number"
             placeholder="Amount in EUR"
           >
-            <span className={cn(
-              file.invoiceDirection === "outgoing" && "text-emerald-600",
-              file.invoiceDirection === "incoming" && "text-red-600"
-            )}>
-              {formatAmount(file.extractedAmount, file.extractedCurrency, file.invoiceDirection)}
-            </span>
+            {(() => {
+              const { display, isNegative, conversionInfo } = formatAmountWithConversion(
+                file.extractedAmount,
+                file.extractedCurrency,
+                file.invoiceDirection,
+                file.extractedDate?.toDate()
+              );
+
+              const amountDisplay = (
+                <span className={cn(
+                  "tabular-nums",
+                  isNegative ? "text-amount-negative" : "text-amount-positive"
+                )}>
+                  {display}
+                </span>
+              );
+
+              if (conversionInfo) {
+                return (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>{amountDisplay}</span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="text-xs">
+                        <span className="text-muted-foreground">Original:</span> {conversionInfo.original}
+                      </p>
+                      <p className="text-xs">
+                        <span className="text-muted-foreground">Converted:</span> {conversionInfo.converted}
+                      </p>
+                      <p className="text-xs">
+                        <span className="text-muted-foreground">Rate:</span> 1 {conversionInfo.rateCurrency} = {conversionInfo.rate.toFixed(4)} EUR
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              }
+
+              return amountDisplay;
+            })()}
           </FieldRow>
 
           <FieldRow

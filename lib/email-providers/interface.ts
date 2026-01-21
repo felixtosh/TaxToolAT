@@ -3,7 +3,151 @@ import {
   EmailSearchResult,
   AttachmentDownloadResult,
   EmailProvider,
+  EmailClassification,
+  EmailAttachment,
 } from "@/types/email-integration";
+
+/**
+ * Keywords indicating the email body IS an invoice/receipt (German + English)
+ */
+export const MAIL_INVOICE_KEYWORDS = [
+  // English
+  "order confirmation",
+  "payment received",
+  "payment confirmation",
+  "your purchase",
+  "order summary",
+  "receipt for your",
+  "thank you for your order",
+  "your order has been",
+  "purchase confirmation",
+  // German
+  "bestellbestätigung",
+  "zahlungsbestätigung",
+  "zahlungseingang",
+  "ihre bestellung",
+  "kaufbestätigung",
+  "vielen dank für ihre bestellung",
+  "ihre zahlung",
+  "buchungsbestätigung",
+];
+
+/**
+ * Keywords indicating the email contains a link to download invoice (German + English)
+ */
+export const INVOICE_LINK_KEYWORDS = [
+  // English
+  "download your invoice",
+  "view your invoice",
+  "download invoice",
+  "view invoice",
+  "click here to download",
+  "access your invoice",
+  "get your receipt",
+  "download pdf",
+  "download receipt",
+  // German
+  "rechnung herunterladen",
+  "rechnung anzeigen",
+  "rechnung abrufen",
+  "hier klicken",
+  "pdf herunterladen",
+  "beleg herunterladen",
+  "rechnung ansehen",
+  "zum download",
+];
+
+/**
+ * General invoice/receipt keywords (German + English)
+ */
+export const INVOICE_KEYWORDS = [
+  // English
+  "invoice",
+  "receipt",
+  "bill",
+  // German
+  "rechnung",
+  "quittung",
+  "beleg",
+  "kassenbon",
+  "faktura",
+];
+
+/**
+ * Classify an email based on its content without downloading attachments.
+ * Uses snippet and subject for lightweight classification.
+ */
+export function classifyEmail(
+  subject: string,
+  snippet: string,
+  attachments: EmailAttachment[]
+): EmailClassification {
+  const combined = `${subject} ${snippet}`.toLowerCase();
+  const matchedKeywords: string[] = [];
+
+  // Check for PDF attachments
+  const hasPdfAttachment = attachments.some(
+    (a) =>
+      a.mimeType === "application/pdf" ||
+      (a.mimeType === "application/octet-stream" &&
+        a.filename.toLowerCase().endsWith(".pdf"))
+  );
+
+  // Check for mail invoice keywords (email body IS the invoice)
+  let possibleMailInvoice = false;
+  for (const keyword of MAIL_INVOICE_KEYWORDS) {
+    if (combined.includes(keyword)) {
+      possibleMailInvoice = true;
+      matchedKeywords.push(keyword);
+      break; // One match is enough
+    }
+  }
+
+  // Check for invoice link keywords
+  let possibleInvoiceLink = false;
+  for (const keyword of INVOICE_LINK_KEYWORDS) {
+    if (combined.includes(keyword)) {
+      possibleInvoiceLink = true;
+      matchedKeywords.push(keyword);
+      break; // One match is enough
+    }
+  }
+
+  // Check for general invoice keywords
+  let hasInvoiceKeyword = false;
+  for (const keyword of INVOICE_KEYWORDS) {
+    if (combined.includes(keyword)) {
+      hasInvoiceKeyword = true;
+      if (!matchedKeywords.includes(keyword)) {
+        matchedKeywords.push(keyword);
+      }
+      break;
+    }
+  }
+
+  // Calculate confidence based on matches
+  let confidence = 0;
+  if (hasPdfAttachment) confidence += 40;
+  if (possibleMailInvoice) confidence += 30;
+  if (possibleInvoiceLink) confidence += 25;
+  if (hasInvoiceKeyword) confidence += 20;
+
+  // Cap at 100
+  confidence = Math.min(confidence, 100);
+
+  // If has PDF and no other signals, still likely an invoice
+  if (hasPdfAttachment && confidence < 50) {
+    confidence = 50;
+  }
+
+  return {
+    hasPdfAttachment,
+    possibleMailInvoice: possibleMailInvoice && !hasPdfAttachment, // Only if no PDF
+    possibleInvoiceLink,
+    confidence,
+    matchedKeywords: matchedKeywords.length > 0 ? matchedKeywords : undefined,
+  };
+}
 
 /**
  * Abstract interface for email providers.
@@ -187,6 +331,29 @@ export function isLikelyReceiptAttachment(
 
   // Images with generic names might be receipts
   // but we'll be conservative
+  return false;
+}
+
+/**
+ * Helper to determine if an attachment is a PDF.
+ * Gmail sometimes reports real PDFs as application/octet-stream.
+ */
+export function isPdfAttachment(
+  mimeType: string,
+  filename: string
+): boolean {
+  const normalizedType = (mimeType || "").toLowerCase();
+  const normalizedName = (filename || "").toLowerCase();
+
+  if (normalizedType === "application/pdf") {
+    return true;
+  }
+
+  // Gmail sometimes reports PDFs as octet-stream
+  if (normalizedType === "application/octet-stream" && normalizedName.endsWith(".pdf")) {
+    return true;
+  }
+
   return false;
 }
 

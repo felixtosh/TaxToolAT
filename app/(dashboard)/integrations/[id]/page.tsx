@@ -3,6 +3,7 @@
 import { use, useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format, formatDistanceToNow } from "date-fns";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 import {
   ArrowLeft,
   Mail,
@@ -80,9 +81,8 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
     setSyncing(true);
     setSyncError(null);
     try {
-      const response = await fetch("/api/gmail/sync", {
+      const response = await fetchWithAuth("/api/gmail/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ integrationId: id }),
       });
 
@@ -182,7 +182,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
   const syncedTo = syncedRange?.to?.toDate();
 
   const isSyncingNow =
-    activeSync.isActive || syncKnownInProgress || (!initialSyncComplete && initialSyncStartedAt);
+    !isPaused && (activeSync.isActive || syncKnownInProgress || (!initialSyncComplete && initialSyncStartedAt));
 
   const handlePause = async () => {
     setPausing(true);
@@ -344,7 +344,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
               <AlertDialogHeader>
                 <AlertDialogTitle>Disconnect Gmail Account?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This will disconnect <strong>{integration.email}</strong> from TaxStudio.
+                  This will disconnect <strong>{integration.email}</strong> from FiBuKI.
                   You can reconnect it anytime. Files already imported will remain.
                 </AlertDialogDescription>
               </AlertDialogHeader>

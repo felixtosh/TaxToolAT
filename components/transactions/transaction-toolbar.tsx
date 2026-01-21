@@ -31,6 +31,10 @@ interface TransactionToolbarProps {
   onFiltersChange: (filters: TransactionFilters) => void;
   importFileName?: string;
   userPartners?: UserPartner[];
+  /** Number of transactions with file or no-receipt category assigned */
+  assignedCount?: number;
+  /** Total number of transactions in current filter view */
+  totalCount?: number;
 }
 
 export function TransactionToolbar({
@@ -40,6 +44,8 @@ export function TransactionToolbar({
   onFiltersChange,
   importFileName,
   userPartners = [],
+  assignedCount,
+  totalCount,
 }: TransactionToolbarProps) {
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
   const [filePopoverOpen, setFilePopoverOpen] = useState(false);
@@ -164,14 +170,19 @@ export function TransactionToolbar({
     onFiltersChange({ ...filters, partnerIds: nextIds.length > 0 ? nextIds : undefined });
   };
 
+  // Show counter only when there are transactions
+  const showCounter = totalCount !== undefined && totalCount > 0;
+
   return (
-    <div className="flex items-center gap-2 px-4 py-2 border-b bg-background flex-wrap">
-      {/* Search button */}
-      <SearchButton
-        value={searchValue}
-        onSearch={onSearchChange}
-        placeholder="Search transactions..."
-      />
+    <div className="flex items-center gap-2 px-4 py-2 border-b bg-background">
+      {/* Left side: filters */}
+      <div className="flex items-center gap-2 flex-wrap flex-1">
+        {/* Search button */}
+        <SearchButton
+          value={searchValue}
+          onSearch={onSearchChange}
+          placeholder="Search transactions..."
+        />
 
       {/* Date filter */}
       <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
@@ -499,20 +510,30 @@ export function TransactionToolbar({
         </PopoverContent>
       </Popover>
 
-      {/* Import filter badge (if active) */}
-      {filters.importId && (
-        <Badge variant="secondary" className="gap-1 h-8">
-          Import: {importFileName || "Selected"}
-          <span
-            role="button"
-            tabIndex={0}
-            onClick={clearImportFilter}
-            onKeyDown={(e) => e.key === "Enter" && clearImportFilter()}
-            className="ml-1 hover:bg-muted rounded cursor-pointer"
-          >
-            <X className="h-3 w-3" />
-          </span>
-        </Badge>
+        {/* Import filter badge (if active) */}
+        {filters.importId && (
+          <Badge variant="secondary" className="gap-1 h-8">
+            Import: {importFileName || "Selected"}
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={clearImportFilter}
+              onKeyDown={(e) => e.key === "Enter" && clearImportFilter()}
+              className="ml-1 hover:bg-muted rounded cursor-pointer"
+            >
+              <X className="h-3 w-3" />
+            </span>
+          </Badge>
+        )}
+      </div>
+
+      {/* Right side: counter */}
+      {showCounter && (
+        <div className="flex items-center gap-1.5 text-sm text-muted-foreground shrink-0">
+          <span className="tabular-nums font-medium text-foreground">{assignedCount ?? 0}</span>
+          <span>/</span>
+          <span className="tabular-nums">{totalCount}</span>
+        </div>
       )}
     </div>
   );

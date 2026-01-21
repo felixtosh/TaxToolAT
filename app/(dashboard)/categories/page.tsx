@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { Suspense, useState, useCallback, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CategoryTable } from "@/components/categories/category-table";
 import { CategoryDetailPanel } from "@/components/categories/category-detail-panel";
@@ -60,19 +60,14 @@ function CategoriesContent() {
       } else {
         params.delete("search");
       }
-      const newUrl = params.toString()
-        ? `/categories?${params.toString()}`
-        : "/categories";
+      const newUrl = params.toString() ? `/categories?${params.toString()}` : "/categories";
       router.replace(newUrl, { scroll: false });
     },
     [router, searchParams]
   );
 
   // Find selected category
-  const selectedCategory = useMemo(() => {
-    if (!selectedId || !categories.length) return null;
-    return categories.find((c) => c.id === selectedId) || null;
-  }, [selectedId, categories]);
+  const selectedCategory = categories.find((c) => c.id === selectedId) || null;
 
   // Load panel width from localStorage
   useEffect(() => {

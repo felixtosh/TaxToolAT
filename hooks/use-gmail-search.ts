@@ -1,7 +1,58 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/lib/firebase/config";
 import { EmailMessage, EmailSearchParams, EmailAttachment } from "@/types/email-integration";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
+
+// ============================================================================
+// Cloud Function Types
+// ============================================================================
+
+interface SearchGmailRequest {
+  integrationId: string;
+  query?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  from?: string;
+  hasAttachments?: boolean;
+  limit?: number;
+  pageToken?: string;
+  expandThreads?: boolean;
+}
+
+interface GmailAttachmentResult {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  isLikelyReceipt: boolean;
+  existingFileId?: string | null;
+}
+
+interface GmailMessageResult {
+  messageId: string;
+  threadId: string;
+  subject: string;
+  from: string;
+  fromName: string | null;
+  date: string;
+  snippet: string;
+  bodyText: string | null;
+  attachments: GmailAttachmentResult[];
+}
+
+interface SearchGmailResponse {
+  messages: GmailMessageResult[];
+  nextPageToken?: string;
+  totalEstimate?: number;
+}
+
+const searchGmailFn = httpsCallable<SearchGmailRequest, SearchGmailResponse>(
+  functions,
+  "searchGmailCallable"
+);
 
 export interface UseGmailSearchResult {
   /** Search results */
@@ -43,7 +94,32 @@ export function useGmailSearch(integrationId: string | null): UseGmailSearchResu
   const [lastParams, setLastParams] = useState<Omit<EmailSearchParams, "integrationId"> | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<EmailAttachment | null>(null);
 
-  // Search for emails
+  // Transform callable response to EmailMessage format
+  const transformResponse = useCallback((messages: GmailMessageResult[]): EmailMessage[] => {
+    if (!integrationId) return [];
+    return messages.map((msg) => ({
+      messageId: msg.messageId,
+      threadId: msg.threadId,
+      subject: msg.subject,
+      from: msg.from,
+      fromName: msg.fromName || undefined,
+      date: new Date(msg.date),
+      snippet: msg.snippet,
+      bodyText: msg.bodyText || undefined,
+      integrationId,
+      attachments: msg.attachments.map((att) => ({
+        attachmentId: att.attachmentId,
+        messageId: msg.messageId,
+        filename: att.filename,
+        mimeType: att.mimeType,
+        size: att.size,
+        isLikelyReceipt: att.isLikelyReceipt,
+        existingFileId: att.existingFileId || undefined,
+      })),
+    }));
+  }, [integrationId]);
+
+  // Search for emails using Cloud Function
   const search = useCallback(
     async (params: Omit<EmailSearchParams, "integrationId">) => {
       if (!integrationId) {
@@ -58,44 +134,40 @@ export function useGmailSearch(integrationId: string | null): UseGmailSearchResu
       setLastParams(params);
 
       try {
-        const response = await fetch("/api/gmail/search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            integrationId,
-            ...params,
-            dateFrom: params.dateFrom?.toISOString(),
-            dateTo: params.dateTo?.toISOString(),
-          }),
+        const result = await searchGmailFn({
+          integrationId,
+          query: params.query,
+          dateFrom: params.dateFrom?.toISOString(),
+          dateTo: params.dateTo?.toISOString(),
+          from: params.from,
+          hasAttachments: params.hasAttachments,
+          limit: params.limit,
+          expandThreads: params.expandThreads,
         });
 
-        if (!response.ok) {
-          const errorData = await response.json();
-          if (errorData.code === "AUTH_EXPIRED" || errorData.code === "TOKEN_EXPIRED") {
-            throw new Error("Gmail session expired. Please reconnect your account.");
-          }
-          throw new Error(errorData.error || "Search failed");
-        }
-
-        const data = await response.json();
-        setMessages(
-          data.messages.map((msg: EmailMessage & { date: string }) => ({
-            ...msg,
-            date: new Date(msg.date),
-          }))
-        );
-        setNextPageToken(data.nextPageToken);
+        setMessages(transformResponse(result.data.messages));
+        setNextPageToken(result.data.nextPageToken);
       } catch (err) {
         console.error("Gmail search error:", err);
-        setError(err instanceof Error ? err.message : "Search failed");
+        // Handle Firebase function errors
+        if (err instanceof Error) {
+          const message = err.message;
+          if (message.includes("Re-authentication") || message.includes("expired")) {
+            setError("Gmail session expired. Please reconnect your account.");
+          } else {
+            setError(message);
+          }
+        } else {
+          setError("Search failed");
+        }
       } finally {
         setLoading(false);
       }
     },
-    [integrationId]
+    [integrationId, transformResponse]
   );
 
-  // Load more results
+  // Load more results using Cloud Function
   const loadMore = useCallback(async () => {
     if (!integrationId || !nextPageToken || !lastParams || loading) {
       return;
@@ -105,39 +177,27 @@ export function useGmailSearch(integrationId: string | null): UseGmailSearchResu
     setError(null);
 
     try {
-      const response = await fetch("/api/gmail/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          integrationId,
-          ...lastParams,
-          dateFrom: lastParams.dateFrom?.toISOString(),
-          dateTo: lastParams.dateTo?.toISOString(),
-          pageToken: nextPageToken,
-        }),
+      const result = await searchGmailFn({
+        integrationId,
+        query: lastParams.query,
+        dateFrom: lastParams.dateFrom?.toISOString(),
+        dateTo: lastParams.dateTo?.toISOString(),
+        from: lastParams.from,
+        hasAttachments: lastParams.hasAttachments,
+        limit: lastParams.limit,
+        expandThreads: lastParams.expandThreads,
+        pageToken: nextPageToken,
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to load more");
-      }
-
-      const data = await response.json();
-      setMessages((prev) => [
-        ...prev,
-        ...data.messages.map((msg: EmailMessage & { date: string }) => ({
-          ...msg,
-          date: new Date(msg.date),
-        })),
-      ]);
-      setNextPageToken(data.nextPageToken);
+      setMessages((prev) => [...prev, ...transformResponse(result.data.messages)]);
+      setNextPageToken(result.data.nextPageToken);
     } catch (err) {
       console.error("Load more error:", err);
       setError(err instanceof Error ? err.message : "Failed to load more");
     } finally {
       setLoading(false);
     }
-  }, [integrationId, nextPageToken, lastParams, loading]);
+  }, [integrationId, nextPageToken, lastParams, loading, transformResponse]);
 
   // Clear results
   const clear = useCallback(() => {
@@ -179,9 +239,8 @@ export function useGmailSearch(integrationId: string | null): UseGmailSearchResu
       setError(null);
 
       try {
-        const response = await fetch("/api/gmail/attachment", {
+        const response = await fetchWithAuth("/api/gmail/attachment", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             integrationId,
             messageId: attachment.messageId,

@@ -1,5 +1,5 @@
 /**
- * PDF utility functions for TaxStudio browser extension
+ * PDF utility functions for FiBuKI browser extension
  * Extracted for testability
  */
 

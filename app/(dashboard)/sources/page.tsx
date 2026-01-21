@@ -26,32 +26,43 @@ export default function SourcesPage() {
     router.push("/sources/connect");
   };
 
+  const handleAddManualClick = () => {
+    setIsAddDialogOpen(true);
+  };
+
+  // Show header only when there are sources (or loading)
+  const showHeader = loading || sources.length > 0;
+
   return (
     <div className="container mx-auto px-4 py-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Bank Accounts</h1>
-          <p className="text-muted-foreground">
-            Manage your bank accounts and import transactions
-          </p>
+      {showHeader && (
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold">Bank Accounts</h1>
+            <p className="text-muted-foreground">
+              Manage your bank accounts and import transactions
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleAddManualClick} data-onboarding="add-account">
+              <Plus className="h-4 w-4 mr-2" />
+              Add Manual
+            </Button>
+            <Button onClick={handleConnectClick} data-onboarding="connect-bank">
+              <Link2 className="h-4 w-4 mr-2" />
+              Connect Bank
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={handleConnectClick}>
-            <Link2 className="h-4 w-4 mr-2" />
-            Connect Bank
-          </Button>
-          <Button onClick={() => setIsAddDialogOpen(true)} data-onboarding="add-account">
-            <Plus className="h-4 w-4 mr-2" />
-            Add Account
-          </Button>
-        </div>
-      </div>
+      )}
 
       <SourceList
         sources={sources}
         loading={loading}
         onSourceClick={handleSourceClick}
         onImportClick={handleImportClick}
+        onConnectClick={handleConnectClick}
+        onAddManualClick={handleAddManualClick}
       />
 
       <AddSourceDialog

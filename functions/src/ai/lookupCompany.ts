@@ -46,7 +46,7 @@ async function fetchPageContent(url: string): Promise<string | null> {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; TaxStudio/1.0)",
+        "User-Agent": "Mozilla/5.0 (compatible; FiBuKI/1.0)",
         Accept: "text/html,application/xhtml+xml",
       },
     });

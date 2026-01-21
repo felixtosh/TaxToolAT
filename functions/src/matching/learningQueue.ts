@@ -31,8 +31,10 @@ export const queuePartnerForLearning = onCall<{ partnerId: string }>(
     timeoutSeconds: 10,
   },
   async (request) => {
-    // TODO: Use real auth when ready for multi-user
-    const userId = "dev-user-123";
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
     const { partnerId } = request.data;
 
     if (!partnerId) {
@@ -158,8 +160,10 @@ export const triggerLearningNow = onCall<Record<string, never>>(
     timeoutSeconds: 300,
   },
   async (request) => {
-    // TODO: Use real auth when ready for multi-user
-    const userId = "dev-user-123";
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
 
     const queueRef = db.collection("users").doc(userId).collection("system").doc("learningQueue");
     const queueDoc = await queueRef.get();

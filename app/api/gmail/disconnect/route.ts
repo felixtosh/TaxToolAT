@@ -1,17 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, getDoc, deleteDoc, collection, query, where, getDocs } from "firebase/firestore";
-import { getServerDb } from "@/lib/firebase/config-server";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import {
-  getEmailIntegration,
-  softDisconnectEmailIntegration,
-  removeIntegrationFromPatterns,
-  softDeleteFilesForIntegration,
-} from "@/lib/operations";
 
-const db = getServerDb();
+const db = getAdminDb();
+const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const TOKENS_COLLECTION = "emailTokens";
 const SYNC_QUEUE_COLLECTION = "gmailSyncQueue";
+const FILES_COLLECTION = "files";
+const PARTNERS_COLLECTION = "partners";
 
 /**
  * DELETE /api/gmail/disconnect
@@ -36,11 +33,19 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId };
-
     // Verify integration exists and belongs to user
-    const integration = await getEmailIntegration(ctx, integrationId);
-    if (!integration) {
+    const integrationRef = db.collection(INTEGRATIONS_COLLECTION).doc(integrationId);
+    const integrationSnap = await integrationRef.get();
+
+    if (!integrationSnap.exists) {
+      return NextResponse.json(
+        { error: "Integration not found" },
+        { status: 404 }
+      );
+    }
+
+    const integration = integrationSnap.data()!;
+    if (integration.userId !== userId) {
       return NextResponse.json(
         { error: "Integration not found" },
         { status: 404 }
@@ -48,7 +53,10 @@ export async function DELETE(request: NextRequest) {
     }
 
     // 1. Get tokens to revoke
-    const tokens = await getTokens(integrationId);
+    const tokenRef = db.collection(TOKENS_COLLECTION).doc(integrationId);
+    const tokenSnap = await tokenRef.get();
+    const tokens = tokenSnap.exists ? tokenSnap.data() : null;
+
     if (tokens?.accessToken) {
       try {
         // Revoke Google OAuth access
@@ -70,8 +78,7 @@ export async function DELETE(request: NextRequest) {
 
     // 2. Delete tokens from secure storage
     try {
-      const tokenDoc = doc(db, TOKENS_COLLECTION, integrationId);
-      await deleteDoc(tokenDoc);
+      await tokenRef.delete();
     } catch (error) {
       console.warn("Failed to delete tokens:", error);
     }
@@ -80,18 +87,32 @@ export async function DELETE(request: NextRequest) {
     const { processedMessageIds, dateRange } = await getQueueStateAndDelete(integrationId);
 
     // 4. Soft delete files WITHOUT transaction connections
-    //    Files WITH connections are preserved (they're still useful)
-    const fileResult = await softDeleteFilesForIntegration(ctx, integrationId);
+    const fileResult = await softDeleteFilesForIntegration(userId, integrationId);
     console.log(
       `[Disconnect] Soft-deleted ${fileResult.softDeleted} files, ` +
         `preserved ${fileResult.skipped} files with transaction connections`
     );
 
     // 5. Remove integration ID from partner patterns
-    await removeIntegrationFromPatterns(ctx, integrationId);
+    await removeIntegrationFromPatterns(userId, integrationId);
 
     // 6. Soft-disconnect the integration (preserves processedMessageIds for reconnection)
-    await softDisconnectEmailIntegration(ctx, integrationId, processedMessageIds, dateRange);
+    const now = Timestamp.now();
+    const updates: Record<string, unknown> = {
+      isActive: false,
+      disconnectedAt: now,
+      processedMessageIds,
+      updatedAt: now,
+    };
+
+    if (dateRange) {
+      updates.lastSyncDateRange = {
+        from: Timestamp.fromDate(dateRange.from),
+        to: Timestamp.fromDate(dateRange.to),
+      };
+    }
+
+    await integrationRef.update(updates);
 
     return NextResponse.json({
       success: true,
@@ -109,27 +130,6 @@ export async function DELETE(request: NextRequest) {
 }
 
 /**
- * Get tokens from secure storage
- */
-async function getTokens(integrationId: string): Promise<{
-  accessToken: string;
-  refreshToken?: string;
-} | null> {
-  const tokenDoc = doc(db, TOKENS_COLLECTION, integrationId);
-  const snapshot = await getDoc(tokenDoc);
-
-  if (!snapshot.exists()) {
-    return null;
-  }
-
-  const data = snapshot.data();
-  return {
-    accessToken: data.accessToken,
-    refreshToken: data.refreshToken,
-  };
-}
-
-/**
  * Get state from queue items before deleting them.
  * Extracts processedMessageIds and date range for preservation on the integration.
  */
@@ -138,11 +138,10 @@ async function getQueueStateAndDelete(integrationId: string): Promise<{
   dateRange?: { from: Date; to: Date };
 }> {
   try {
-    const queueQuery = query(
-      collection(db, SYNC_QUEUE_COLLECTION),
-      where("integrationId", "==", integrationId)
-    );
-    const queueSnapshot = await getDocs(queueQuery);
+    const queueSnapshot = await db
+      .collection(SYNC_QUEUE_COLLECTION)
+      .where("integrationId", "==", integrationId)
+      .get();
 
     // Collect all processed message IDs from all queue items
     const allProcessedIds = new Set<string>();
@@ -166,7 +165,7 @@ async function getQueueStateAndDelete(integrationId: string): Promise<{
     }
 
     // Delete all queue items
-    const deletePromises = queueSnapshot.docs.map((d) => deleteDoc(d.ref));
+    const deletePromises = queueSnapshot.docs.map((d) => d.ref.delete());
     await Promise.all(deletePromises);
 
     console.log(
@@ -181,5 +180,82 @@ async function getQueueStateAndDelete(integrationId: string): Promise<{
   } catch (error) {
     console.warn("Failed to get queue state:", error);
     return { processedMessageIds: [] };
+  }
+}
+
+/**
+ * Soft delete files for an integration
+ * Only deletes files that don't have transaction connections
+ */
+async function softDeleteFilesForIntegration(
+  userId: string,
+  integrationId: string
+): Promise<{ softDeleted: number; skipped: number }> {
+  const filesQuery = await db
+    .collection(FILES_COLLECTION)
+    .where("userId", "==", userId)
+    .where("integrationId", "==", integrationId)
+    .where("isDeleted", "!=", true)
+    .get();
+
+  let softDeleted = 0;
+  let skipped = 0;
+  const now = Timestamp.now();
+
+  for (const fileDoc of filesQuery.docs) {
+    const data = fileDoc.data();
+
+    // Skip files that have transaction connections
+    if (data.transactionId) {
+      skipped++;
+      continue;
+    }
+
+    await fileDoc.ref.update({
+      isDeleted: true,
+      deletedAt: now,
+      updatedAt: now,
+    });
+    softDeleted++;
+  }
+
+  return { softDeleted, skipped };
+}
+
+/**
+ * Remove integration ID from partner email patterns
+ */
+async function removeIntegrationFromPatterns(
+  userId: string,
+  integrationId: string
+): Promise<void> {
+  const partnersQuery = await db
+    .collection(PARTNERS_COLLECTION)
+    .where("userId", "==", userId)
+    .get();
+
+  const now = Timestamp.now();
+
+  for (const partnerDoc of partnersQuery.docs) {
+    const data = partnerDoc.data();
+    const patterns = data.emailSearchPatterns || [];
+
+    if (patterns.length === 0) continue;
+
+    // Filter out the integration ID and remove patterns with no integrations left
+    const updatedPatterns = patterns
+      .map((p: { integrationIds: string[] }) => ({
+        ...p,
+        integrationIds: p.integrationIds.filter((id: string) => id !== integrationId),
+      }))
+      .filter((p: { integrationIds: string[] }) => p.integrationIds.length > 0);
+
+    if (updatedPatterns.length !== patterns.length) {
+      await partnerDoc.ref.update({
+        emailSearchPatterns: updatedPatterns,
+        emailPatternsUpdatedAt: now,
+        updatedAt: now,
+      });
+    }
   }
 }

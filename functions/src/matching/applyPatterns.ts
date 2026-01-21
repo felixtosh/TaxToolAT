@@ -1,4 +1,4 @@
-import { onCall } from "firebase-functions/v2/https";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue, DocumentSnapshot } from "firebase-admin/firestore";
 import { globMatch, LearnedPattern } from "../utils/partner-matcher";
 
@@ -196,8 +196,10 @@ export const applyPatternsToTransactions = onCall<Record<string, never>>(
     timeoutSeconds: 540,
   },
   async (request) => {
-    // TODO: Use real auth when ready for multi-user
-    const userId = "dev-user-123";
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
     return await applyAllPatternsToTransactions(userId);
   }
 );

@@ -52,10 +52,12 @@ export function useTransactions() {
         })) as Transaction[];
 
         // Use startTransition to mark this as non-urgent, preventing DOM blocking
+        // IMPORTANT: Both state updates must be inside startTransition to prevent
+        // flicker where loading=false but transactions is still empty
         startTransition(() => {
           setTransactions(data);
+          setLoading(false);
         });
-        setLoading(false);
       },
       (err) => {
         console.error("Error fetching transactions:", err);

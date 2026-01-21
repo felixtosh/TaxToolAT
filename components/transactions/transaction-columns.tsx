@@ -5,6 +5,7 @@ import { format } from "date-fns";
 import {
   FileText,
   Tag,
+  Loader2,
 } from "lucide-react";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
@@ -37,6 +38,7 @@ export interface TransactionColumnOptions {
   categories?: UserNoReceiptCategory[];
   categorySuggestions?: Map<string, CategorySuggestion>;
   fileAmountsMap?: Map<string, FileAmountData>;
+  searchingTransactionIds?: Set<string>;
   onAutomationClick?: (pipelineId: PipelineId) => void;
 }
 
@@ -47,7 +49,8 @@ export function getTransactionColumns(
   categories: UserNoReceiptCategory[] = [],
   categorySuggestions?: Map<string, CategorySuggestion>,
   fileAmountsMap?: Map<string, FileAmountData>,
-  onAutomationClick?: (pipelineId: PipelineId) => void
+  onAutomationClick?: (pipelineId: PipelineId) => void,
+  searchingTransactionIds?: Set<string>
 ): ColumnDef<Transaction>[] {
   const sourceMap = new Map(sources.map((s) => [s.id, s]));
   const userPartnerMap = new Map(userPartners.map((p) => [p.id, p]));
@@ -97,7 +100,7 @@ export function getTransactionColumns(
           <span
             className={cn(
               "text-sm tabular-nums whitespace-nowrap",
-              amount < 0 ? "text-red-600" : "text-green-600"
+              amount < 0 ? "text-amount-negative" : "text-amount-positive"
             )}
           >
             {formatted}
@@ -197,10 +200,22 @@ export function getTransactionColumns(
         const categoryTemplateId = row.original.noReceiptCategoryTemplateId;
         const hasNoReceiptCategory = !!categoryTemplateId;
         const txId = row.original.id;
+        const isSearching = searchingTransactionIds?.has(txId);
+
+        // Show loading spinner when precision search is in progress
+        if (isSearching && !hasFile) {
+          return (
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <span className="text-xs">Searching...</span>
+            </div>
+          );
+        }
 
         if (hasFile) {
           const fileData = fileAmountsMap?.get(txId);
-          const txDate = row.original.date?.toDate?.() || undefined;
+          // Use transaction/payment date for currency conversion
+          const txDate = row.original.date?.toDate?.();
           return (
             <AmountMatchDisplay
               count={fileCount}
@@ -217,11 +232,18 @@ export function getTransactionColumns(
         if (hasNoReceiptCategory) {
           const template = getCategoryTemplate(categoryTemplateId);
           const label = template?.name || "No receipt";
+          const categoryConfidence = row.original.noReceiptCategoryConfidence;
+          const categoryMatchedBy = row.original.noReceiptCategoryMatchedBy;
           return (
             <Tooltip>
               <TooltipTrigger asChild>
                 <div>
-                  <Pill label={label} icon={Tag} />
+                  <Pill
+                    label={label}
+                    icon={Tag}
+                    confidence={categoryConfidence ?? undefined}
+                    matchedBy={categoryMatchedBy}
+                  />
                 </div>
               </TooltipTrigger>
               <TooltipContent>
@@ -240,14 +262,16 @@ export function getTransactionColumns(
             <Tooltip>
               <TooltipTrigger asChild>
                 <div>
-                  <Pill label={label} icon={Tag} variant="suggestion" />
+                  <Pill
+                    label={label}
+                    icon={Tag}
+                    variant="suggestion"
+                    confidence={catSuggestion.confidence}
+                  />
                 </div>
               </TooltipTrigger>
               <TooltipContent>
-                <p className="text-xs">
-                  Suggested: {catSuggestion.confidence}% match
-                </p>
-                <p className="text-xs text-muted-foreground">Click row to assign</p>
+                <p className="text-xs">Click row to assign</p>
               </TooltipContent>
             </Tooltip>
           );

@@ -9,7 +9,7 @@ const stepLabels: Record<string, string> = {
   add_bank_account: "Start here",
   import_transactions: "Import your transactions",
   assign_partner: "Assign a partner",
-  attach_file: "Add a receipt",
+  attach_file: "Drop a file here or connect a service",
 };
 
 // Map steps to their expected routes

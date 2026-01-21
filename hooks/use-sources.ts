@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, startTransition } from "react";
 import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { TransactionSource, SourceFormData, SavedFieldMapping } from "@/types/source";
@@ -55,8 +55,12 @@ export function useSources() {
           ...doc.data(),
         })) as TransactionSource[];
 
-        setSources(data);
-        setLoading(false);
+        // Use startTransition to batch updates and prevent flicker
+        // where loading=false but sources is still empty
+        startTransition(() => {
+          setSources(data);
+          setLoading(false);
+        });
       },
       (err) => {
         console.error("Error fetching sources:", err);

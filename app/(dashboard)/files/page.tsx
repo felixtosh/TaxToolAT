@@ -6,12 +6,13 @@ import { useDropzone } from "react-dropzone";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { Upload } from "lucide-react";
 import { storage, db } from "@/lib/firebase/config";
-import { createFile, checkFileDuplicate, retryFileExtraction, OperationsContext } from "@/lib/operations";
+import { createFile, checkFileDuplicate, retryFileExtraction, connectFileToTransaction, OperationsContext } from "@/lib/operations";
 import { FileTable } from "@/components/files/file-table";
 import { FileDetailPanel } from "@/components/files/file-detail-panel";
 import { FileBulkActionsPanel } from "@/components/files/file-bulk-actions-panel";
 import { FileUploadZone } from "@/components/files/file-upload-zone";
 import { FileViewerOverlay } from "@/components/files/file-viewer-overlay";
+import { ConnectTransactionOverlay } from "@/components/files/connect-transaction-overlay";
 import { UploadProgress, FileUploadStatus } from "@/components/files/upload-progress";
 import { FilesDataTableHandle } from "@/components/files/files-data-table";
 import { useFiles } from "@/hooks/use-files";
@@ -19,6 +20,7 @@ import { usePartners } from "@/hooks/use-partners";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { useTransactions } from "@/hooks/use-transactions";
 import { TaxFile, FileFilters } from "@/types/file";
+import { parseFileFiltersFromUrl, buildFileSearchParams } from "@/lib/filters/file-url-params";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import {
@@ -86,29 +88,19 @@ function FilesContent() {
 
   // Operations context for file creation
   const ctx: OperationsContext = useMemo(
-    () => ({ db, userId }),
+    () => ({ db, userId: userId ?? "" }),
     [userId]
   );
 
-  // Parse filters from URL
+  // Parse filters from URL using centralized utility
   const filters: FileFilters = useMemo(() => {
-    const hasConnections = searchParams.get("connected");
-    const extractionComplete = searchParams.get("extracted");
-    const includeDeleted = searchParams.get("deleted");
-    const isNotInvoice = searchParams.get("notInvoice");
-
-    return {
-      hasConnections: hasConnections === "true" ? true : hasConnections === "false" ? false : undefined,
-      extractionComplete: extractionComplete === "true" ? true : extractionComplete === "false" ? false : undefined,
-      includeDeleted: includeDeleted === "true" ? true : undefined,
-      isNotInvoice: isNotInvoice === "true" ? true : undefined,
-    };
+    return parseFileFiltersFromUrl(searchParams);
   }, [searchParams]);
 
   // Get search value from URL
   const searchValue = searchParams.get("search") || "";
 
-  const { files, loading, remove, restore, markAsNotInvoice, unmarkAsNotInvoice } = useFiles({
+  const { files, allFilesCount, loading, remove, restore, markAsNotInvoice, unmarkAsNotInvoice } = useFiles({
     search: searchValue,
     ...filters,
   });
@@ -177,6 +169,40 @@ function FilesContent() {
   // File viewer state
   const [viewerOpen, setViewerOpen] = useState(false);
   const [highlightText, setHighlightText] = useState<string | null>(null);
+
+  // Connect transaction overlay - controlled via URL param
+  const isConnectTransactionOpen = searchParams.get("connect") === "true";
+
+  const closeConnectTransactionOverlay = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("connect");
+    router.push(`/files?${params.toString()}`, { scroll: false });
+  }, [router, searchParams]);
+
+  // Toggle connect overlay (also closes viewer when opening)
+  const toggleConnectTransactionOverlay = useCallback(() => {
+    if (isConnectTransactionOpen) {
+      closeConnectTransactionOverlay();
+    } else {
+      // Close viewer when opening connect overlay
+      setViewerOpen(false);
+      setHighlightText(null);
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("connect", "true");
+      router.push(`/files?${params.toString()}`, { scroll: false });
+    }
+  }, [isConnectTransactionOpen, closeConnectTransactionOverlay, router, searchParams]);
+
+  // Toggle viewer (closes connect overlay if opening)
+  const toggleViewer = useCallback(() => {
+    if (viewerOpen) {
+      setViewerOpen(false);
+      setHighlightText(null);
+    } else {
+      closeConnectTransactionOverlay();
+      setViewerOpen(true);
+    }
+  }, [viewerOpen, closeConnectTransactionOverlay]);
 
   // Track file ID being parsed after user override (skips classification)
   const [parsingFileId, setParsingFileId] = useState<string | null>(null);
@@ -310,12 +336,11 @@ function FilesContent() {
       // Select first successfully uploaded file
       const firstSuccessfulId = results.find((id) => id !== null);
       if (firstSuccessfulId) {
-        const params = new URLSearchParams(searchParams.toString());
-        params.set("id", firstSuccessfulId);
+        const params = buildFileSearchParams(filters, searchValue, firstSuccessfulId);
         router.push(`/files?${params.toString()}`, { scroll: false });
       }
     },
-    [uploadSingleFile, router, searchParams]
+    [uploadSingleFile, router, filters, searchValue]
   );
 
   // Dismiss upload progress
@@ -339,6 +364,20 @@ function FilesContent() {
     if (!primarySelectedId || !files.length) return null;
     return files.find((f) => f.id === primarySelectedId) || null;
   }, [primarySelectedId, files]);
+
+  // Handle connecting transactions to the selected file
+  const handleConnectTransactions = useCallback(
+    async (transactionIds: string[]) => {
+      if (!selectedFile) return;
+      await Promise.all(
+        transactionIds.map((transactionId) =>
+          connectFileToTransaction(ctx, selectedFile.id, transactionId, "manual")
+        )
+      );
+      closeConnectTransactionOverlay();
+    },
+    [ctx, selectedFile, closeConnectTransactionOverlay]
+  );
 
   // Find current index for navigation
   const currentIndex = useMemo(() => {
@@ -416,74 +455,38 @@ function FilesContent() {
     };
   }, [isResizing]);
 
-  // URL update helpers
+  // URL update helpers using centralized utilities
   const handleSearchChange = useCallback(
     (value: string) => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (value) {
-        params.set("search", value);
-      } else {
-        params.delete("search");
-      }
+      const params = buildFileSearchParams(filters, value, primarySelectedId);
       const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
       router.replace(newUrl, { scroll: false });
     },
-    [router, searchParams]
+    [router, filters, primarySelectedId]
   );
 
   const handleFiltersChange = useCallback(
     (newFilters: FileFilters) => {
-      const params = new URLSearchParams(searchParams.toString());
-
-      if (newFilters.hasConnections === true) {
-        params.set("connected", "true");
-      } else if (newFilters.hasConnections === false) {
-        params.set("connected", "false");
-      } else {
-        params.delete("connected");
-      }
-
-      if (newFilters.extractionComplete === true) {
-        params.set("extracted", "true");
-      } else if (newFilters.extractionComplete === false) {
-        params.set("extracted", "false");
-      } else {
-        params.delete("extracted");
-      }
-
-      if (newFilters.includeDeleted === true) {
-        params.set("deleted", "true");
-      } else {
-        params.delete("deleted");
-      }
-
-      if (newFilters.isNotInvoice === true) {
-        params.set("notInvoice", "true");
-      } else {
-        params.delete("notInvoice");
-      }
-
+      const params = buildFileSearchParams(newFilters, searchValue, primarySelectedId);
       const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
       router.replace(newUrl, { scroll: false });
     },
-    [router, searchParams]
+    [router, searchValue, primarySelectedId]
   );
 
   const handleSelectFile = useCallback(
     (file: TaxFile) => {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("id", file.id);
+      const params = buildFileSearchParams(filters, searchValue, file.id);
       router.push(`/files?${params.toString()}`, { scroll: false });
     },
-    [router, searchParams]
+    [router, filters, searchValue]
   );
 
   const handleCloseDetail = useCallback(() => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("id");
+    const params = buildFileSearchParams(filters, searchValue, null);
     const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
     router.push(newUrl, { scroll: false });
-  }, [router, searchParams]);
+  }, [router, filters, searchValue]);
 
   const handleNavigatePrevious = useCallback(() => {
     if (currentIndex > 0) {
@@ -539,11 +542,10 @@ function FilesContent() {
     (fileId: string) => {
       setIsUploadDialogOpen(false);
       // Select the newly uploaded file
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("id", fileId);
+      const params = buildFileSearchParams(filters, searchValue, fileId);
       router.push(`/files?${params.toString()}`, { scroll: false });
     },
-    [router, searchParams]
+    [router, filters, searchValue]
   );
 
   // Multi-select: handle selection changes from table
@@ -558,14 +560,12 @@ function FilesContent() {
         const [id] = newSelectedIds;
         // Clear additional selections, update primary via URL
         setAdditionalSelectedIds(new Set());
-        const params = new URLSearchParams(searchParams.toString());
-        params.set("id", id);
+        const params = buildFileSearchParams(filters, searchValue, id);
         router.push(`/files?${params.toString()}`, { scroll: false });
       } else if (newSelectedIds.size === 0) {
         // Clear everything
         setAdditionalSelectedIds(new Set());
-        const params = new URLSearchParams(searchParams.toString());
-        params.delete("id");
+        const params = buildFileSearchParams(filters, searchValue, null);
         const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
         router.push(newUrl, { scroll: false });
       } else {
@@ -577,7 +577,7 @@ function FilesContent() {
         setAdditionalSelectedIds(newAdditional);
       }
     },
-    [router, searchParams, primarySelectedId]
+    [router, filters, searchValue, primarySelectedId]
   );
 
   // Multi-select: clear additional selections only (keep primary)
@@ -600,14 +600,13 @@ function FilesContent() {
       }
       // Clear additional selections and primary
       setAdditionalSelectedIds(new Set());
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete("id");
+      const params = buildFileSearchParams(filters, searchValue, null);
       const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
       router.push(newUrl, { scroll: false });
     } finally {
       setIsBulkDeleting(false);
     }
-  }, [allSelectedIds, files, remove, router, searchParams]);
+  }, [allSelectedIds, files, remove, router, filters, searchValue]);
 
   // Multi-select: bulk mark as not invoice
   const handleBulkMarkAsNotInvoice = useCallback(async () => {
@@ -690,6 +689,8 @@ function FilesContent() {
           <FileTable
             ref={tableRef}
             files={files}
+            allFilesCount={allFilesCount}
+            loading={loading}
             onSelectFile={handleSelectFile}
             selectedFileId={primarySelectedId}
             searchValue={searchValue}
@@ -702,6 +703,7 @@ function FilesContent() {
             enableMultiSelect={true}
             selectedRowIds={allSelectedIds}
             onSelectionChange={handleSelectionChange}
+            onUploadClick={() => setIsUploadDialogOpen(true)}
           />
 
           {/* File viewer overlay - positioned over table area only */}
@@ -716,6 +718,18 @@ function FilesContent() {
               fileType={selectedFile.fileType}
               fileName={selectedFile.fileName}
               highlightText={highlightText}
+            />
+          )}
+
+          {/* Connect transaction overlay - positioned over table area */}
+          {selectedFile && (
+            <ConnectTransactionOverlay
+              open={isConnectTransactionOpen}
+              onClose={closeConnectTransactionOverlay}
+              onSelect={handleConnectTransactions}
+              connectedTransactionIds={selectedFile.transactionIds}
+              file={selectedFile}
+              suggestions={selectedFile.transactionSuggestions}
             />
           )}
         </div>
@@ -785,14 +799,17 @@ function FilesContent() {
               userPartners={userPartners}
               globalPartners={globalPartners}
               onCreatePartner={createPartner}
-              onOpenViewer={() => setViewerOpen((prev) => !prev)}
+              onOpenViewer={toggleViewer}
               viewerOpen={viewerOpen}
               onHighlightField={(text) => {
                 setHighlightText(text);
                 if (!viewerOpen) {
+                  closeConnectTransactionOverlay();
                   setViewerOpen(true);
                 }
               }}
+              onOpenConnectTransaction={toggleConnectTransactionOverlay}
+              isConnectTransactionOpen={isConnectTransactionOpen}
             />
           </div>
         </div>

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, getDoc, updateDoc, Timestamp } from "firebase/firestore";
-import { getServerDb } from "@/lib/firebase/config-server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { Timestamp } from "firebase-admin/firestore";
 
-const db = getServerDb();
+const db = getAdminDb();
 const TOKENS_COLLECTION = "emailTokens";
+const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 interface GoogleTokenResponse {
@@ -45,20 +45,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Get stored tokens
-    const tokenDoc = await getDoc(doc(db, TOKENS_COLLECTION, integrationId));
-    if (!tokenDoc.exists()) {
+    const tokenSnap = await db.collection(TOKENS_COLLECTION).doc(integrationId).get();
+    if (!tokenSnap.exists) {
       return NextResponse.json(
         { error: "Token not found" },
         { status: 404 }
       );
     }
 
-    const tokenData = tokenDoc.data();
+    const tokenData = tokenSnap.data()!;
     const refreshToken = tokenData.refreshToken;
 
     if (!refreshToken) {
       // Mark integration as needing re-auth
-      await updateDoc(doc(db, "emailIntegrations", integrationId), {
+      await db.collection(INTEGRATIONS_COLLECTION).doc(integrationId).update({
         needsReauth: true,
         lastError: "No refresh token available",
         updatedAt: Timestamp.now(),
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
 
       // Check if refresh token is invalid/expired
       if (tokenResponse.status === 400 || tokenResponse.status === 401) {
-        await updateDoc(doc(db, "emailIntegrations", integrationId), {
+        await db.collection(INTEGRATIONS_COLLECTION).doc(integrationId).update({
           needsReauth: true,
           lastError: "Refresh token expired or revoked",
           updatedAt: Timestamp.now(),
@@ -110,14 +110,14 @@ export async function POST(request: NextRequest) {
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
 
     // Update stored tokens
-    await updateDoc(doc(db, TOKENS_COLLECTION, integrationId), {
+    await db.collection(TOKENS_COLLECTION).doc(integrationId).update({
       accessToken: tokens.access_token,
       expiresAt: Timestamp.fromDate(expiresAt),
       updatedAt: Timestamp.now(),
     });
 
     // Update integration
-    await updateDoc(doc(db, "emailIntegrations", integrationId), {
+    await db.collection(INTEGRATIONS_COLLECTION).doc(integrationId).update({
       tokenExpiresAt: Timestamp.fromDate(expiresAt),
       needsReauth: false,
       lastError: null,

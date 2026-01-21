@@ -18,7 +18,7 @@ function extractDomainForNotification(url) {
 
 function showLoginNotification(runId, url, runs) {
   if (!chrome.notifications) {
-    console.warn("[TaxStudio] chrome.notifications API not available");
+    console.warn("[FiBuKI] chrome.notifications API not available");
     return;
   }
 
@@ -30,7 +30,7 @@ function showLoginNotification(runId, url, runs) {
     {
       type: "basic",
       iconUrl: "icons/icon48.png",
-      title: "TaxStudio: Login Required",
+      title: "FiBuKI: Login Required",
       message: "Please log in to " + domain + " to continue invoice collection.",
       buttons: [{ title: "Open Page" }, { title: "Dismiss" }],
       priority: 2,
@@ -99,7 +99,7 @@ describe("Chrome Notifications", () => {
         expect.objectContaining({
           type: "basic",
           iconUrl: "icons/icon48.png",
-          title: "TaxStudio: Login Required",
+          title: "FiBuKI: Login Required",
           message: expect.stringContaining("admin.google.com"),
           requireInteraction: true,
           priority: 2,
@@ -165,7 +165,7 @@ describe("Chrome Notifications", () => {
       );
     });
 
-    it("ignores non-TaxStudio notifications", () => {
+    it("ignores non-FiBuKI notifications", () => {
       const runs = {};
 
       handleNotificationButtonClick("other_notification", 0, runs);

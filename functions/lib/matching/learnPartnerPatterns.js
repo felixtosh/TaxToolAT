@@ -321,8 +321,10 @@ exports.learnPartnerPatterns = (0, https_1.onCall)({
     timeoutSeconds: 60,
     secrets: [anthropicApiKey],
 }, async (request) => {
-    // TODO: Use real auth when ready for multi-user
-    const userId = "dev-user-123";
+    if (!request.auth?.uid) {
+        throw new https_1.HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
     const { partnerId, transactionId } = request.data;
     if (!partnerId) {
         throw new https_1.HttpsError("invalid-argument", "partnerId is required");

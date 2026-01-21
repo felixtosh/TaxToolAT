@@ -11,6 +11,7 @@ import {
 import { db } from "@/lib/firebase/config";
 import { EmailIntegration } from "@/types/email-integration";
 import { useAuth } from "@/components/auth";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
 
@@ -79,25 +80,29 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
 
   // Connect Gmail account - redirects to OAuth flow
   const connectGmail = useCallback(async () => {
+    if (!userId) {
+      setError("You must be logged in to connect Gmail");
+      return;
+    }
     try {
       setError(null);
-      // Redirect to OAuth authorization endpoint
+      // Redirect to OAuth authorization endpoint with userId
       // The callback will handle token exchange and redirect back to /integrations
-      window.location.href = "/api/gmail/authorize";
+      window.location.href = `/api/gmail/authorize?userId=${encodeURIComponent(userId)}`;
     } catch (err) {
       console.error("Failed to connect Gmail:", err);
       const message = err instanceof Error ? err.message : "Failed to connect Gmail";
       setError(message);
       throw err;
     }
-  }, []);
+  }, [userId]);
 
   // Disconnect integration
   const disconnect = useCallback(async (integrationId: string) => {
     try {
       setError(null);
 
-      const response = await fetch(
+      const response = await fetchWithAuth(
         `/api/gmail/disconnect?integrationId=${encodeURIComponent(integrationId)}`,
         { method: "DELETE" }
       );
@@ -117,17 +122,24 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
   // Refresh integration (reconnect OAuth)
   const refresh = useCallback(
     async (integrationId: string, returnTo?: string) => {
+      if (!userId) {
+        setError("You must be logged in to refresh integration");
+        return;
+      }
       // Find the integration to get the email
       const integration = integrations.find((i) => i.id === integrationId);
       if (!integration) {
         throw new Error("Integration not found");
       }
 
-      const returnToParam = returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : "";
+      const params = new URLSearchParams({ userId });
+      if (returnTo) {
+        params.set("returnTo", returnTo);
+      }
       // Redirect to OAuth flow - callback will update existing integration
-      window.location.href = `/api/gmail/authorize${returnToParam}`;
+      window.location.href = `/api/gmail/authorize?${params.toString()}`;
     },
-    [integrations]
+    [integrations, userId]
   );
 
   // Pause sync for an integration
@@ -135,9 +147,8 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
     try {
       setError(null);
 
-      const response = await fetch("/api/gmail/pause", {
+      const response = await fetchWithAuth("/api/gmail/pause", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ integrationId }),
       });
 
@@ -158,9 +169,8 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
     try {
       setError(null);
 
-      const response = await fetch("/api/gmail/resume", {
+      const response = await fetchWithAuth("/api/gmail/resume", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ integrationId }),
       });
 

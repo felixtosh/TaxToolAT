@@ -35,19 +35,20 @@ export function connectEmulators() {
   }
 }
 
-// Default user ID for development (when no auth is configured)
-const DEV_USER_ID = "dev-user-123";
-
 /**
  * Create the operations context for MCP tools
- * @param userId - Optional user ID. If not provided, uses dev user in development mode.
+ * @param userId - Required user ID from authentication
  */
-export function createContext(userId?: string): OperationsContext {
+export function createContext(userId: string): OperationsContext {
+  if (!userId) {
+    throw new Error("userId is required to create operations context");
+  }
+
   // Connect to emulators if configured
   connectEmulators();
 
   return {
     db,
-    userId: userId || DEV_USER_ID,
+    userId,
   };
 }

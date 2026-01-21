@@ -1,14 +1,18 @@
 "use client";
 
+import { Building2, Link2, Plus } from "lucide-react";
 import { TransactionSource } from "@/types/source";
 import { SourceCard } from "./source-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableEmptyState } from "@/components/ui/table-empty-state";
 
 interface SourceListProps {
   sources: TransactionSource[];
   loading: boolean;
   onSourceClick: (source: TransactionSource) => void;
   onImportClick: (source: TransactionSource) => void;
+  onConnectClick?: () => void;
+  onAddManualClick?: () => void;
 }
 
 export function SourceList({
@@ -16,6 +20,8 @@ export function SourceList({
   loading,
   onSourceClick,
   onImportClick,
+  onConnectClick,
+  onAddManualClick,
 }: SourceListProps) {
   if (loading) {
     return (
@@ -33,12 +39,24 @@ export function SourceList({
 
   if (sources.length === 0) {
     return (
-      <div className="text-center py-12 border rounded-lg bg-muted/30">
-        <p className="text-muted-foreground mb-2">No bank accounts added yet</p>
-        <p className="text-sm text-muted-foreground">
-          Add a bank account to start importing transactions
-        </p>
-      </div>
+      <TableEmptyState
+        icon={<Building2 className="h-full w-full" />}
+        title="No bank accounts yet"
+        description="Connect a bank account to automatically sync transactions, or add one manually to import CSV files."
+        action={{
+          label: "Connect Bank",
+          onClick: () => onConnectClick?.(),
+          icon: <Link2 className="h-4 w-4" />,
+          dataAttributes: { onboarding: "connect-bank" },
+        }}
+        secondaryAction={{
+          label: "Add Manual",
+          onClick: () => onAddManualClick?.(),
+          icon: <Plus className="h-4 w-4" />,
+          dataAttributes: { onboarding: "add-account" },
+        }}
+        size="lg"
+      />
     );
   }
 

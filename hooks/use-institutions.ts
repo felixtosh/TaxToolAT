@@ -3,6 +3,11 @@
 import { useState, useEffect, useCallback } from "react";
 
 /**
+ * Supported banking providers
+ */
+export type BankingProvider = "gocardless" | "truelayer" | "all";
+
+/**
  * Generic institution type (works with TrueLayer, GoCardless, etc.)
  */
 export interface Institution {
@@ -12,10 +17,14 @@ export interface Institution {
   countries: string[];
   bic?: string;
   transaction_total_days?: string;
+  /** Which provider this institution is from */
+  providerId?: "gocardless" | "truelayer";
 }
 
 interface UseInstitutionsOptions {
   countryCode: string | null;
+  /** Which provider to use. Defaults to "all" to query all available providers */
+  provider?: BankingProvider;
 }
 
 interface UseInstitutionsReturn {
@@ -27,9 +36,16 @@ interface UseInstitutionsReturn {
 
 /**
  * Hook to fetch and manage available financial institutions for a country
- * Uses TrueLayer as the provider
+ *
+ * Supports multiple providers:
+ * - "truelayer" - Use TrueLayer only
+ * - "gocardless" - Use GoCardless only
+ * - "all" (default) - Query all configured providers and merge results
  */
-export function useInstitutions({ countryCode }: UseInstitutionsOptions): UseInstitutionsReturn {
+export function useInstitutions({
+  countryCode,
+  provider = "all",
+}: UseInstitutionsOptions): UseInstitutionsReturn {
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,8 +60,15 @@ export function useInstitutions({ countryCode }: UseInstitutionsOptions): UseIns
     setError(null);
 
     try {
-      // Use TrueLayer API
-      const response = await fetch(`/api/truelayer/providers?country=${countryCode}`);
+      // Use the unified banking API endpoint
+      const params = new URLSearchParams({
+        country: countryCode,
+      });
+      if (provider !== "all") {
+        params.set("provider", provider);
+      }
+
+      const response = await fetch(`/api/banking/institutions?${params.toString()}`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -59,7 +82,7 @@ export function useInstitutions({ countryCode }: UseInstitutionsOptions): UseIns
     } finally {
       setLoading(false);
     }
-  }, [countryCode]);
+  }, [countryCode, provider]);
 
   useEffect(() => {
     fetchInstitutions();

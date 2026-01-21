@@ -118,7 +118,7 @@ export function TransactionDetailPanel({
 
   // Operations context for file operations
   const ctx: OperationsContext = useMemo(
-    () => ({ db, userId }),
+    () => ({ db, userId: userId ?? "" }),
     [userId]
   );
 

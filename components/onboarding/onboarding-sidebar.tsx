@@ -9,6 +9,7 @@ import {
   Check,
   ChevronRight,
   Loader2,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -23,6 +24,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   Upload,
   Users,
   FileCheck,
+  User,
 };
 
 interface StepItemProps {
@@ -30,6 +32,7 @@ interface StepItemProps {
   index: number;
   isCompleted: boolean;
   isCurrent: boolean;
+  isInProgress: boolean;
   onNavigate: () => void;
 }
 
@@ -38,6 +41,7 @@ function StepItem({
   index,
   isCompleted,
   isCurrent,
+  isInProgress,
   onNavigate,
 }: StepItemProps) {
   const Icon = iconMap[step.icon] || FileCheck;
@@ -63,6 +67,8 @@ function StepItem({
       >
         {isCompleted ? (
           <Check className="h-4 w-4" />
+        ) : isInProgress ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
           index + 1
         )}
@@ -89,20 +95,54 @@ function StepItem({
           {step.description}
         </p>
 
-        {/* Navigate button for current step */}
+        {/* Navigate button or in-progress indicator for current step */}
         {isCurrent && (
-          <Button
-            size="sm"
-            className="mt-2 h-7 text-xs"
-            onClick={onNavigate}
-          >
-            Go to step
-            <ChevronRight className="h-3 w-3 ml-1" />
-          </Button>
+          isInProgress ? (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-primary font-medium">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              In progress...
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              className="mt-2 h-7 text-xs"
+              onClick={onNavigate}
+            >
+              Go to step
+              <ChevronRight className="h-3 w-3 ml-1" />
+            </Button>
+          )
         )}
       </div>
     </div>
   );
+}
+
+/**
+ * Check if user is actively working on a step based on current pathname
+ */
+function isUserInProgressOnStep(stepId: OnboardingStep, pathname: string): boolean {
+  switch (stepId) {
+    case "set_identity":
+      // User is on identity settings page
+      return pathname === "/settings/identity";
+    case "add_bank_account":
+      // User is on sources page (adding account)
+      return pathname === "/sources" || pathname === "/sources/connect";
+    case "import_transactions":
+      // User is on import page for any source
+      return pathname.match(/^\/sources\/[^/]+\/import/) !== null;
+    case "assign_partner":
+      // User is on transactions page (assigning partner)
+      return pathname === "/transactions";
+    case "attach_file":
+      // User is on transactions page (attaching file to transaction)
+      // Note: /files page doesn't count as "in progress" since the step is about
+      // attaching files TO transactions, not just viewing files
+      return pathname === "/transactions";
+    default:
+      return false;
+  }
 }
 
 export function OnboardingSidebar() {
@@ -155,6 +195,7 @@ export function OnboardingSidebar() {
           {steps.map((step, index) => {
             const isCompleted = isStepCompleted(step.id);
             const isCurrent = currentStep === step.id;
+            const isInProgress = isCurrent && isUserInProgressOnStep(step.id, pathname);
 
             return (
               <StepItem
@@ -163,6 +204,7 @@ export function OnboardingSidebar() {
                 index={index}
                 isCompleted={isCompleted}
                 isCurrent={isCurrent}
+                isInProgress={isInProgress}
                 onNavigate={() => handleNavigate(step.route)}
               />
             );

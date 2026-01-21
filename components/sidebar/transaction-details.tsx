@@ -138,7 +138,7 @@ export function TransactionDetails({
       </FieldRow>
 
       <FieldRow label="Amount" labelWidth="w-32">
-        <span className={cn("tabular-nums", transaction.amount < 0 ? "text-red-600" : "text-green-600")}>
+        <span className={cn("tabular-nums", transaction.amount < 0 ? "text-amount-negative" : "text-amount-positive")}>
           {formattedAmount}
         </span>
       </FieldRow>

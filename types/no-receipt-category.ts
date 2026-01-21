@@ -127,3 +127,4 @@ export interface CategorySuggestion {
   confidence: number;
   source: "partner" | "pattern" | "partner+pattern";
 }
+

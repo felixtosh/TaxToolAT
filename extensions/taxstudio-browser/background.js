@@ -6,7 +6,7 @@
   var activeTabRuns = {};
   var pdfHistory = {};
   var DEBUG_LOG_URL = "http://localhost:3000/api/browser/log";
-  console.log("[TaxStudio] Background service worker loaded");
+  console.log("[FiBuKI] Background service worker loaded");
 
   // Track URLs we've already started processing
   var processingUrls = {};
@@ -28,7 +28,7 @@
 
       if (activeRunIds.length === 0) return;
 
-      console.log("[TaxStudio] PDF new tab created, closing early:", details.tabId, url.slice(0, 80));
+      console.log("[FiBuKI] PDF new tab created, closing early:", details.tabId, url.slice(0, 80));
 
       // Close immediately before navigation completes
       try {
@@ -61,7 +61,7 @@
 
       if (activeRunIds.length === 0) return;
 
-      console.log("[TaxStudio] PDF navigation starting, closing tab:", details.tabId, url.slice(0, 80));
+      console.log("[FiBuKI] PDF navigation starting, closing tab:", details.tabId, url.slice(0, 80));
 
       try {
         chrome.tabs.remove(details.tabId);
@@ -93,13 +93,13 @@
 
       if (activeRunIds.length === 0) return;
 
-      console.log("[TaxStudio] PDF tab detected, closing:", details.tabId, url.slice(0, 80));
+      console.log("[FiBuKI] PDF tab detected, closing:", details.tabId, url.slice(0, 80));
 
       // Close the tab immediately to prevent download dialog
       try {
         chrome.tabs.remove(details.tabId);
       } catch (err) {
-        console.warn("[TaxStudio] Failed to close PDF tab:", err);
+        console.warn("[FiBuKI] Failed to close PDF tab:", err);
       }
 
       // Fetch and upload if not already processing
@@ -109,23 +109,23 @@
         fetchAndUploadPdfDirect(runId, url);
       }
     });
-    console.log("[TaxStudio] webNavigation listener registered for PDF tab detection");
+    console.log("[FiBuKI] webNavigation listener registered for PDF tab detection");
   }
 
   function fetchAndUploadPdfDirect(runId, url) {
     if (seenDownloadUrls[url]) {
-      console.log("[TaxStudio] Already processed URL, skipping:", url.slice(0, 80));
+      console.log("[FiBuKI] Already processed URL, skipping:", url.slice(0, 80));
       return;
     }
     seenDownloadUrls[url] = true;
 
-    console.log("[TaxStudio] fetchAndUploadPdfDirect:", url.slice(0, 100));
+    console.log("[FiBuKI] fetchAndUploadPdfDirect:", url.slice(0, 100));
     fetch(url, { credentials: "include", redirect: "follow" })
       .then(function(resp) {
         if (!resp.ok) throw new Error("Fetch failed: " + resp.status);
         var mime = resp.headers.get("content-type") || "";
         var disposition = resp.headers.get("content-disposition") || "";
-        console.log("[TaxStudio] fetchAndUploadPdfDirect response:", resp.status, mime);
+        console.log("[FiBuKI] fetchAndUploadPdfDirect response:", resp.status, mime);
 
         var isPdf = mime.toLowerCase().indexOf("pdf") !== -1;
         var hasPdfName = disposition.toLowerCase().indexOf(".pdf") !== -1;
@@ -139,7 +139,7 @@
         });
       })
       .catch(function(err) {
-        console.warn("[TaxStudio] fetchAndUploadPdfDirect failed:", err);
+        console.warn("[FiBuKI] fetchAndUploadPdfDirect failed:", err);
         delete processingUrls[url];
       });
   }
@@ -164,7 +164,7 @@
         ...data,
       }),
     }).catch(function (err) {
-      console.warn("[TaxStudio] Debug log failed:", err);
+      console.warn("[FiBuKI] Debug log failed:", err);
     });
   }
 
@@ -203,7 +203,7 @@
     if (!urls || !urls.length) return;
     var preferredUrls = preferKnownPdfUrls(urls);
     if (preferredUrls.length) {
-      console.log("[TaxStudio] Using previously successful endpoints:", preferredUrls.length);
+      console.log("[FiBuKI] Using previously successful endpoints:", preferredUrls.length);
       urls = preferredUrls;
     }
     // Filter out CSV files - we only want PDFs
@@ -217,7 +217,7 @@
       if (lowerUrl.indexOf("account_activities") !== -1) return false; // Google's CSV activity export
       return true;
     });
-    console.log("[TaxStudio] PDF-only URLs", pdfOnlyUrls.length, "of", urls.length, "total");
+    console.log("[FiBuKI] PDF-only URLs", pdfOnlyUrls.length, "of", urls.length, "total");
     if (!pdfOnlyUrls.length) return;
     var safeUrls = pdfOnlyUrls.filter(function (url) {
       if (!pageOrigin) return true;
@@ -227,7 +227,7 @@
         return false;
       }
     });
-    console.log("[TaxStudio] Safe URLs", safeUrls.length, "origin", pageOrigin);
+    console.log("[FiBuKI] Safe URLs", safeUrls.length, "origin", pageOrigin);
     if (!safeUrls.length) return;
     var downloadUrls = safeUrls.slice(0, 5);
     runs[runId].pendingDownloads = downloadUrls.length;
@@ -286,7 +286,7 @@
                 try {
                   bodyPreview = new TextDecoder("utf-8").decode(buf.slice(0, 500));
                 } catch (e) {}
-                console.log("[TaxStudio] Not PDF response", {
+                console.log("[FiBuKI] Not PDF response", {
                   url: targetUrl,
                   contentType: mime || "",
                   disposition: disposition || "",
@@ -311,7 +311,7 @@
                 });
                 if (shouldRetry) {
                   var retryUrl = targetUrl + (targetUrl.indexOf("?") === -1 ? "?" : "&") + "format=pdf";
-                  console.log("[TaxStudio] Retrying as PDF:", retryUrl);
+                  console.log("[FiBuKI] Retrying as PDF:", retryUrl);
                   attemptFetch(retryUrl, attempt + 1);
                   return;
                 }
@@ -332,9 +332,9 @@
           })
           .catch(function (err) {
             if (err && err.message === "Not a PDF") {
-              console.warn("[TaxStudio] Download skipped (not PDF):", targetUrl);
+              console.warn("[FiBuKI] Download skipped (not PDF):", targetUrl);
             } else {
-              console.warn("[TaxStudio] Download skipped:", targetUrl, err);
+              console.warn("[FiBuKI] Download skipped:", targetUrl, err);
               // Log fetch errors (not "Not a PDF" which is already logged above)
               sendDebugLog(runId, {
                 type: "fetch_error",
@@ -394,7 +394,7 @@
    */
   function showLoginNotification(runId, url) {
     if (!chrome.notifications) {
-      console.warn("[TaxStudio] chrome.notifications API not available");
+      console.warn("[FiBuKI] chrome.notifications API not available");
       return;
     }
 
@@ -404,7 +404,7 @@
     chrome.notifications.create(notificationId, {
       type: "basic",
       iconUrl: "icons/icon48.png",
-      title: "TaxStudio: Login Required",
+      title: "FiBuKI: Login Required",
       message: "Please log in to " + domain + " to continue invoice collection.",
       buttons: [
         { title: "Open Page" },
@@ -414,9 +414,9 @@
       requireInteraction: true
     }, function(createdId) {
       if (chrome.runtime.lastError) {
-        console.warn("[TaxStudio] Failed to create notification:", chrome.runtime.lastError.message);
+        console.warn("[FiBuKI] Failed to create notification:", chrome.runtime.lastError.message);
       } else {
-        console.log("[TaxStudio] Login notification created:", createdId);
+        console.log("[FiBuKI] Login notification created:", createdId);
       }
     });
   }
@@ -429,20 +429,20 @@
       if (!notificationId || notificationId.indexOf("ts_login_") !== 0) return;
 
       var runId = notificationId.replace("ts_login_", "");
-      console.log("[TaxStudio] Notification button clicked:", notificationId, buttonIndex);
+      console.log("[FiBuKI] Notification button clicked:", notificationId, buttonIndex);
 
       if (buttonIndex === 0) {
         // "Open Page" clicked - focus the tab
         if (runs[runId] && runs[runId].tabId) {
           chrome.tabs.update(runs[runId].tabId, { active: true }, function() {
             if (chrome.runtime.lastError) {
-              console.warn("[TaxStudio] Failed to focus tab:", chrome.runtime.lastError.message);
+              console.warn("[FiBuKI] Failed to focus tab:", chrome.runtime.lastError.message);
             }
           });
           if (runs[runId].windowId) {
             chrome.windows.update(runs[runId].windowId, { focused: true }, function() {
               if (chrome.runtime.lastError) {
-                console.warn("[TaxStudio] Failed to focus window:", chrome.runtime.lastError.message);
+                console.warn("[FiBuKI] Failed to focus window:", chrome.runtime.lastError.message);
               }
             });
           }
@@ -452,11 +452,11 @@
       // Clear the notification
       chrome.notifications.clear(notificationId, function() {
         if (chrome.runtime.lastError) {
-          console.warn("[TaxStudio] Failed to clear notification:", chrome.runtime.lastError.message);
+          console.warn("[FiBuKI] Failed to clear notification:", chrome.runtime.lastError.message);
         }
       });
     });
-    console.log("[TaxStudio] Notification button click listener registered");
+    console.log("[FiBuKI] Notification button click listener registered");
   }
 
   /**
@@ -465,7 +465,7 @@
   if (chrome.notifications && chrome.notifications.onClosed) {
     chrome.notifications.onClosed.addListener(function(notificationId, byUser) {
       if (!notificationId || notificationId.indexOf("ts_login_") !== 0) return;
-      console.log("[TaxStudio] Login notification closed:", notificationId, byUser ? "by user" : "programmatically");
+      console.log("[FiBuKI] Login notification closed:", notificationId, byUser ? "by user" : "programmatically");
     });
   }
 
@@ -567,7 +567,7 @@
 
   chrome.runtime.onMessage.addListener(function (message, sender) {
     if (!message || message.type !== "TS_START_PULL") return;
-    console.log("[TaxStudio] TS_START_PULL", message.runId, message.url);
+    console.log("[FiBuKI] TS_START_PULL", message.runId, message.url);
     var runId = message.runId;
     var url = message.url;
     if (!runId || !url) return;
@@ -607,7 +607,7 @@
     if (!sender.tab || typeof sender.tab.id !== "number") return;
     if (injectedTabs[sender.tab.id]) return;
     injectedTabs[sender.tab.id] = true;
-    console.log("[TaxStudio] Injecting network hook into tab", sender.tab.id);
+    console.log("[FiBuKI] Injecting network hook into tab", sender.tab.id);
     var result = chrome.scripting.executeScript({
       target: { tabId: sender.tab.id, allFrames: true },
       world: "MAIN",
@@ -671,7 +671,7 @@
 
   chrome.runtime.onMessage.addListener(function (message, sender) {
     if (!message || message.type !== "TS_ATTACH_PULL") return;
-    console.log("[TaxStudio] TS_ATTACH_PULL", message.runId);
+    console.log("[FiBuKI] TS_ATTACH_PULL", message.runId);
     var runId = message.runId;
     if (!runId || !runs[runId]) return;
     if (!sender.tab || typeof sender.tab.id !== "number") return;
@@ -685,7 +685,7 @@
         activeTabRuns[sender.tab.id] = runId;
       }
     }
-    console.log("[TaxStudio] Attaching overlay to tab", sender.tab.id);
+    console.log("[FiBuKI] Attaching overlay to tab", sender.tab.id);
     sendToTab(sender.tab.id, { type: "TS_SHOW_OVERLAY", runId: runId });
     if (!runs[runId].overlaySent) {
       runs[runId].overlaySent = true;
@@ -701,7 +701,7 @@
       return false;
     }
     var runId = activeTabRuns[sender.tab.id] || null;
-    console.log("[TaxStudio] TS_CHECK_ACTIVE_RUN tab", sender.tab.id, "->", runId);
+    console.log("[FiBuKI] TS_CHECK_ACTIVE_RUN tab", sender.tab.id, "->", runId);
     sendResponse({ runId: runId });
     return false; // synchronous response
   });
@@ -713,7 +713,7 @@
     var paused = message.paused;
     if (!runId || !runs[runId]) return;
     runs[runId].pausedForLogin = paused;
-    console.log("[TaxStudio] Run", runId, "paused:", paused);
+    console.log("[FiBuKI] Run", runId, "paused:", paused);
     // Broadcast to all tabs associated with this run
     var tabIds = [runs[runId].tabId, runs[runId].appTabId].concat(runs[runId].downloadTabIds || []);
     tabIds.forEach(function(tabId) {
@@ -729,7 +729,7 @@
 
   chrome.runtime.onMessage.addListener(function (message) {
     if (!message || message.type !== "TS_PULL_RESULTS") return;
-    console.log("[TaxStudio] TS_PULL_RESULTS", message.runId, (message.urls || []).length);
+    console.log("[FiBuKI] TS_PULL_RESULTS", message.runId, (message.urls || []).length);
     var runId = message.runId;
     var urls = message.urls || [];
     if (!runId || !runs[runId]) return;
@@ -746,7 +746,7 @@
 
   chrome.runtime.onMessage.addListener(function (message) {
     if (!message || message.type !== "TS_UPLOAD_FILE") return;
-    console.log("[TaxStudio] TS_UPLOAD_FILE", message.runId, message.filename || "");
+    console.log("[FiBuKI] TS_UPLOAD_FILE", message.runId, message.filename || "");
     var runId = message.runId;
     if (!runId || !runs[runId]) return;
     var buffer = message.buffer;
@@ -759,7 +759,7 @@
 
   chrome.runtime.onMessage.addListener(function (message) {
     if (!message || message.type !== "TS_DOWNLOAD_URLS") return;
-    console.log("[TaxStudio] TS_DOWNLOAD_URLS", message.runId, (message.urls || []).length);
+    console.log("[FiBuKI] TS_DOWNLOAD_URLS", message.runId, (message.urls || []).length);
     var runId = message.runId;
     var urls = message.urls || [];
     var pageOrigin = message.pageOrigin || "";
@@ -805,7 +805,7 @@
         sendResponse({ script: script });
       })
       .catch(function (err) {
-        console.warn("[TaxStudio] Extractor fetch failed:", err);
+        console.warn("[FiBuKI] Extractor fetch failed:", err);
         sendResponse({ script: null, error: err.message });
       });
     return true; // Keep channel open for async response
@@ -829,7 +829,7 @@
 
   chrome.downloads.onCreated.addListener(function (item) {
     var url = item.finalUrl || item.url;
-    console.log("[TaxStudio] Download detected:", url, "tabId:", item.tabId, "filename:", item.filename);
+    console.log("[FiBuKI] Download detected:", url, "tabId:", item.tabId, "filename:", item.filename);
 
     // Try to find run by tab ID first
     var runId = null;
@@ -843,7 +843,7 @@
       var activeRunIds = allRunIds.filter(function(rid) {
         return runs[rid] && !runs[rid].pausedForLogin;
       });
-      console.log("[TaxStudio] Looking for active run. All runs:", allRunIds.length, "Active:", activeRunIds.length, activeRunIds);
+      console.log("[FiBuKI] Looking for active run. All runs:", allRunIds.length, "Active:", activeRunIds.length, activeRunIds);
       if (activeRunIds.length > 0) {
         var lowerUrl = (url || "").toLowerCase();
         var lowerFilename = (item.filename || "").toLowerCase();
@@ -860,7 +860,7 @@
         var isPaymentsDownload = lowerUrl.indexOf("payments.google.com") !== -1;
         if (isDocLike || isPaymentsDownload) {
           runId = activeRunIds[0]; // Use first active run
-          console.log("[TaxStudio] Download matched to active run:", runId, "isDoc:", isDocLike, "isPayments:", isPaymentsDownload);
+          console.log("[FiBuKI] Download matched to active run:", runId, "isDoc:", isDocLike, "isPayments:", isPaymentsDownload);
         }
       }
     }
@@ -872,35 +872,35 @@
                                lowerUrl.indexOf("admin.google.com") !== -1) &&
                               (lowerUrl.indexOf("/doc") !== -1 || lowerUrl.indexOf("?doc=") !== -1);
       if (isBillingDocument) {
-        console.log("[TaxStudio] No active run but capturing billing document anyway:", url.slice(0, 100));
+        console.log("[FiBuKI] No active run but capturing billing document anyway:", url.slice(0, 100));
         runId = "orphan-" + Date.now();
         runs[runId] = { tabId: null, downloadTabIds: [], attemptedUrls: {}, openedDownloadUrls: {}, appTabId: null, foundCount: 0, downloadedCount: 0, urls: [], overlaySent: false };
       } else {
-        console.log("[TaxStudio] Download not captured - no active run and not a billing document");
+        console.log("[FiBuKI] Download not captured - no active run and not a billing document");
         return;
       }
     }
     if (!url || url.indexOf("http") !== 0) return;
     if (seenDownloadUrls[url]) return;
     seenDownloadUrls[url] = true;
-    console.log("[TaxStudio] Intercepting download for run:", runId, url);
+    console.log("[FiBuKI] Intercepting download for run:", runId, url);
     try {
       chrome.downloads.cancel(item.id, function () {
         chrome.downloads.erase({ id: item.id }, function () {});
       });
     } catch (err) {
-      console.warn("[TaxStudio] Cancel download failed:", err);
+      console.warn("[FiBuKI] Cancel download failed:", err);
     }
-    console.log("[TaxStudio] Fetching URL from background:", url.slice(0, 100));
+    console.log("[FiBuKI] Fetching URL from background:", url.slice(0, 100));
     fetch(url, { credentials: "include", redirect: "follow" })
       .then(function (resp) {
-        console.log("[TaxStudio] Fetch response:", resp.status, resp.statusText, "type:", resp.type);
+        console.log("[FiBuKI] Fetch response:", resp.status, resp.statusText, "type:", resp.type);
         if (!resp.ok) {
           throw new Error("Download fetch failed: " + resp.status + " " + resp.statusText);
         }
         var mime = resp.headers.get("content-type") || "";
         var disposition = resp.headers.get("content-disposition") || "";
-        console.log("[TaxStudio] Fetch headers - mime:", mime, "disposition:", disposition);
+        console.log("[FiBuKI] Fetch headers - mime:", mime, "disposition:", disposition);
         var lowerUrl = String(url).toLowerCase();
         var isPdf = mime.toLowerCase().indexOf("pdf") !== -1;
         var hasPdfName = disposition.toLowerCase().indexOf(".pdf") !== -1;
@@ -911,7 +911,7 @@
         var isCsv = mime.toLowerCase().indexOf("text/csv") !== -1 || lowerUrl.indexOf(".csv") !== -1;
         var isImage = mime.toLowerCase().indexOf("image/") !== -1;
         // Log what we're checking
-        console.log("[TaxStudio] Checking download:", {mime: mime, isPdf: isPdf, hasPdfName: hasPdfName, urlPdfHint: urlPdfHint, isCsv: isCsv, isImage: isImage});
+        console.log("[FiBuKI] Checking download:", {mime: mime, isPdf: isPdf, hasPdfName: hasPdfName, urlPdfHint: urlPdfHint, isCsv: isCsv, isImage: isImage});
         if (isImage || isCsv || (!isPdf && !hasPdfName && !urlPdfHint)) {
           throw new Error("Not a PDF: mime=" + mime + " disposition=" + disposition);
         }
@@ -921,7 +921,7 @@
         });
       })
       .catch(function (err) {
-        console.warn("[TaxStudio] Download capture failed:", err);
+        console.warn("[FiBuKI] Download capture failed:", err);
       });
   });
 
@@ -1036,7 +1036,7 @@
   }
 
   function uploadBuffer(runId, buffer, filename, mimeType, sourceUrl) {
-    console.log("[TaxStudio] uploadBuffer called:", {runId: runId, filename: filename, mimeType: mimeType, bufferSize: buffer.byteLength, sourceUrl: sourceUrl.slice(0, 100)});
+    console.log("[FiBuKI] uploadBuffer called:", {runId: runId, filename: filename, mimeType: mimeType, bufferSize: buffer.byteLength, sourceUrl: sourceUrl.slice(0, 100)});
     try {
       var blob = new Blob([buffer], { type: mimeType });
       var form = new FormData();
@@ -1045,23 +1045,23 @@
       form.append("sourceRunId", runId);
       form.append("sourceCollectorId", COLLECTOR_ID);
 
-      console.log("[TaxStudio] Uploading to localhost:3000/api/browser/upload...");
+      console.log("[FiBuKI] Uploading to localhost:3000/api/browser/upload...");
       fetch("http://localhost:3000/api/browser/upload", {
         method: "POST",
         body: form,
       })
         .then(function (resp) {
-          console.log("[TaxStudio] Upload response status:", resp.status);
+          console.log("[FiBuKI] Upload response status:", resp.status);
           if (!resp.ok) {
             return resp.text().then(function(t) { throw new Error("Upload failed: " + resp.status + " " + t); });
           }
           return resp.json();
         })
         .then(function (data) {
-          console.log("[TaxStudio] Upload SUCCESS:", filename, data);
+          console.log("[FiBuKI] Upload SUCCESS:", filename, data);
           recordPdfSource(sourceUrl);
           if (!runs[runId]) {
-            console.warn("[TaxStudio] Run no longer exists:", runId);
+            console.warn("[FiBuKI] Run no longer exists:", runId);
             return;
           }
           runs[runId].downloadedCount = (runs[runId].downloadedCount || 0) + 1;
@@ -1086,10 +1086,10 @@
           });
         })
         .catch(function (err) {
-          console.warn("[TaxStudio] Upload error:", err);
+          console.warn("[FiBuKI] Upload error:", err);
         });
     } catch (err) {
-      console.warn("[TaxStudio] Upload error:", err);
+      console.warn("[FiBuKI] Upload error:", err);
     }
   }
 

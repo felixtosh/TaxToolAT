@@ -4,6 +4,7 @@ import { Timestamp } from "firebase/firestore";
  * Onboarding step identifiers
  */
 export type OnboardingStep =
+  | "set_identity"
   | "add_bank_account"
   | "import_transactions"
   | "assign_partner"
@@ -59,11 +60,19 @@ export interface OnboardingStepConfig {
  */
 export const ONBOARDING_STEPS: OnboardingStepConfig[] = [
   {
+    id: "set_identity",
+    title: "Tell Us Who You Are",
+    description: "Set up your name and company for invoice matching",
+    route: "/settings/identity",
+    highlightTarget: '[data-onboarding="identity-form"]',
+    icon: "User",
+  },
+  {
     id: "add_bank_account",
     title: "Add a Bank Account",
     description: "Connect or manually add your first bank account",
     route: "/sources",
-    highlightTarget: '[data-onboarding="add-account"]',
+    highlightTarget: '[data-onboarding="add-account"], [data-onboarding="connect-bank"]',
     icon: "Building2",
   },
   {

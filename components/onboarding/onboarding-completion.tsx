@@ -112,7 +112,7 @@ export function OnboardingCompletion({
 
         {/* Action button */}
         <Button onClick={onDismiss} className="w-full mt-4">
-          Start using TaxStudio
+          Start using FiBuKI
           <ArrowRight className="h-4 w-4 ml-2" />
         </Button>
       </DialogContent>

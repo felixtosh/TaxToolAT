@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerDb } from "@/lib/firebase/config-server";
+import { getAdminDb } from "@/lib/firebase/admin";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import { queuePrecisionSearch } from "@/lib/operations";
+import { Timestamp } from "firebase-admin/firestore";
 
-const db = getServerDb();
+const db = getAdminDb();
+
+const DEFAULT_STRATEGIES = [
+  "partner_files",
+  "amount_files",
+  "email_attachment",
+  "email_invoice",
+];
 
 /**
  * POST /api/precision-search/trigger
@@ -39,31 +46,56 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId };
+    // Count transactions to process if scope is all_incomplete
+    let transactionsToProcess = 1;
+    if (scope === "all_incomplete") {
+      const countSnapshot = await db
+        .collection("transactions")
+        .where("userId", "==", userId)
+        .where("isComplete", "==", false)
+        .count()
+        .get();
+      transactionsToProcess = countSnapshot.data().count;
+    }
 
-    // Note: We no longer block duplicate searches - the UI handles showing progress
-    // and users can re-trigger if needed. The queue processor will handle deduplication.
-
-    // Queue the precision search
-    const queueId = await queuePrecisionSearch(ctx, {
+    // Build queue item using Admin SDK
+    const queueItem: Record<string, unknown> = {
       userId,
       scope,
-      transactionId: scope === "single_transaction" ? transactionId : undefined,
       triggeredBy: "manual",
       triggeredByAuthor: {
         type: "user",
         userId,
       },
-    });
+      status: "pending",
+      transactionsToProcess,
+      transactionsProcessed: 0,
+      transactionsWithMatches: 0,
+      totalFilesConnected: 0,
+      strategies: DEFAULT_STRATEGIES,
+      currentStrategyIndex: 0,
+      errors: [],
+      retryCount: 0,
+      maxRetries: 3,
+      createdAt: Timestamp.now(),
+    };
+
+    // Only add transactionId if scope is single_transaction
+    if (scope === "single_transaction" && transactionId) {
+      queueItem.transactionId = transactionId;
+    }
+
+    // Create queue item using Admin SDK (bypasses security rules)
+    const docRef = await db.collection("precisionSearchQueue").add(queueItem);
 
     console.log(
-      `[PrecisionSearch API] Queued ${scope} search: ${queueId}`,
+      `[PrecisionSearch API] Queued ${scope} search: ${docRef.id}`,
       transactionId ? `for tx ${transactionId}` : ""
     );
 
     return NextResponse.json({
       success: true,
-      queueId,
+      queueId: docRef.id,
     });
   } catch (error) {
     console.error("[PrecisionSearch API] Error triggering search:", error);

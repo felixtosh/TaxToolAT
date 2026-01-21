@@ -276,8 +276,10 @@ exports.triggerGoCardlessSync = (0, https_1.onCall)({
     timeoutSeconds: 120,
     secrets: [gocardlessSecretId, gocardlessSecretKey],
 }, async (request) => {
-    // TODO: Use real auth when ready for multi-user
-    const userId = "dev-user-123";
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
     const { sourceId } = request.data;
     if (!sourceId) {
         throw new https_1.HttpsError("invalid-argument", "sourceId is required");

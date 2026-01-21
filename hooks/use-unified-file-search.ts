@@ -8,6 +8,7 @@ import { isPdfOrImageAttachment } from "@/lib/email-providers/interface";
 import { UserPartner, FileSourcePattern } from "@/types/partner";
 import { useFiles } from "./use-files";
 import { useEmailIntegrations } from "./use-email-integrations";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 
 /**
  * Transaction info for smart search/ranking
@@ -423,9 +424,8 @@ export function useUnifiedFileSearch(
         const allMessages = await Promise.all(
           gmailIntegrations.map(async (integration) => {
             try {
-              const response = await fetch("/api/gmail/search", {
+              const response = await fetchWithAuth("/api/gmail/search", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   integrationId: integration.id,
                   query: query || undefined,

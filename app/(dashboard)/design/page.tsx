@@ -265,7 +265,7 @@ export default function DesignSystemPage() {
         <nav className="w-52 border-r bg-muted/20 overflow-y-auto shrink-0">
           <div className="p-4 border-b">
             <h1 className="font-semibold">Design System</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">TaxStudio Stylekit v1.0</p>
+            <p className="text-xs text-muted-foreground mt-0.5">FiBuKI Stylekit v1.0</p>
           </div>
           <div className="p-2">
             {sections.map((group) => (

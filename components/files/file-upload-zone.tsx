@@ -31,7 +31,7 @@ export function FileUploadZone({ onUploadComplete, className }: FileUploadZonePr
   const [currentFileName, setCurrentFileName] = useState<string | null>(null);
 
   const ctx: OperationsContext = useMemo(
-    () => ({ db, userId }),
+    () => ({ db, userId: userId ?? "" }),
     [userId]
   );
 

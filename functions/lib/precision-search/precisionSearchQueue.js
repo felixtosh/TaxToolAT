@@ -51,7 +51,10 @@ const firestore_2 = require("firebase-admin/firestore");
 const storage_1 = require("firebase-admin/storage");
 const crypto = __importStar(require("crypto"));
 const geminiSearchHelper_1 = require("./geminiSearchHelper");
+const generateQueriesWithGemini_1 = require("./generateQueriesWithGemini");
 const htmlToPdf_1 = require("./htmlToPdf");
+const scoreAttachmentMatch_1 = require("./scoreAttachmentMatch");
+const searchGmailCallable_1 = require("../gmail/searchGmailCallable");
 const db = (0, firestore_2.getFirestore)();
 const storage = (0, storage_1.getStorage)();
 // ============================================================================
@@ -60,49 +63,13 @@ const storage = (0, storage_1.getStorage)();
 const PROCESSING_TIMEOUT_MS = 240000; // 4 minutes (leave buffer for 5 min timeout)
 const TRANSACTIONS_PER_BATCH = 20; // Process 20 transactions per invocation
 const REQUEST_DELAY_MS = 200; // Rate limiting for Gmail API
-// MIME types for invoices
-const INVOICE_MIME_TYPES = [
-    "application/pdf",
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-];
-function buildFilenameQueries(transactionName) {
-    const tokens = new Set();
-    const addMatches = (regex) => {
-        const matches = transactionName.match(regex);
-        if (!matches)
-            return;
-        for (const match of matches) {
-            const cleaned = match.replace(/[^A-Za-z0-9._-]/g, "");
-            if (cleaned.length > 0) {
-                tokens.add(cleaned);
-            }
-        }
-    };
-    // Invoice-like tokens (e.g., R-2024.014) and long numeric IDs.
-    addMatches(/\b[A-Za-z]{0,5}-?\d{3,}(?:[./]\d+)?\b/g);
-    addMatches(/\b\d{8,}\b/g);
-    return Array.from(tokens).map((token) => `filename:${token}`);
-}
-function mergeQueries(base, extras) {
-    const seen = new Set();
-    const merged = [];
-    for (const query of [...base, ...extras]) {
-        const normalized = query.trim();
-        if (!normalized || seen.has(normalized))
-            continue;
-        seen.add(normalized);
-        merged.push(normalized);
-    }
-    return merged;
-}
 // Strategy execution order (used when creating queue items)
+// email_invoice before email_attachment: prioritize finding the actual invoice email
 exports.DEFAULT_STRATEGIES = [
     "partner_files",
     "amount_files",
-    "email_attachment",
     "email_invoice",
+    "email_attachment",
 ];
 // ============================================================================
 // Helper Functions
@@ -123,20 +90,151 @@ function extractEmailDomain(email) {
         return email.toLowerCase();
     return email.substring(atIndex + 1).toLowerCase();
 }
+/**
+ * Check if email date is within acceptable range of transaction date
+ */
+function isEmailDateInRange(emailDate, transactionDate, daysRange = 180) {
+    const diffMs = Math.abs(emailDate.getTime() - transactionDate.getTime());
+    const diffDays = diffMs / (1000 * 60 * 60 * 24);
+    return diffDays <= daysRange;
+}
+/**
+ * Check if a file was rejected by the transaction (user manually removed it)
+ */
+function isFileRejectedByTransaction(fileId, transaction) {
+    return (transaction.rejectedFileIds || []).includes(fileId);
+}
+/**
+ * Check if an attachment is likely a receipt/invoice based on filename and MIME type
+ * For automation, we only consider PDFs - images in emails are usually logos/signatures
+ */
+function isLikelyReceiptAttachment(filename, mimeType) {
+    const normalizedMime = mimeType.toLowerCase();
+    const filenameLower = filename.toLowerCase();
+    // Only PDFs for automation - images in emails are typically logos/signatures, not receipts
+    return normalizedMime === "application/pdf" ||
+        (normalizedMime === "application/octet-stream" && filenameLower.endsWith(".pdf"));
+}
+// ============================================================================
+// Email Classification (German + English)
+// ============================================================================
+/**
+ * Keywords indicating the email body IS an invoice/receipt (German + English)
+ */
+const MAIL_INVOICE_KEYWORDS = [
+    // English
+    "order confirmation",
+    "payment received",
+    "payment confirmation",
+    "your purchase",
+    "order summary",
+    "receipt for your",
+    "thank you for your order",
+    "your order has been",
+    "purchase confirmation",
+    // German
+    "bestellbestätigung",
+    "zahlungsbestätigung",
+    "zahlungseingang",
+    "ihre bestellung",
+    "kaufbestätigung",
+    "vielen dank für ihre bestellung",
+    "ihre zahlung",
+    "buchungsbestätigung",
+];
+/**
+ * Keywords indicating the email contains a link to download invoice (German + English)
+ */
+const INVOICE_LINK_KEYWORDS = [
+    // English
+    "download your invoice",
+    "view your invoice",
+    "download invoice",
+    "view invoice",
+    "click here to download",
+    "access your invoice",
+    "get your receipt",
+    "download pdf",
+    "download receipt",
+    // German
+    "rechnung herunterladen",
+    "rechnung anzeigen",
+    "rechnung abrufen",
+    "hier klicken",
+    "pdf herunterladen",
+    "beleg herunterladen",
+    "rechnung ansehen",
+    "zum download",
+];
+/**
+ * Classify an email based on subject, snippet, and attachments.
+ * Used to prioritize which emails to process and how.
+ */
+function classifyEmail(subject, snippet, attachments) {
+    const combined = `${subject} ${snippet}`.toLowerCase();
+    const matchedKeywords = [];
+    // Check for PDF attachments
+    const hasPdfAttachment = attachments.some((a) => a.mimeType === "application/pdf" ||
+        (a.mimeType === "application/octet-stream" &&
+            a.filename.toLowerCase().endsWith(".pdf")));
+    // Check for mail invoice keywords (email body IS the invoice)
+    let possibleMailInvoice = false;
+    for (const keyword of MAIL_INVOICE_KEYWORDS) {
+        if (combined.includes(keyword)) {
+            possibleMailInvoice = true;
+            matchedKeywords.push(keyword);
+            break;
+        }
+    }
+    // Check for invoice link keywords
+    let possibleInvoiceLink = false;
+    for (const keyword of INVOICE_LINK_KEYWORDS) {
+        if (combined.includes(keyword)) {
+            possibleInvoiceLink = true;
+            matchedKeywords.push(keyword);
+            break;
+        }
+    }
+    // Calculate confidence
+    let confidence = 0;
+    if (hasPdfAttachment)
+        confidence += 40;
+    if (possibleMailInvoice)
+        confidence += 30;
+    if (possibleInvoiceLink)
+        confidence += 25;
+    confidence = Math.min(confidence, 100);
+    // If has PDF and no other signals, still likely relevant
+    if (hasPdfAttachment && confidence < 50) {
+        confidence = 50;
+    }
+    return {
+        hasPdfAttachment,
+        possibleMailInvoice: possibleMailInvoice && !hasPdfAttachment, // Only if no PDF
+        possibleInvoiceLink,
+        confidence,
+        matchedKeywords,
+    };
+}
+/**
+ * Extract ALL attachments from message (same as UI - no MIME type filtering)
+ * The scoring logic decides what's relevant later
+ */
 function extractAttachments(message) {
     const attachments = [];
     function processPartsRecursively(parts) {
         if (!parts)
             return;
         for (const part of parts) {
-            if (part.body?.attachmentId &&
-                part.filename &&
-                INVOICE_MIME_TYPES.includes(part.mimeType)) {
+            // Extract ALL attachments, not just invoice types
+            // Same behavior as UI's GmailClient.extractAttachments
+            if (part.body?.attachmentId && part.filename) {
                 attachments.push({
                     attachmentId: part.body.attachmentId,
                     filename: part.filename,
                     mimeType: part.mimeType,
                     size: part.body.size || 0,
+                    isLikelyReceipt: isLikelyReceiptAttachment(part.filename, part.mimeType),
                 });
             }
             if (part.parts) {
@@ -280,11 +378,13 @@ async function getGmailClientsForUser(userId) {
 }
 /**
  * Create a file from email attachment data
+ * Note: Files are created WITHOUT connecting to transactions.
+ * The matchFileTransactions trigger handles matching after extraction.
  */
-async function createFileFromAttachment(userId, attachmentData, attachment, message, integrationId, integrationEmail) {
+async function createFileFromAttachment(userId, attachmentData, attachment, message, integrationId, integrationEmail, precisionSearchHint) {
     const contentHash = await sha256(attachmentData);
     const messageId = message.id;
-    // Check for duplicate
+    // Check for duplicate (including soft-deleted files)
     const existingFile = await db
         .collection("files")
         .where("userId", "==", userId)
@@ -292,8 +392,65 @@ async function createFileFromAttachment(userId, attachmentData, attachment, mess
         .limit(1)
         .get();
     if (!existingFile.empty) {
-        console.log(`[PrecisionSearch] Duplicate file skipped: ${attachment.filename}`);
-        return null;
+        const existingDoc = existingFile.docs[0];
+        const existingData = existingDoc.data();
+        // Check if file was soft-deleted
+        if (existingData.deletedAt) {
+            // Undelete the file and update its metadata + add precision search hint
+            console.log(`[PrecisionSearch] Undeleting soft-deleted file: ${attachment.filename} (${existingDoc.id})`);
+            // Fix storage metadata if needed (old files may have wrong MIME type)
+            const storagePath = existingData.storagePath;
+            if (storagePath) {
+                const filenameLower = attachment.filename.toLowerCase();
+                let correctContentType = attachment.mimeType;
+                // Normalize MIME type based on extension
+                if (correctContentType === "application/octet-stream") {
+                    if (filenameLower.endsWith(".pdf")) {
+                        correctContentType = "application/pdf";
+                    }
+                    else if (filenameLower.endsWith(".jpg") || filenameLower.endsWith(".jpeg")) {
+                        correctContentType = "image/jpeg";
+                    }
+                    else if (filenameLower.endsWith(".png")) {
+                        correctContentType = "image/png";
+                    }
+                }
+                // Update storage metadata to fix MIME type
+                try {
+                    const bucket = storage.bucket();
+                    const storageFile = bucket.file(storagePath);
+                    await storageFile.setMetadata({
+                        contentType: correctContentType,
+                        contentDisposition: "inline",
+                    });
+                    console.log(`[PrecisionSearch] Fixed storage metadata for ${attachment.filename}: ${correctContentType}`);
+                }
+                catch (err) {
+                    console.error(`[PrecisionSearch] Failed to fix storage metadata:`, err);
+                }
+            }
+            const updateData = {
+                deletedAt: null,
+                fileName: attachment.filename,
+                fileType: attachment.mimeType === "application/octet-stream" && attachment.filename.toLowerCase().endsWith(".pdf")
+                    ? "application/pdf"
+                    : attachment.mimeType,
+                extractionComplete: false, // Re-trigger extraction
+                extractionError: null,
+                updatedAt: firestore_2.Timestamp.now(),
+            };
+            // Add precision search hint to trigger matching
+            if (precisionSearchHint) {
+                updateData.precisionSearchHint = precisionSearchHint;
+                updateData.transactionMatchComplete = false; // Re-trigger matching
+            }
+            await existingDoc.ref.update(updateData);
+            return `existing:${existingDoc.id}`;
+        }
+        // File exists and is not deleted - return the existing file ID with "existing:" prefix
+        // so the caller can score it instead of skipping
+        console.log(`[PrecisionSearch] File exists by hash: ${attachment.filename} (${existingDoc.id})`);
+        return `existing:${existingDoc.id}`;
     }
     // Extract email metadata
     const from = extractHeader(message, "From") || "";
@@ -303,32 +460,48 @@ async function createFileFromAttachment(userId, attachmentData, attachment, mess
     const senderEmail = emailMatch[1] || from;
     const senderDomain = extractEmailDomain(senderEmail);
     const senderName = from.replace(/<[^>]+>/, "").trim().replace(/"/g, "");
-    // Upload to Storage
+    // Upload to Storage (matching UI's gmail/attachment route.ts pattern)
     const timestamp = Date.now();
     const sanitizedFilename = attachment.filename.replace(/[^a-zA-Z0-9.-]/g, "_");
     const storagePath = `files/${userId}/${timestamp}_${sanitizedFilename}`;
     const bucket = storage.bucket();
     const file = bucket.file(storagePath);
+    // Fix MIME type if it's generic but we can infer from filename
+    // This is common for Gmail attachments which often have application/octet-stream
+    let contentType = attachment.mimeType;
+    const filenameLower = attachment.filename.toLowerCase();
+    if (contentType === "application/octet-stream") {
+        if (filenameLower.endsWith(".pdf")) {
+            contentType = "application/pdf";
+        }
+        else if (filenameLower.endsWith(".jpg") || filenameLower.endsWith(".jpeg")) {
+            contentType = "image/jpeg";
+        }
+        else if (filenameLower.endsWith(".png")) {
+            contentType = "image/png";
+        }
+        else if (filenameLower.endsWith(".webp")) {
+            contentType = "image/webp";
+        }
+        else if (filenameLower.endsWith(".gif")) {
+            contentType = "image/gif";
+        }
+    }
+    // Generate download token BEFORE saving (same as UI)
+    const downloadToken = crypto.randomUUID();
+    // Save with all metadata in one call (same pattern as UI's gmail/attachment route)
     await file.save(attachmentData, {
         metadata: {
-            contentType: attachment.mimeType,
+            contentType,
             contentDisposition: "inline",
             metadata: {
-                originalFilename: attachment.filename,
+                originalName: attachment.filename,
                 gmailMessageId: messageId,
                 gmailIntegrationId: integrationId,
+                firebaseStorageDownloadTokens: downloadToken,
             },
         },
     });
-    // Get or create download token
-    const [fileMetadata] = await file.getMetadata();
-    const downloadToken = fileMetadata.metadata?.firebaseStorageDownloadTokens ||
-        crypto.randomUUID();
-    if (!fileMetadata.metadata?.firebaseStorageDownloadTokens) {
-        await file.setMetadata({
-            metadata: { firebaseStorageDownloadTokens: downloadToken },
-        });
-    }
     // Generate download URL
     let downloadUrl;
     const storageEmulatorHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
@@ -341,10 +514,10 @@ async function createFileFromAttachment(userId, attachmentData, attachment, mess
     }
     // Create file document
     const now = firestore_2.Timestamp.now();
-    const fileRef = await db.collection("files").add({
+    const fileData = {
         userId,
         fileName: attachment.filename,
-        fileType: attachment.mimeType,
+        fileType: contentType, // Use corrected MIME type
         fileSize: attachment.size,
         storagePath,
         downloadUrl,
@@ -364,16 +537,23 @@ async function createFileFromAttachment(userId, attachmentData, attachment, mess
         uploadedAt: now,
         createdAt: now,
         updatedAt: now,
-    });
-    console.log(`[PrecisionSearch] Created file: ${attachment.filename} (${fileRef.id})`);
+    };
+    // Add precision search hint for matching logic
+    if (precisionSearchHint) {
+        fileData.precisionSearchHint = precisionSearchHint;
+    }
+    const fileRef = await db.collection("files").add(fileData);
+    console.log(`[PrecisionSearch] Created file: ${attachment.filename} (${fileRef.id})${precisionSearchHint ? ` [hint: tx ${precisionSearchHint.transactionId}]` : ""}`);
     return fileRef.id;
 }
 /**
  * Create a file from HTML-converted PDF
+ * Note: Files are created WITHOUT connecting to transactions.
+ * The matchFileTransactions trigger handles matching after extraction.
  */
-async function createFileFromHtmlPdf(userId, pdfBuffer, filename, message, integrationId, integrationEmail) {
+async function createFileFromHtmlPdf(userId, pdfBuffer, filename, message, integrationId, integrationEmail, precisionSearchHint) {
     const contentHash = await sha256(pdfBuffer);
-    // Check for duplicate
+    // Check for duplicate (including soft-deleted files)
     const existingFile = await db
         .collection("files")
         .where("userId", "==", userId)
@@ -381,6 +561,25 @@ async function createFileFromHtmlPdf(userId, pdfBuffer, filename, message, integ
         .limit(1)
         .get();
     if (!existingFile.empty) {
+        const existingDoc = existingFile.docs[0];
+        const existingData = existingDoc.data();
+        // Check if file was soft-deleted
+        if (existingData.deletedAt) {
+            // Undelete the file and update its metadata + add precision search hint
+            console.log(`[PrecisionSearch] Undeleting soft-deleted PDF: ${filename} (${existingDoc.id})`);
+            const updateData = {
+                deletedAt: null,
+                fileName: filename,
+                updatedAt: firestore_2.Timestamp.now(),
+            };
+            // Add precision search hint to trigger matching
+            if (precisionSearchHint) {
+                updateData.precisionSearchHint = precisionSearchHint;
+                updateData.transactionMatchComplete = false; // Re-trigger matching
+            }
+            await existingDoc.ref.update(updateData);
+            return `existing:${existingDoc.id}`;
+        }
         console.log(`[PrecisionSearch] Duplicate PDF skipped: ${filename}`);
         return null;
     }
@@ -392,33 +591,28 @@ async function createFileFromHtmlPdf(userId, pdfBuffer, filename, message, integ
     const senderEmail = emailMatch[1] || from;
     const senderDomain = extractEmailDomain(senderEmail);
     const senderName = from.replace(/<[^>]+>/, "").trim().replace(/"/g, "");
-    // Upload to Storage
+    // Upload to Storage (matching UI's gmail/attachment route.ts pattern)
     const timestamp = Date.now();
     const sanitizedFilename = filename.replace(/[^a-zA-Z0-9.-]/g, "_");
     const storagePath = `files/${userId}/${timestamp}_${sanitizedFilename}`;
     const bucket = storage.bucket();
     const file = bucket.file(storagePath);
+    // Generate download token BEFORE saving (same as UI)
+    const downloadToken = crypto.randomUUID();
+    // Save with all metadata in one call (same pattern as UI)
     await file.save(pdfBuffer, {
         metadata: {
             contentType: "application/pdf",
             contentDisposition: "inline",
             metadata: {
-                originalFilename: filename,
+                originalName: filename,
                 gmailMessageId: message.id,
                 gmailIntegrationId: integrationId,
                 convertedFromHtml: "true",
+                firebaseStorageDownloadTokens: downloadToken,
             },
         },
     });
-    // Get or create download token
-    const [fileMetadata] = await file.getMetadata();
-    const downloadToken = fileMetadata.metadata?.firebaseStorageDownloadTokens ||
-        crypto.randomUUID();
-    if (!fileMetadata.metadata?.firebaseStorageDownloadTokens) {
-        await file.setMetadata({
-            metadata: { firebaseStorageDownloadTokens: downloadToken },
-        });
-    }
     // Generate download URL
     let downloadUrl;
     const storageEmulatorHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
@@ -431,7 +625,7 @@ async function createFileFromHtmlPdf(userId, pdfBuffer, filename, message, integ
     }
     // Create file document
     const now = firestore_2.Timestamp.now();
-    const fileRef = await db.collection("files").add({
+    const fileData = {
         userId,
         fileName: filename,
         fileType: "application/pdf",
@@ -453,8 +647,13 @@ async function createFileFromHtmlPdf(userId, pdfBuffer, filename, message, integ
         uploadedAt: now,
         createdAt: now,
         updatedAt: now,
-    });
-    console.log(`[PrecisionSearch] Created HTML-converted PDF: ${filename} (${fileRef.id})`);
+    };
+    // Add precision search hint for matching logic
+    if (precisionSearchHint) {
+        fileData.precisionSearchHint = precisionSearchHint;
+    }
+    const fileRef = await db.collection("files").add(fileData);
+    console.log(`[PrecisionSearch] Created HTML-converted PDF: ${filename} (${fileRef.id})${precisionSearchHint ? ` [hint: tx ${precisionSearchHint.transactionId}]` : ""}`);
     return fileRef.id;
 }
 // ============================================================================
@@ -478,8 +677,24 @@ async function executePartnerFilesStrategy(transaction, userId) {
     try {
         // Skip if transaction has no partner
         if (!transaction.partnerId) {
+            console.log(`[PrecisionSearch] partner_files: Skipped - no partnerId on transaction ${transaction.id}`);
             attempt.completedAt = firestore_2.Timestamp.now();
             return attempt;
+        }
+        // Get partner info if available
+        let partnerInfo;
+        if (transaction.partnerId) {
+            const partnerDoc = await db
+                .collection(transaction.partnerType === "global" ? "globalPartners" : "partners")
+                .doc(transaction.partnerId)
+                .get();
+            if (partnerDoc.exists) {
+                const data = partnerDoc.data();
+                partnerInfo = {
+                    name: data.name,
+                    emailDomains: data.emailDomains,
+                };
+            }
         }
         // Find unassociated files for this partner
         const filesSnapshot = await db
@@ -491,37 +706,67 @@ async function executePartnerFilesStrategy(transaction, userId) {
             .get();
         const unassociatedFiles = filesSnapshot.docs
             .map((doc) => ({ id: doc.id, ...doc.data() }))
+            .filter((f) => !f.deletedAt) // Exclude soft-deleted files
             .filter((f) => !f.transactionIds || f.transactionIds.length === 0);
         attempt.candidatesFound = unassociatedFiles.length;
+        console.log(`[PrecisionSearch] partner_files: Found ${filesSnapshot.size} files for partner, ${unassociatedFiles.length} unassociated`);
         if (unassociatedFiles.length === 0) {
             attempt.completedAt = firestore_2.Timestamp.now();
             return attempt;
         }
-        // Score files against transaction
-        const txAmount = Math.abs(transaction.amount);
-        const txDate = transaction.date.toDate();
+        // Score files against transaction using unified scoring (same as UI)
         for (const file of unassociatedFiles) {
             attempt.candidatesEvaluated++;
-            if (file.extractedAmount == null)
-                continue;
-            const fileAmount = Math.abs(file.extractedAmount);
-            const amountDiff = Math.abs(txAmount - fileAmount) / txAmount;
-            // Amount must be within 5%
-            if (amountDiff > 0.05)
-                continue;
-            // Date must be within 30 days
-            if (file.extractedDate) {
-                const fileDate = file.extractedDate.toDate();
-                const daysDiff = Math.abs((txDate.getTime() - fileDate.getTime()) / (1000 * 60 * 60 * 24));
-                if (daysDiff > 30)
-                    continue;
+            const scoreInput = {
+                filename: file.fileName || "unknown",
+                mimeType: file.fileType || "application/pdf",
+                emailBodyText: file.extractedText, // Treat OCR text as body
+                emailDate: file.extractedDate?.toDate(),
+                // File extracted data for numeric comparison
+                fileExtractedAmount: file.extractedAmount,
+                fileExtractedDate: file.extractedDate?.toDate(),
+                fileExtractedPartner: file.extractedPartner,
+                // Transaction data
+                transactionAmount: transaction.amount,
+                transactionDate: transaction.date.toDate(),
+                transactionName: transaction.name,
+                transactionReference: transaction.reference,
+                transactionPartner: transaction.partner,
+                partnerName: partnerInfo?.name,
+                partnerEmailDomains: partnerInfo?.emailDomains,
+            };
+            const score = (0, scoreAttachmentMatch_1.scoreAttachmentMatch)(scoreInput);
+            console.log(`[PrecisionSearch] Match score for file ${file.fileName} (${file.id}): ${score.score}% ` +
+                `[${score.reasons.slice(0, 3).join(", ")}]`);
+            // Only connect if score meets threshold (same as UI)
+            // Track best score
+            if (!attempt.bestMatchScore || score.score > attempt.bestMatchScore) {
+                attempt.bestMatchScore = score.score;
             }
-            // Match found! Connect file to transaction
-            await connectFileToTransaction(file.id, transaction.id, userId, "partner_files");
+            if (score.score < scoreAttachmentMatch_1.ATTACHMENT_MATCH_THRESHOLD) {
+                continue;
+            }
+            // Check if this file was rejected by the transaction (user manually removed it)
+            if (isFileRejectedByTransaction(file.id, transaction)) {
+                console.log(`[PrecisionSearch] Skipping rejected file ${file.fileName} (${file.id})`);
+                continue;
+            }
+            // Match found! Add hint and re-trigger matching logic
+            await db.collection("files").doc(file.id).update({
+                precisionSearchHint: {
+                    transactionId: transaction.id,
+                    transactionAmount: transaction.amount,
+                    transactionDate: transaction.date,
+                    searchStrategy: "partner_files",
+                    matchConfidence: score.score,
+                    searchedAt: firestore_2.Timestamp.now(),
+                },
+                transactionMatchComplete: false, // Re-trigger matching
+                updatedAt: firestore_2.Timestamp.now(),
+            });
             attempt.fileIdsConnected.push(file.id);
             attempt.matchesFound++;
-            // For partner files strategy, usually one match per transaction is enough
-            break;
+            // Continue to find more candidates
         }
         attempt.completedAt = firestore_2.Timestamp.now();
         return attempt;
@@ -554,14 +799,12 @@ async function executeAmountFilesStrategy(transaction, userId) {
         fileIdsConnected: [],
     };
     try {
-        const txAmount = Math.abs(transaction.amount);
-        const tolerance = txAmount * 0.05; // 5% tolerance
-        // Calculate date range (±30 days)
+        // Calculate date range (±90 days - wider since UI scoring has date multiplier)
         const txDate = transaction.date.toDate();
         const dateFrom = new Date(txDate);
-        dateFrom.setDate(dateFrom.getDate() - 30);
+        dateFrom.setDate(dateFrom.getDate() - 90);
         const dateTo = new Date(txDate);
-        dateTo.setDate(dateTo.getDate() + 30);
+        dateTo.setDate(dateTo.getDate() + 90);
         // Query files in date range
         const filesSnapshot = await db
             .collection("files")
@@ -571,34 +814,76 @@ async function executeAmountFilesStrategy(transaction, userId) {
             .where("extractedDate", "<=", firestore_2.Timestamp.fromDate(dateTo))
             .limit(100)
             .get();
-        // Filter to unassociated files with matching amount
+        // Filter to unassociated non-deleted files
         const candidates = filesSnapshot.docs
             .map((doc) => ({ id: doc.id, ...doc.data() }))
-            .filter((f) => {
-            if (f.transactionIds && f.transactionIds.length > 0)
-                return false;
-            if (f.extractedAmount == null)
-                return false;
-            const fileAmount = Math.abs(f.extractedAmount);
-            return Math.abs(fileAmount - txAmount) <= tolerance;
-        });
-        attempt.candidatesFound = candidates.length;
+            .filter((f) => !f.deletedAt) // Exclude soft-deleted files
+            .filter((f) => !f.transactionIds || f.transactionIds.length === 0);
+        console.log(`[PrecisionSearch] amount_files: Query returned ${filesSnapshot.size} files in date range, ${candidates.length} unassociated`);
         if (candidates.length === 0) {
             attempt.completedAt = firestore_2.Timestamp.now();
             return attempt;
         }
-        // Score and match (for now, simple closest amount match)
-        candidates.sort((a, b) => {
-            const aDiff = Math.abs(Math.abs(a.extractedAmount) - txAmount);
-            const bDiff = Math.abs(Math.abs(b.extractedAmount) - txAmount);
-            return aDiff - bDiff;
-        });
-        attempt.candidatesEvaluated = Math.min(5, candidates.length);
-        // Take the best match
-        const bestMatch = candidates[0];
-        await connectFileToTransaction(bestMatch.id, transaction.id, userId, "amount_files");
-        attempt.fileIdsConnected.push(bestMatch.id);
-        attempt.matchesFound++;
+        // Score all candidates using unified scoring (same as UI)
+        const scoredCandidates = candidates
+            .map((file) => {
+            const scoreInput = {
+                filename: file.fileName || "unknown",
+                mimeType: file.fileType || "application/pdf",
+                emailBodyText: file.extractedText,
+                emailDate: file.extractedDate?.toDate(),
+                // File extracted data for numeric comparison
+                fileExtractedAmount: file.extractedAmount,
+                fileExtractedDate: file.extractedDate?.toDate(),
+                fileExtractedPartner: file.extractedPartner,
+                // Transaction data
+                transactionAmount: transaction.amount,
+                transactionDate: txDate,
+                transactionName: transaction.name,
+                transactionReference: transaction.reference,
+                transactionPartner: transaction.partner,
+            };
+            const score = (0, scoreAttachmentMatch_1.scoreAttachmentMatch)(scoreInput);
+            return { file, score };
+        })
+            .filter((c) => c.score.score >= scoreAttachmentMatch_1.ATTACHMENT_MATCH_THRESHOLD)
+            .sort((a, b) => b.score.score - a.score.score);
+        attempt.candidatesFound = scoredCandidates.length;
+        attempt.candidatesEvaluated = candidates.length;
+        // Track best score (array is sorted by score descending)
+        if (scoredCandidates.length > 0) {
+            attempt.bestMatchScore = scoredCandidates[0].score.score;
+        }
+        // Log all scores for debugging
+        for (const { file, score } of scoredCandidates.slice(0, 5)) {
+            console.log(`[PrecisionSearch] Match score for file ${file.fileName} (${file.id}): ${score.score}% ` +
+                `[${score.reasons.slice(0, 3).join(", ")}]`);
+        }
+        if (scoredCandidates.length === 0) {
+            console.log(`[PrecisionSearch] amount_files: No files meet ${scoreAttachmentMatch_1.ATTACHMENT_MATCH_THRESHOLD}% threshold`);
+            attempt.completedAt = firestore_2.Timestamp.now();
+            return attempt;
+        }
+        // Add hints to top candidates and re-trigger matching (skip rejected files)
+        const topCandidates = scoredCandidates
+            .filter(({ file }) => !isFileRejectedByTransaction(file.id, transaction))
+            .slice(0, 3); // Top 3 non-rejected matches
+        for (const { file: candidate, score } of topCandidates) {
+            await db.collection("files").doc(candidate.id).update({
+                precisionSearchHint: {
+                    transactionId: transaction.id,
+                    transactionAmount: transaction.amount,
+                    transactionDate: transaction.date,
+                    searchStrategy: "amount_files",
+                    matchConfidence: score.score,
+                    searchedAt: firestore_2.Timestamp.now(),
+                },
+                transactionMatchComplete: false, // Re-trigger matching
+                updatedAt: firestore_2.Timestamp.now(),
+            });
+            attempt.fileIdsConnected.push(candidate.id);
+            attempt.matchesFound++;
+        }
         attempt.completedAt = firestore_2.Timestamp.now();
         return attempt;
     }
@@ -629,9 +914,11 @@ async function executeEmailAttachmentStrategy(transaction, userId) {
         // Get Gmail clients
         const clients = await getGmailClientsForUser(userId);
         if (clients.length === 0) {
+            console.log(`[PrecisionSearch] email_attachment: No active Gmail integrations for user`);
             attempt.completedAt = firestore_2.Timestamp.now();
             return attempt;
         }
+        console.log(`[PrecisionSearch] email_attachment: Found ${clients.length} Gmail integration(s)`);
         // Get partner info if available
         let partnerInfo;
         if (transaction.partnerId) {
@@ -645,21 +932,24 @@ async function executeEmailAttachmentStrategy(transaction, userId) {
                     name: data.name,
                     emailDomains: data.emailDomains,
                     website: data.website,
+                    ibans: data.ibans,
+                    vatId: data.vatId,
+                    aliases: data.aliases,
+                    fileSourcePatterns: data.fileSourcePatterns,
                 };
             }
         }
-        // Generate search queries using Gemini
-        const queryResult = await (0, geminiSearchHelper_1.generateSearchQueries)({
+        // Generate search queries using Gemini (same as UI)
+        const allQueries = await (0, generateQueriesWithGemini_1.generateQueriesWithGemini)({
             name: transaction.name,
             partner: transaction.partner,
+            description: transaction.description,
+            reference: transaction.reference,
             amount: transaction.amount,
-            date: transaction.date.toDate(),
         }, partnerInfo);
-        attempt.geminiCalls = (attempt.geminiCalls || 0) + 1;
-        attempt.geminiTokensUsed =
-            (attempt.geminiTokensUsed || 0) + queryResult.usage.inputTokens + queryResult.usage.outputTokens;
-        const filenameQueries = buildFilenameQueries(transaction.name);
-        const queries = mergeQueries(queryResult.queries, filenameQueries);
+        // Take first 3 queries
+        const queries = allQueries.slice(0, 3);
+        console.log(`[PrecisionSearch] email_attachment: Using ${queries.length} Gemini queries for tx "${transaction.name}":`, queries);
         if (queries.length === 0) {
             attempt.completedAt = firestore_2.Timestamp.now();
             return attempt;
@@ -667,18 +957,27 @@ async function executeEmailAttachmentStrategy(transaction, userId) {
         attempt.searchParams = {
             ...attempt.searchParams,
             queries,
-            queryReasoning: queryResult.reasoning,
         };
         // Search each Gmail account with each query
+        // NOTE: Don't add date filter to Gmail query - let Gmail rank by relevance (same as UI)
+        // We filter by date AFTER fetching (see isEmailDateInRange check below)
         const processedMessageIds = new Set();
+        const txDate = transaction.date.toDate();
+        let greatMatchCount = 0; // Stop trying more queries after GREAT_MATCH_COUNT matches at GREAT_MATCH_THRESHOLD%
         for (const { client, integration } of clients) {
+            if (greatMatchCount >= scoreAttachmentMatch_1.GREAT_MATCH_COUNT)
+                break;
             for (const query of queries) {
+                if (greatMatchCount >= scoreAttachmentMatch_1.GREAT_MATCH_COUNT)
+                    break;
                 try {
-                    // Add has:attachment to the query if not present
-                    const fullQuery = query.includes("has:attachment")
-                        ? query
-                        : `${query} has:attachment`;
-                    const searchResult = await client.searchMessages(fullQuery, 10);
+                    // Use shared query builder (same as UI callable) - no date filter, let Gmail rank by relevance
+                    const fullQuery = (0, searchGmailCallable_1.buildGmailSearchQuery)({
+                        query,
+                        hasAttachments: true,
+                    });
+                    const searchResult = await client.searchMessages(fullQuery, 20);
+                    console.log(`[PrecisionSearch] email_attachment: Query "${query.substring(0, 50)}..." returned ${searchResult.messages.length} messages`);
                     attempt.candidatesFound += searchResult.messages.length;
                     for (const { id: messageId } of searchResult.messages) {
                         // Skip already processed messages
@@ -688,32 +987,217 @@ async function executeEmailAttachmentStrategy(transaction, userId) {
                         attempt.candidatesEvaluated++;
                         try {
                             const message = await client.getMessage(messageId);
-                            const attachments = extractAttachments(message);
-                            if (attachments.length === 0)
+                            // Verify email date is within range (extra safety check)
+                            const emailDate = new Date(parseInt(message.internalDate, 10));
+                            if (!isEmailDateInRange(emailDate, txDate, 180)) {
+                                console.log(`[PrecisionSearch] Skipping message - date ${emailDate.toISOString().split("T")[0]} outside ±180 days of tx`);
                                 continue;
-                            // Process each attachment
-                            for (const attachment of attachments) {
+                            }
+                            const allAttachments = extractAttachments(message);
+                            // Classify email BEFORE processing attachments
+                            const subject = extractHeader(message, "Subject") || "";
+                            const classification = classifyEmail(subject, message.snippet || "", allAttachments);
+                            console.log(`[PrecisionSearch] Email classification for ${messageId}: ` +
+                                `hasPdf=${classification.hasPdfAttachment}, mailInvoice=${classification.possibleMailInvoice}, ` +
+                                `invoiceLink=${classification.possibleInvoiceLink}, confidence=${classification.confidence}%` +
+                                (classification.matchedKeywords.length > 0 ? ` [${classification.matchedKeywords.join(", ")}]` : ""));
+                            // Skip if this is a mail-invoice-only (no PDF) - let email_invoice strategy handle it
+                            if (classification.possibleMailInvoice && !classification.hasPdfAttachment) {
+                                console.log(`[PrecisionSearch] Skipping ${messageId} - mail invoice without PDF attachment (handled by email_invoice strategy)`);
+                                continue;
+                            }
+                            // Log all attachments for debugging
+                            console.log(`[PrecisionSearch] Message ${messageId} has ${allAttachments.length} attachment(s):`, allAttachments.map(a => `${a.filename} (${a.mimeType}, isLikelyReceipt=${a.isLikelyReceipt})`));
+                            // Filter to likely receipts (PDFs, images) for processing
+                            // Same behavior as UI which shows all attachments but highlights likely receipts
+                            const attachments = allAttachments.filter(a => a.isLikelyReceipt);
+                            if (attachments.length === 0) {
+                                console.log(`[PrecisionSearch] No likely receipt attachments in message ${messageId}`);
+                                continue;
+                            }
+                            // Sort: PDFs first, then images (prioritize PDFs as they're usually better quality)
+                            const sortedAttachments = [...attachments].sort((a, b) => {
+                                const aIsPdf = a.mimeType === "application/pdf" || a.filename.toLowerCase().endsWith(".pdf");
+                                const bIsPdf = b.mimeType === "application/pdf" || b.filename.toLowerCase().endsWith(".pdf");
+                                if (aIsPdf && !bIsPdf)
+                                    return -1;
+                                if (!aIsPdf && bIsPdf)
+                                    return 1;
+                                return 0;
+                            });
+                            let foundPdfMatch = false;
+                            // Process each attachment (PDFs first)
+                            for (const attachment of sortedAttachments) {
+                                // Skip images if we already found a PDF match in this message
+                                const isPdf = attachment.mimeType === "application/pdf" || attachment.filename.toLowerCase().endsWith(".pdf");
+                                if (foundPdfMatch && !isPdf) {
+                                    console.log(`[PrecisionSearch] Skipping image ${attachment.filename} - PDF already matched in this message`);
+                                    continue;
+                                }
                                 // Check if we already have this attachment
-                                const existingFile = await db
+                                const existingFileQuery = await db
                                     .collection("files")
                                     .where("userId", "==", userId)
                                     .where("gmailMessageId", "==", messageId)
                                     .where("gmailAttachmentId", "==", attachment.attachmentId)
                                     .limit(1)
                                     .get();
-                                if (!existingFile.empty)
+                                if (!existingFileQuery.empty) {
+                                    // File already exists - score it and potentially connect to transaction
+                                    const existingDoc = existingFileQuery.docs[0];
+                                    const existingFile = { id: existingDoc.id, ...existingDoc.data() };
+                                    const fileName = existingFile.fileName || attachment.filename;
+                                    // Skip if already connected to this transaction
+                                    if (existingFile.transactionIds?.includes(transaction.id)) {
+                                        console.log(`[PrecisionSearch] File already connected: ${fileName}`);
+                                        continue;
+                                    }
+                                    // Score the existing file using unified scoring (same as UI)
+                                    // Include email metadata for better scoring
+                                    const from = extractHeader(message, "From") || "";
+                                    const subject = extractHeader(message, "Subject") || "";
+                                    const emailDate = new Date(parseInt(message.internalDate, 10));
+                                    const scoreInput = {
+                                        filename: fileName,
+                                        mimeType: attachment.mimeType,
+                                        emailSubject: subject,
+                                        emailFrom: from,
+                                        emailBodyText: existingFile.extractedText,
+                                        emailDate,
+                                        integrationId: integration.id,
+                                        transactionAmount: transaction.amount,
+                                        transactionDate: transaction.date.toDate(),
+                                        transactionName: transaction.name,
+                                        transactionReference: transaction.reference,
+                                        transactionPartner: transaction.partner,
+                                        partnerName: partnerInfo?.name,
+                                        partnerEmailDomains: partnerInfo?.emailDomains,
+                                    };
+                                    const score = (0, scoreAttachmentMatch_1.scoreAttachmentMatch)(scoreInput);
+                                    console.log(`[PrecisionSearch] Match score for file ${fileName} (${existingFile.id}): ${score.score}% ` +
+                                        `[${score.reasons.slice(0, 3).join(", ")}]`);
+                                    // If score meets threshold, add hint to trigger re-matching
+                                    if (score.score >= scoreAttachmentMatch_1.ATTACHMENT_MATCH_THRESHOLD) {
+                                        // Check if this file was rejected by the transaction
+                                        if (isFileRejectedByTransaction(existingFile.id, transaction)) {
+                                            console.log(`[PrecisionSearch] Skipping rejected file ${fileName} (${existingFile.id})`);
+                                            continue;
+                                        }
+                                        await db.collection("files").doc(existingFile.id).update({
+                                            precisionSearchHint: {
+                                                transactionId: transaction.id,
+                                                transactionAmount: transaction.amount,
+                                                transactionDate: transaction.date,
+                                                searchStrategy: "email_attachment",
+                                                matchConfidence: score.score,
+                                                searchedAt: firestore_2.Timestamp.now(),
+                                            },
+                                            transactionMatchComplete: false, // Re-trigger matching
+                                            updatedAt: firestore_2.Timestamp.now(),
+                                        });
+                                        attempt.fileIdsConnected.push(existingFile.id);
+                                        attempt.matchesFound++;
+                                        if (isPdf)
+                                            foundPdfMatch = true;
+                                        console.log(`[PrecisionSearch] Existing file ${fileName} matched at ${score.score}%`);
+                                        // Stop trying more queries if this is a great match
+                                        if (score.score >= scoreAttachmentMatch_1.GREAT_MATCH_THRESHOLD) {
+                                            greatMatchCount++;
+                                            console.log(`[PrecisionSearch] Great match found (${score.score}%), count: ${greatMatchCount}/${scoreAttachmentMatch_1.GREAT_MATCH_COUNT}`);
+                                        }
+                                    }
+                                    else {
+                                        console.log(`[PrecisionSearch] Existing file ${fileName} scored ${score.score}% (below ${scoreAttachmentMatch_1.ATTACHMENT_MATCH_THRESHOLD}% threshold)`);
+                                    }
                                     continue;
-                                // Download and create file
+                                }
+                                // Download and create new file (with hint for matching)
                                 const attachmentData = await client.getAttachment(messageId, attachment.attachmentId);
-                                const fileId = await createFileFromAttachment(userId, attachmentData, attachment, message, integration.id, integration.email);
-                                if (fileId) {
-                                    // Connect to transaction
-                                    await connectFileToTransaction(fileId, transaction.id, userId, "email_attachment");
-                                    attempt.fileIdsConnected.push(fileId);
-                                    attempt.matchesFound++;
-                                    // Usually one match per transaction is enough
-                                    attempt.completedAt = firestore_2.Timestamp.now();
-                                    return attempt;
+                                const result = await createFileFromAttachment(userId, attachmentData, attachment, message, integration.id, integration.email, {
+                                    transactionId: transaction.id,
+                                    transactionAmount: transaction.amount,
+                                    transactionDate: transaction.date,
+                                    searchStrategy: "email_attachment",
+                                    searchedAt: firestore_2.Timestamp.now(),
+                                });
+                                if (result) {
+                                    // Check if this is an existing file (found by hash)
+                                    if (result.startsWith("existing:")) {
+                                        const existingFileId = result.substring(9);
+                                        const existingDoc = await db.collection("files").doc(existingFileId).get();
+                                        if (existingDoc.exists) {
+                                            const existingFile = { id: existingDoc.id, ...existingDoc.data() };
+                                            const fileName = existingFile.fileName || attachment.filename;
+                                            // Skip if already connected to this transaction
+                                            if (existingFile.transactionIds?.includes(transaction.id)) {
+                                                console.log(`[PrecisionSearch] File already connected: ${fileName}`);
+                                                continue;
+                                            }
+                                            // Score the existing file using unified scoring
+                                            const from = extractHeader(message, "From") || "";
+                                            const subject = extractHeader(message, "Subject") || "";
+                                            const emailDate = new Date(parseInt(message.internalDate, 10));
+                                            const scoreInput = {
+                                                filename: fileName,
+                                                mimeType: attachment.mimeType,
+                                                emailSubject: subject,
+                                                emailFrom: from,
+                                                emailBodyText: existingFile.extractedText,
+                                                emailDate,
+                                                integrationId: integration.id,
+                                                transactionAmount: transaction.amount,
+                                                transactionDate: transaction.date.toDate(),
+                                                transactionName: transaction.name,
+                                                transactionReference: transaction.reference,
+                                                transactionPartner: transaction.partner,
+                                                partnerName: partnerInfo?.name,
+                                                partnerEmailDomains: partnerInfo?.emailDomains,
+                                            };
+                                            const score = (0, scoreAttachmentMatch_1.scoreAttachmentMatch)(scoreInput);
+                                            console.log(`[PrecisionSearch] Match score for file ${fileName} (${existingFileId}): ${score.score}% ` +
+                                                `[${score.reasons.slice(0, 3).join(", ")}]`);
+                                            if (score.score >= scoreAttachmentMatch_1.ATTACHMENT_MATCH_THRESHOLD) {
+                                                // Check if this file was rejected by the transaction
+                                                if (isFileRejectedByTransaction(existingFileId, transaction)) {
+                                                    console.log(`[PrecisionSearch] Skipping rejected file ${fileName} (${existingFileId})`);
+                                                }
+                                                else {
+                                                    await db.collection("files").doc(existingFileId).update({
+                                                        precisionSearchHint: {
+                                                            transactionId: transaction.id,
+                                                            transactionAmount: transaction.amount,
+                                                            transactionDate: transaction.date,
+                                                            searchStrategy: "email_attachment",
+                                                            matchConfidence: score.score,
+                                                            searchedAt: firestore_2.Timestamp.now(),
+                                                        },
+                                                        transactionMatchComplete: false,
+                                                        updatedAt: firestore_2.Timestamp.now(),
+                                                    });
+                                                    attempt.fileIdsConnected.push(existingFileId);
+                                                    attempt.matchesFound++;
+                                                    if (isPdf)
+                                                        foundPdfMatch = true;
+                                                    console.log(`[PrecisionSearch] Existing file ${fileName} matched at ${score.score}%`);
+                                                    // Stop trying more queries if this is a great match
+                                                    if (score.score >= scoreAttachmentMatch_1.GREAT_MATCH_THRESHOLD) {
+                                                        greatMatchCount++;
+                                                        console.log(`[PrecisionSearch] Great match found (${score.score}%), count: ${greatMatchCount}/${scoreAttachmentMatch_1.GREAT_MATCH_COUNT}`);
+                                                    }
+                                                }
+                                            }
+                                            else {
+                                                console.log(`[PrecisionSearch] Existing file ${fileName} scored ${score.score}% (below threshold)`);
+                                            }
+                                        }
+                                    }
+                                    else {
+                                        // New file created - matchFileTransactions will handle connection after extraction
+                                        attempt.fileIdsConnected.push(result);
+                                        attempt.matchesFound++;
+                                        if (isPdf)
+                                            foundPdfMatch = true;
+                                    }
                                 }
                             }
                         }
@@ -758,9 +1242,11 @@ async function executeEmailInvoiceStrategy(transaction, userId) {
         // Get Gmail clients
         const clients = await getGmailClientsForUser(userId);
         if (clients.length === 0) {
+            console.log(`[PrecisionSearch] email_invoice: No active Gmail integrations for user`);
             attempt.completedAt = firestore_2.Timestamp.now();
             return attempt;
         }
+        console.log(`[PrecisionSearch] email_invoice: Found ${clients.length} Gmail integration(s)`);
         // Get partner info if available
         let partnerInfo;
         let partnerId = transaction.partnerId;
@@ -771,26 +1257,28 @@ async function executeEmailInvoiceStrategy(transaction, userId) {
                 .doc(partnerId)
                 .get();
             if (partnerDoc.exists) {
-                const data = partnerDoc.data();
-                partnerInfo = {
-                    name: data.name,
-                    emailDomains: data.emailDomains,
-                    website: data.website,
-                };
+                partnerInfo = partnerDoc.data();
             }
         }
-        // Generate search queries using Gemini
-        const queryResult = await (0, geminiSearchHelper_1.generateSearchQueries)({
+        // Generate search queries using Gemini (same as UI)
+        const allQueries = await (0, generateQueriesWithGemini_1.generateQueriesWithGemini)({
             name: transaction.name,
             partner: transaction.partner,
+            description: transaction.description,
+            reference: transaction.reference,
             amount: transaction.amount,
-            date: transaction.date.toDate(),
-        }, partnerInfo);
-        attempt.geminiCalls = (attempt.geminiCalls || 0) + 1;
-        attempt.geminiTokensUsed =
-            (attempt.geminiTokensUsed || 0) + queryResult.usage.inputTokens + queryResult.usage.outputTokens;
-        const filenameQueries = buildFilenameQueries(transaction.name);
-        const queries = mergeQueries(queryResult.queries, filenameQueries);
+        }, partnerInfo ? {
+            name: partnerInfo.name,
+            emailDomains: partnerInfo.emailDomains,
+            website: partnerInfo.website,
+            ibans: partnerInfo.ibans,
+            vatId: partnerInfo.vatId,
+            aliases: partnerInfo.aliases,
+            fileSourcePatterns: partnerInfo.fileSourcePatterns,
+        } : undefined);
+        // Take first 3 queries (same as clicking suggestions in UI)
+        const queries = allQueries.slice(0, 3);
+        console.log(`[PrecisionSearch] email_invoice: Using ${queries.length} queries for tx "${transaction.name}":`, queries);
         if (queries.length === 0) {
             attempt.completedAt = firestore_2.Timestamp.now();
             return attempt;
@@ -798,16 +1286,27 @@ async function executeEmailInvoiceStrategy(transaction, userId) {
         attempt.searchParams = {
             ...attempt.searchParams,
             queries,
-            queryReasoning: queryResult.reasoning,
         };
         // Search each Gmail account with each query (exclude attachment requirement)
+        // NOTE: Don't add date filter to Gmail query - let Gmail rank by relevance (same as UI)
+        // We filter by date AFTER fetching (see isEmailDateInRange check below)
         const processedMessageIds = new Set();
+        const txDate = transaction.date.toDate();
+        let greatMatchCount = 0; // Stop trying more queries after GREAT_MATCH_COUNT matches at GREAT_MATCH_THRESHOLD%
         for (const { client, integration } of clients) {
+            if (greatMatchCount >= scoreAttachmentMatch_1.GREAT_MATCH_COUNT)
+                break;
             for (const query of queries) {
+                if (greatMatchCount >= scoreAttachmentMatch_1.GREAT_MATCH_COUNT)
+                    break;
                 try {
-                    // Remove has:attachment if present, we want emails without attachments too
-                    const cleanQuery = query.replace(/has:attachment/gi, "").trim();
-                    const searchResult = await client.searchMessages(cleanQuery, 10);
+                    // Use shared query builder (same as UI callable) - no date filter, no attachment requirement
+                    const cleanQuery = (0, searchGmailCallable_1.buildGmailSearchQuery)({
+                        query: query.replace(/has:attachment/gi, "").trim(),
+                        hasAttachments: false,
+                    });
+                    const searchResult = await client.searchMessages(cleanQuery, 20);
+                    console.log(`[PrecisionSearch] email_invoice: Query "${cleanQuery.substring(0, 50)}..." returned ${searchResult.messages.length} messages`);
                     attempt.candidatesFound += searchResult.messages.length;
                     for (const { id: messageId } of searchResult.messages) {
                         if (processedMessageIds.has(messageId))
@@ -818,6 +1317,23 @@ async function executeEmailInvoiceStrategy(transaction, userId) {
                             const message = await client.getMessage(messageId);
                             const from = extractHeader(message, "From") || "";
                             const subject = extractHeader(message, "Subject") || "";
+                            // Pre-classify email to prioritize likely mail invoices
+                            const allAttachments = extractAttachments(message);
+                            const classification = classifyEmail(subject, message.snippet || "", allAttachments);
+                            console.log(`[PrecisionSearch] email_invoice: Classification for ${messageId}: ` +
+                                `hasPdf=${classification.hasPdfAttachment}, mailInvoice=${classification.possibleMailInvoice}, ` +
+                                `invoiceLink=${classification.possibleInvoiceLink}, confidence=${classification.confidence}%`);
+                            // Skip if has PDF attachment - email_attachment strategy handles those
+                            if (classification.hasPdfAttachment) {
+                                console.log(`[PrecisionSearch] Skipping ${messageId} - has PDF attachment (handled by email_attachment strategy)`);
+                                continue;
+                            }
+                            // Check email date is within range
+                            const emailDate = new Date(parseInt(message.internalDate, 10));
+                            if (!isEmailDateInRange(emailDate, txDate, 180)) {
+                                console.log(`[PrecisionSearch] Skipping message - date ${emailDate.toISOString().split("T")[0]} outside ±180 days of tx`);
+                                continue;
+                            }
                             const { html, text } = extractEmailBody(message);
                             // Analyze email content with Gemini
                             const analysis = await (0, geminiSearchHelper_1.analyzeEmailForInvoice)({ subject, from, htmlBody: html, textBody: text }, {
@@ -853,6 +1369,46 @@ async function executeEmailInvoiceStrategy(transaction, userId) {
                             }
                             // Handle mail invoice (email itself is the invoice)
                             if (analysis.isMailInvoice && analysis.mailInvoiceConfidence >= 0.7 && html) {
+                                // Verify email date is within range of transaction (extra safety check)
+                                const emailDate = new Date(parseInt(message.internalDate, 10));
+                                if (!isEmailDateInRange(emailDate, txDate, 180)) {
+                                    console.log(`[PrecisionSearch] Skipping email invoice - date ${emailDate.toISOString()} outside ±180 days of tx ${txDate.toISOString()}`);
+                                    continue;
+                                }
+                                // Score the email using unified scoring (same as UI)
+                                // Use message.snippet from Gmail API (same as UI), with body text as fallback
+                                const bodyText = text || (html ? html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() : undefined);
+                                const emailScoreInput = {
+                                    filename: `${subject}.pdf`,
+                                    mimeType: "application/pdf",
+                                    emailSubject: subject,
+                                    emailFrom: from,
+                                    // Use snippet from Gmail API like UI does, fallback to extracted body
+                                    emailSnippet: message.snippet || bodyText?.substring(0, 500),
+                                    emailBodyText: bodyText,
+                                    emailDate,
+                                    integrationId: integration.id,
+                                    transactionAmount: transaction.amount,
+                                    transactionDate: txDate,
+                                    transactionName: transaction.name,
+                                    transactionReference: transaction.reference,
+                                    // Use name as fallback when partner is not assigned
+                                    transactionPartner: transaction.partner || transaction.name,
+                                    partnerName: partnerInfo?.name,
+                                    partnerEmailDomains: partnerInfo?.emailDomains,
+                                };
+                                const emailScore = (0, scoreAttachmentMatch_1.scoreAttachmentMatch)(emailScoreInput);
+                                console.log(`[PrecisionSearch] Email invoice score for "${subject.substring(0, 40)}...": ${emailScore.score}% ` +
+                                    `[${emailScore.reasons.join(", ")}]`);
+                                // Track best score
+                                if (!attempt.bestMatchScore || emailScore.score > attempt.bestMatchScore) {
+                                    attempt.bestMatchScore = emailScore.score;
+                                }
+                                // Only convert if score meets threshold
+                                if (emailScore.score < scoreAttachmentMatch_1.ATTACHMENT_MATCH_THRESHOLD) {
+                                    console.log(`[PrecisionSearch] Email invoice scored ${emailScore.score}% (below ${scoreAttachmentMatch_1.ATTACHMENT_MATCH_THRESHOLD}% threshold), skipping`);
+                                    continue;
+                                }
                                 // Check if we already converted this email
                                 const existingFile = await db
                                     .collection("files")
@@ -863,7 +1419,6 @@ async function executeEmailInvoiceStrategy(transaction, userId) {
                                     .get();
                                 if (existingFile.empty) {
                                     // Convert HTML to PDF
-                                    const emailDate = new Date(parseInt(message.internalDate, 10));
                                     const pdfResult = await (0, htmlToPdf_1.convertHtmlToPdf)(html, {
                                         subject,
                                         from,
@@ -875,16 +1430,23 @@ async function executeEmailInvoiceStrategy(transaction, userId) {
                                         .trim()
                                         .substring(0, 50);
                                     const filename = `${sanitizedSubject || "invoice"}_${emailDate.toISOString().split("T")[0]}.pdf`;
-                                    const fileId = await createFileFromHtmlPdf(userId, pdfResult.pdfBuffer, filename, message, integration.id, integration.email);
+                                    const fileId = await createFileFromHtmlPdf(userId, pdfResult.pdfBuffer, filename, message, integration.id, integration.email, {
+                                        transactionId: transaction.id,
+                                        transactionAmount: transaction.amount,
+                                        transactionDate: transaction.date,
+                                        searchStrategy: "email_invoice",
+                                        searchedAt: firestore_2.Timestamp.now(),
+                                    });
                                     if (fileId) {
-                                        // Connect to transaction
-                                        await connectFileToTransaction(fileId, transaction.id, userId, "email_invoice");
+                                        // File created - matchFileTransactions will handle connection after extraction
                                         attempt.fileIdsConnected.push(fileId);
                                         attempt.matchesFound++;
-                                        console.log(`[PrecisionSearch] Created PDF from mail invoice: ${filename}`);
-                                        // Found a match, return
-                                        attempt.completedAt = firestore_2.Timestamp.now();
-                                        return attempt;
+                                        console.log(`[PrecisionSearch] Created PDF from mail invoice: ${filename} (score: ${emailScore.score}%)`);
+                                        // Stop trying more queries if this is a great match
+                                        if (emailScore.score >= scoreAttachmentMatch_1.GREAT_MATCH_THRESHOLD) {
+                                            greatMatchCount++;
+                                            console.log(`[PrecisionSearch] Great match found (${emailScore.score}%), count: ${greatMatchCount}/${scoreAttachmentMatch_1.GREAT_MATCH_COUNT}`);
+                                        }
                                     }
                                 }
                             }
@@ -924,29 +1486,6 @@ async function executeStrategy(strategy, transaction, userId) {
         default:
             throw new Error(`Unknown strategy: ${strategy}`);
     }
-}
-/**
- * Connect a file to a transaction
- */
-async function connectFileToTransaction(fileId, transactionId, userId, automationSource) {
-    const now = firestore_2.Timestamp.now();
-    const batch = db.batch();
-    // Update file
-    const fileRef = db.collection("files").doc(fileId);
-    batch.update(fileRef, {
-        transactionIds: firestore_2.FieldValue.arrayUnion(transactionId),
-        updatedAt: now,
-    });
-    // Update transaction
-    const txRef = db.collection("transactions").doc(transactionId);
-    batch.update(txRef, {
-        fileIds: firestore_2.FieldValue.arrayUnion(fileId),
-        fileAutomationSource: automationSource,
-        isComplete: true,
-        updatedAt: now,
-    });
-    await batch.commit();
-    console.log(`[PrecisionSearch] Connected file ${fileId} to tx ${transactionId} via ${automationSource}`);
 }
 /**
  * Create or update transaction search entry
@@ -1088,6 +1627,9 @@ async function processQueueItem(queueItem) {
             try {
                 let foundMatch = false;
                 // Run strategies in order until one finds a match
+                // Threshold for stopping early - only stop if we find a very strong match
+                // Set high because attachment scoring and transaction scoring can diverge
+                const STRONG_MATCH_THRESHOLD = 85;
                 for (const strategy of queueItem.strategies) {
                     // Skip if transaction already completed
                     if (tx.isComplete)
@@ -1098,7 +1640,15 @@ async function processQueueItem(queueItem) {
                     if (attempt.fileIdsConnected.length > 0) {
                         foundMatch = true;
                         totalFilesConnected += attempt.fileIdsConnected.length;
-                        break; // Stop after first successful strategy
+                        // Only stop early if we found a strong match (60%+)
+                        // Otherwise continue to try other strategies which might find better matches
+                        if (attempt.bestMatchScore && attempt.bestMatchScore >= STRONG_MATCH_THRESHOLD) {
+                            console.log(`[PrecisionSearch] Strong match found (${attempt.bestMatchScore}%), stopping search`);
+                            break;
+                        }
+                        else {
+                            console.log(`[PrecisionSearch] Weak match found (${attempt.bestMatchScore}%), continuing to try other strategies`);
+                        }
                     }
                     if (attempt.error) {
                         errors.push(`${tx.id}/${strategy}: ${attempt.error}`);

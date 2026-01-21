@@ -89,6 +89,7 @@ export const onCategoryUpdate = onDocumentUpdated(
           matchedPartnerIds: data.matchedPartnerIds || [],
           learnedPatterns: data.learnedPatterns || [],
           manualRemovals: removals,
+          transactionCount: data.transactionCount || 0,
           isActive: data.isActive,
         };
       });

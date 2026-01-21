@@ -2,96 +2,72 @@
  * HTML to PDF Converter
  *
  * Converts email HTML content to PDF for storage as a receipt file.
- * Uses pdf-lib (already in project) for simple text-based conversion.
- *
- * For complex HTML with tables/images, would need puppeteer (not included).
+ * Uses Puppeteer (headless Chrome) for high-quality rendering that preserves
+ * HTML layout, tables, images, and CSS styling.
  */
 
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import puppeteer, { Browser } from "puppeteer";
 
 export interface PdfConversionResult {
   pdfBuffer: Buffer;
   pageCount: number;
 }
 
-/**
- * Extract clean text from HTML, preserving some structure.
- */
-function htmlToText(html: string): string {
-  let text = html;
+// Singleton browser instance for performance - reused across requests
+let browserInstance: Browser | null = null;
+let browserLaunchPromise: Promise<Browser> | null = null;
 
-  // Remove style and script tags completely
-  text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
-  text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
-
-  // Replace common elements with line breaks
-  text = text.replace(/<br\s*\/?>/gi, "\n");
-  text = text.replace(/<\/p>/gi, "\n\n");
-  text = text.replace(/<\/div>/gi, "\n");
-  text = text.replace(/<\/tr>/gi, "\n");
-  text = text.replace(/<\/li>/gi, "\n");
-  text = text.replace(/<\/h[1-6]>/gi, "\n\n");
-
-  // Replace horizontal rules
-  text = text.replace(/<hr[^>]*>/gi, "\n---\n");
-
-  // Remove remaining tags
-  text = text.replace(/<[^>]+>/g, " ");
-
-  // Decode common HTML entities
-  text = text.replace(/&nbsp;/gi, " ");
-  text = text.replace(/&amp;/gi, "&");
-  text = text.replace(/&lt;/gi, "<");
-  text = text.replace(/&gt;/gi, ">");
-  text = text.replace(/&quot;/gi, '"');
-  text = text.replace(/&#39;/gi, "'");
-  text = text.replace(/&euro;/gi, "€");
-
-  // Clean up whitespace
-  text = text.replace(/[ \t]+/g, " "); // Multiple spaces to single
-  text = text.replace(/\n\s*\n\s*\n/g, "\n\n"); // Max 2 newlines
-  text = text.trim();
-
-  return text;
-}
-
-/**
- * Wrap text to fit within a given width.
- */
-function wrapText(text: string, maxCharsPerLine: number): string[] {
-  const lines: string[] = [];
-  const paragraphs = text.split("\n");
-
-  for (const paragraph of paragraphs) {
-    if (paragraph.trim() === "") {
-      lines.push("");
-      continue;
-    }
-
-    const words = paragraph.split(" ");
-    let currentLine = "";
-
-    for (const word of words) {
-      if (currentLine.length + word.length + 1 <= maxCharsPerLine) {
-        currentLine += (currentLine ? " " : "") + word;
-      } else {
-        if (currentLine) lines.push(currentLine);
-        currentLine = word;
-      }
-    }
-
-    if (currentLine) lines.push(currentLine);
+async function getBrowser(): Promise<Browser> {
+  if (browserInstance && browserInstance.connected) {
+    return browserInstance;
   }
 
-  return lines;
+  // Prevent multiple simultaneous launches
+  if (browserLaunchPromise) {
+    return browserLaunchPromise;
+  }
+
+  browserLaunchPromise = puppeteer.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--single-process", // Important for Cloud Functions
+    ],
+  });
+
+  browserInstance = await browserLaunchPromise;
+  browserLaunchPromise = null;
+
+  // Handle browser disconnect
+  browserInstance.on("disconnected", () => {
+    browserInstance = null;
+  });
+
+  return browserInstance;
 }
 
 /**
- * Convert HTML email content to a PDF document.
+ * Escape HTML special characters
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Convert HTML email content to a PDF document using Puppeteer.
+ * Preserves full HTML layout, tables, images, and CSS styling.
  *
  * @param html - The HTML content of the email
- * @param metadata - Optional metadata to include in the PDF
- * @returns PDF as a Buffer
+ * @param metadata - Optional metadata to include in the PDF header
+ * @returns PDF as a Buffer with page count
  */
 export async function convertHtmlToPdf(
   html: string,
@@ -101,124 +77,93 @@ export async function convertHtmlToPdf(
     date?: Date;
   }
 ): Promise<PdfConversionResult> {
-  const pdfDoc = await PDFDocument.create();
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const browser = await getBrowser();
+  const page = await browser.newPage();
 
-  const fontSize = 10;
-  const lineHeight = fontSize * 1.4;
-  const margin = 50;
-  const pageWidth = 595; // A4
-  const pageHeight = 842; // A4
-  const contentWidth = pageWidth - 2 * margin;
-  const maxCharsPerLine = Math.floor(contentWidth / (fontSize * 0.5));
+  try {
+    // Build a complete HTML document with email header
+    const headerHtml = metadata
+      ? `
+      <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #ddd;">
+        ${metadata.subject ? `<h2 style="margin: 0 0 8px 0; font-size: 18px; color: #333;">${escapeHtml(metadata.subject)}</h2>` : ""}
+        ${metadata.from ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">From: ${escapeHtml(metadata.from)}</p>` : ""}
+        ${metadata.date && !isNaN(metadata.date.getTime()) ? `<p style="margin: 0; font-size: 12px; color: #666;">Date: ${metadata.date.toLocaleDateString("de-DE")}</p>` : ""}
+      </div>
+    `
+      : "";
 
-  // Convert HTML to text
-  const textContent = htmlToText(html);
-  const lines = wrapText(textContent, maxCharsPerLine);
+    const fullHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+              font-size: 14px;
+              line-height: 1.5;
+              color: #333;
+              max-width: 100%;
+              padding: 20px;
+              box-sizing: border-box;
+            }
+            table {
+              border-collapse: collapse;
+              width: 100%;
+            }
+            td, th {
+              padding: 8px;
+              text-align: left;
+            }
+            img {
+              max-width: 100%;
+              height: auto;
+            }
+          </style>
+        </head>
+        <body>
+          ${headerHtml}
+          ${html}
+        </body>
+      </html>
+    `;
 
-  // Calculate content height per page
-  const maxLinesPerPage = Math.floor((pageHeight - 2 * margin - 60) / lineHeight); // 60 for header
-
-  let pageCount = 0;
-  let currentLineIndex = 0;
-
-  while (currentLineIndex < lines.length) {
-    const page = pdfDoc.addPage([pageWidth, pageHeight]);
-    pageCount++;
-
-    let y = pageHeight - margin;
-
-    // Add header on first page
-    if (pageCount === 1 && metadata) {
-      if (metadata.subject) {
-        page.drawText(metadata.subject, {
-          x: margin,
-          y,
-          size: 14,
-          font: boldFont,
-          color: rgb(0, 0, 0),
-        });
-        y -= 20;
-      }
-
-      if (metadata.from) {
-        page.drawText(`From: ${metadata.from}`, {
-          x: margin,
-          y,
-          size: fontSize,
-          font,
-          color: rgb(0.3, 0.3, 0.3),
-        });
-        y -= lineHeight;
-      }
-
-      if (metadata.date) {
-        page.drawText(`Date: ${metadata.date.toLocaleDateString("de-DE")}`, {
-          x: margin,
-          y,
-          size: fontSize,
-          font,
-          color: rgb(0.3, 0.3, 0.3),
-        });
-        y -= lineHeight;
-      }
-
-      // Add separator
-      y -= 10;
-      page.drawLine({
-        start: { x: margin, y },
-        end: { x: pageWidth - margin, y },
-        thickness: 0.5,
-        color: rgb(0.7, 0.7, 0.7),
-      });
-      y -= 20;
-    }
-
-    // Draw content lines
-    let linesOnPage = 0;
-    while (
-      currentLineIndex < lines.length &&
-      linesOnPage < maxLinesPerPage &&
-      y > margin
-    ) {
-      const line = lines[currentLineIndex];
-
-      if (line.trim()) {
-        page.drawText(line, {
-          x: margin,
-          y,
-          size: fontSize,
-          font,
-          color: rgb(0, 0, 0),
-        });
-      }
-
-      y -= lineHeight;
-      currentLineIndex++;
-      linesOnPage++;
-    }
-
-    // Add page number
-    page.drawText(`Page ${pageCount}`, {
-      x: pageWidth / 2 - 20,
-      y: 30,
-      size: 8,
-      font,
-      color: rgb(0.5, 0.5, 0.5),
+    // Use 'domcontentloaded' instead of 'networkidle0' - don't wait for external images
+    // Email HTML often has broken cid: references and tracking pixels that never load
+    await page.setContent(fullHtml, {
+      waitUntil: "domcontentloaded",
+      timeout: 10000,
     });
+
+    // Brief wait for any inline styles to apply
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: {
+        top: "20mm",
+        right: "15mm",
+        bottom: "20mm",
+        left: "15mm",
+      },
+    });
+
+    // Estimate page count (rough calculation based on buffer size)
+    // A typical A4 PDF page is ~3-5KB for text, more with images
+    const pageCount = Math.max(1, Math.ceil(pdfBuffer.length / 50000));
+
+    return {
+      pdfBuffer: Buffer.from(pdfBuffer),
+      pageCount,
+    };
+  } finally {
+    await page.close();
   }
-
-  const pdfBytes = await pdfDoc.save();
-
-  return {
-    pdfBuffer: Buffer.from(pdfBytes),
-    pageCount,
-  };
 }
 
 /**
- * Check if HTML content is complex (requires puppeteer for proper rendering).
+ * Check if HTML content is complex (informational only, Puppeteer handles all cases).
  * Returns true if the content has tables, images, or complex CSS.
  */
 export function isComplexHtml(html: string): boolean {

@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { collection, addDoc, doc, getDoc } from "firebase/firestore";
-import { Timestamp } from "firebase/firestore";
-import { getServerDb } from "@/lib/firebase/config-server";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import {
-  getEmailIntegration,
-  pauseEmailIntegration,
-  pauseActiveSyncForIntegration,
-} from "@/lib/operations";
 
-const db = getServerDb();
+const db = getAdminDb();
+const INTEGRATIONS_COLLECTION = "emailIntegrations";
+const SYNC_QUEUE_COLLECTION = "gmailSyncQueue";
+const SYNC_HISTORY_COLLECTION = "gmailSyncHistory";
 
 /**
  * POST /api/gmail/pause
@@ -32,11 +29,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId };
-
     // Verify integration exists and belongs to user
-    const integration = await getEmailIntegration(ctx, integrationId);
-    if (!integration) {
+    const integrationRef = db.collection(INTEGRATIONS_COLLECTION).doc(integrationId);
+    const integrationSnap = await integrationRef.get();
+
+    if (!integrationSnap.exists) {
+      return NextResponse.json(
+        { error: "Integration not found" },
+        { status: 404 }
+      );
+    }
+
+    const integration = integrationSnap.data()!;
+    if (integration.userId !== userId) {
       return NextResponse.json(
         { error: "Integration not found" },
         { status: 404 }
@@ -52,8 +57,48 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Pause any active sync queue items and get the paused item
-    const pausedQueueItem = await pauseActiveSyncForIntegration(ctx, integrationId);
+    // Pause any active sync queue items
+    const activeSyncsQuery = await db
+      .collection(SYNC_QUEUE_COLLECTION)
+      .where("integrationId", "==", integrationId)
+      .where("status", "in", ["pending", "processing"])
+      .get();
+
+    let pausedQueueItem: {
+      type: string;
+      dateFrom: Date | null;
+      dateTo: Date | null;
+      emailsProcessed: number;
+      filesCreated: number;
+      attachmentsSkipped: number;
+      errors: string[];
+      startedAt: FirebaseFirestore.Timestamp | null;
+      createdAt: FirebaseFirestore.Timestamp;
+    } | null = null;
+
+    for (const doc of activeSyncsQuery.docs) {
+      const data = doc.data();
+      await doc.ref.update({
+        status: "paused",
+        pausedAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      });
+
+      // Track the first one for history
+      if (!pausedQueueItem) {
+        pausedQueueItem = {
+          type: data.type,
+          dateFrom: data.dateFrom?.toDate() || null,
+          dateTo: data.dateTo?.toDate() || null,
+          emailsProcessed: data.emailsProcessed || 0,
+          filesCreated: data.filesCreated || 0,
+          attachmentsSkipped: data.attachmentsSkipped || 0,
+          errors: data.errors || [],
+          startedAt: data.startedAt || null,
+          createdAt: data.createdAt,
+        };
+      }
+    }
 
     // Create a sync history record showing the pause
     if (pausedQueueItem) {
@@ -63,7 +108,7 @@ export async function POST(request: NextRequest) {
         (completedAt.toMillis() - startedAt.toMillis()) / 1000
       );
 
-      await addDoc(collection(db, "gmailSyncHistory"), {
+      await db.collection(SYNC_HISTORY_COLLECTION).add({
         userId,
         integrationId,
         integrationEmail: integration.email,
@@ -87,7 +132,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Mark integration as paused
-    await pauseEmailIntegration(ctx, integrationId);
+    await integrationRef.update({
+      isPaused: true,
+      pausedAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
 
     console.log(`[Gmail Pause] Paused integration: ${integration.email}`);
 

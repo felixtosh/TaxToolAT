@@ -2,12 +2,11 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { format } from "date-fns";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 import {
   Search,
   FileText,
   Image,
-  Check,
-  Link2,
   Mail,
   HardDrive,
   Loader2,
@@ -17,7 +16,6 @@ import {
   RefreshCw,
   ArrowRight,
   Globe,
-  Plug,
   ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,8 +26,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { ContentOverlay } from "@/components/ui/content-overlay";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { isPdfOrImageAttachment } from "@/lib/email-providers/interface";
+import { isPdfAttachment } from "@/lib/email-providers/interface";
+import { ConnectResultRow } from "@/components/ui/connect-result-row";
 import { FilePreview } from "./file-preview";
+import { GmailAttachmentPreview } from "./gmail-attachment-preview";
 import {
   useUnifiedFileSearch,
   UnifiedSearchResult,
@@ -37,7 +37,8 @@ import {
 } from "@/hooks/use-unified-file-search";
 import { usePartners } from "@/hooks/use-partners";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
-import { useGmailSearchQueries } from "@/hooks/use-gmail-search-queries";
+import { useGmailSearchQueries, TypedSuggestion, SuggestionType } from "@/hooks/use-gmail-search-queries";
+import { useAttachmentScoring } from "@/hooks/use-attachment-scoring";
 import { addEmailDomainToPartner } from "@/lib/operations";
 import { db } from "@/lib/firebase/config";
 import { EmailMessage, EmailAttachment } from "@/types/email-integration";
@@ -57,6 +58,36 @@ const RECEIPT_KEYWORDS = [
   "bon",
   "bill",
 ];
+
+/** Get display label for suggestion type */
+function getSuggestionTypeLabel(type: SuggestionType): string {
+  switch (type) {
+    case "invoice_number": return "Inv#";
+    case "company_name": return "Company";
+    case "email_domain": return "Email";
+    case "vat_id": return "VAT";
+    case "iban": return "IBAN";
+    case "pattern": return "Pattern";
+    case "fallback": return "";
+    default: return "";
+  }
+}
+
+/** Get style for suggestion type label (left half) */
+function getSuggestionTypeLabelStyle(type: SuggestionType, isActive: boolean): string {
+  if (isActive) {
+    return "bg-primary-foreground/20 text-primary-foreground";
+  }
+  switch (type) {
+    case "invoice_number": return "bg-green-100 text-green-700";
+    case "company_name": return "bg-blue-100 text-blue-700";
+    case "email_domain": return "bg-purple-100 text-purple-700";
+    case "vat_id": return "bg-orange-100 text-orange-700";
+    case "iban": return "bg-yellow-100 text-yellow-700";
+    case "pattern": return "bg-gray-100 text-gray-700";
+    default: return "bg-gray-100 text-gray-700";
+  }
+}
 
 const AUTH_ERROR_CODES = new Set([
   "AUTH_EXPIRED",
@@ -210,9 +241,17 @@ export function ConnectFileOverlay({
   const [gmailAuthIssues, setGmailAuthIssues] = useState<
     Record<string, { code: string; message: string }>
   >({});
+  const [attachmentSignalsMap, setAttachmentSignalsMap] = useState<
+    Map<string, { score: number; label: string | null; reasons: string[] }>
+  >(new Map());
+  const [emailSignalsMap, setEmailSignalsMap] = useState<
+    Map<string, { score: number; label: string | null; reasons: string[] }>
+  >(new Map());
+  const [scoringLoading, setScoringLoading] = useState(false);
 
   // Hooks
   const { partners } = usePartners();
+  const { scoreAttachments } = useAttachmentScoring();
   const { integrations, hasGmailIntegration } = useEmailIntegrations();
   const { status: browserExtensionStatus } = useBrowserExtensionStatus();
   const gmailIntegrations = useMemo(
@@ -245,7 +284,7 @@ export function ConnectFileOverlay({
   );
 
   // AI suggestions - pass full transaction and partner, only enabled when overlay is open
-  const { queries: suggestedQueries, isLoading: suggestionsLoading } = useGmailSearchQueries({
+  const { queries: suggestedQueries, suggestions: typedSuggestions, isLoading: suggestionsLoading } = useGmailSearchQueries({
     transaction,
     partner,
     enabled: open,
@@ -285,7 +324,8 @@ export function ConnectFileOverlay({
     const attachments: GmailAttachmentItem[] = [];
     for (const message of gmailMessages) {
       for (const attachment of message.attachments) {
-        if (isPdfOrImageAttachment(attachment.mimeType, attachment.filename)) {
+        // Only show PDFs - images are usually logos/signatures, not receipts
+        if (isPdfAttachment(attachment.mimeType, attachment.filename)) {
           attachments.push({
             key: `${message.messageId}-${attachment.attachmentId}`,
             attachment,
@@ -325,9 +365,8 @@ export function ConnectFileOverlay({
         if (emailContentByMessageId[message.messageId]) continue;
 
         try {
-          const response = await fetch("/api/gmail/email-content", {
+          const response = await fetchWithAuth("/api/gmail/email-content", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               integrationId: message.integrationId,
               messageId: message.messageId,
@@ -358,133 +397,188 @@ export function ConnectFileOverlay({
     };
   }, [gmailMessages, hasSearched, emailContentByMessageId]);
 
-  const attachmentSignals = useMemo(() => {
-    const amountVariants = buildAmountVariants(transaction?.amount);
-    const partnerTokens = [
-      ...extractTokens(partner?.name),
-      ...extractTokens(transaction?.partner),
-    ];
-    const invoiceTokens = [
-      ...extractTokens(transaction?.name),
-      ...extractTokens(transaction?.reference),
-    ];
-    const knownDomains = (partner?.emailDomains || []).map((d) => d.toLowerCase());
-    const gmailPatterns = (partner?.fileSourcePatterns || []).filter(
-      (pattern) => pattern.sourceType === "gmail" && pattern.integrationId
-    );
+  // Create a stable key for the attachments to score
+  const attachmentsKey = useMemo(() => {
+    if (allAttachments.length === 0) return "";
+    return allAttachments.map((a) => a.key).join(",");
+  }, [allAttachments]);
 
-    const map = new Map<
-      string,
-      { score: number; label: string | null; reasons: string[] }
-    >();
+  // Track scoring debounce
+  const scoringTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastScoredKeyRef = useRef<string>("");
 
-    for (const item of allAttachments) {
-      const message = item.message;
-      const content = emailContentByMessageId[message.messageId];
-      const bodyText = content?.textBody
-        ? content.textBody
-        : content?.htmlBody
-          ? stripHtml(content.htmlBody)
-          : "";
-
-      const combined = [
-        message.subject,
-        message.snippet,
-        message.from,
-        bodyText,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      const filename = item.attachment.filename.toLowerCase();
-      const subject = (message.subject || "").toLowerCase();
-      const senderDomain = extractEmailDomain(message.from);
-
-      let score = 0;
-      const reasons: string[] = [];
-      let dateMultiplier = 1;
-
-      if (item.attachment.isLikelyReceipt) {
-        score += 0.15;
-        reasons.push("Likely receipt file type");
-      }
-      if (containsAny(filename, RECEIPT_KEYWORDS)) {
-        score += 0.25;
-        reasons.push("Filename has invoice keyword");
-      }
-      if (containsAny(subject, RECEIPT_KEYWORDS)) {
-        score += 0.15;
-        reasons.push("Subject has invoice keyword");
-      }
-      if (containsAny(combined, RECEIPT_KEYWORDS)) {
-        score += 0.1;
-        reasons.push("Email text has invoice keyword");
-      }
-
-      if (
-        amountVariants.length > 0 &&
-        containsAny(combined + " " + filename, amountVariants.map((v) => v.toLowerCase()))
-      ) {
-        score += 0.2;
-        reasons.push("Amount appears in email or filename");
-      }
-
-      if (partnerTokens.length > 0 && containsAny(combined, partnerTokens)) {
-        score += 0.1;
-        reasons.push("Partner name appears in email");
-      }
-
-      if (invoiceTokens.length > 0 && containsAny(combined + " " + filename, invoiceTokens)) {
-        score += 0.1;
-        reasons.push("Invoice reference appears in email or filename");
-      }
-
-      if (senderDomain && knownDomains.includes(senderDomain)) {
-        score += 0.2;
-        reasons.push(`Sender domain matches ${senderDomain}`);
-      }
-
-      if (
-        gmailPatterns.some((pattern) => pattern.integrationId === message.integrationId)
-      ) {
-        score += 0.1;
-        reasons.push("Learned Gmail account pattern");
-      }
-
-      if (transactionDate) {
-        const dayDiff =
-          Math.abs(message.date.getTime() - transactionDate.getTime()) / (1000 * 60 * 60 * 24);
-        if (dayDiff <= 7) dateMultiplier = 1;
-        else if (dayDiff <= 14) dateMultiplier = 0.9;
-        else if (dayDiff <= 30) dateMultiplier = 0.8;
-        else if (dayDiff <= 60) dateMultiplier = 0.65;
-        else if (dayDiff <= 90) dateMultiplier = 0.5;
-        else if (dayDiff <= 180) dateMultiplier = 0.35;
-        else dateMultiplier = 0.25;
-        reasons.push(`Date distance ×${dateMultiplier.toFixed(2)}`);
-      }
-
-      score = score * dateMultiplier;
-
-      if (score > 0.95) score = 0.95;
-
-      const label = score >= 0.75 ? "Strong" : score >= 0.4 ? "Likely" : null;
-      map.set(item.key, { score, label, reasons });
+  // Score attachments using the unified cloud function (debounced)
+  useEffect(() => {
+    if (allAttachments.length === 0) {
+      setAttachmentSignalsMap(new Map());
+      return;
     }
 
-    return map;
+    // Create a combined key for the current state
+    const currentKey = `${attachmentsKey}-${transaction?.id}-${partner?.id}`;
+
+    // Skip if we've already scored this exact combination
+    if (currentKey === lastScoredKeyRef.current && attachmentSignalsMap.size > 0) {
+      return;
+    }
+
+    // Clear any pending scoring
+    if (scoringTimeoutRef.current) {
+      clearTimeout(scoringTimeoutRef.current);
+    }
+
+    // Debounce scoring to batch email content updates
+    scoringTimeoutRef.current = setTimeout(() => {
+      setScoringLoading(true);
+      lastScoredKeyRef.current = currentKey;
+
+      // Prepare attachments with email content
+      const attachmentsToScore = allAttachments.map((item) => {
+        const content = emailContentByMessageId[item.message.messageId];
+        const bodyText = content?.textBody
+          ? content.textBody
+          : content?.htmlBody
+            ? stripHtml(content.htmlBody)
+            : null;
+
+        return {
+          key: item.key,
+          filename: item.attachment.filename,
+          mimeType: item.attachment.mimeType,
+          emailSubject: item.message.subject,
+          emailFrom: item.message.from,
+          emailSnippet: item.message.snippet,
+          emailBodyText: bodyText,
+          emailDate: item.message.date,
+          integrationId: item.message.integrationId,
+        };
+      });
+
+      scoreAttachments(
+        attachmentsToScore,
+        {
+          amount: transaction?.amount,
+          date: transactionDate,
+          name: transaction?.name,
+          reference: transaction?.reference,
+          partner: transaction?.partner,
+        },
+        partner
+          ? {
+              name: partner.name,
+              emailDomains: partner.emailDomains,
+              fileSourcePatterns: partner.fileSourcePatterns,
+            }
+          : null
+      )
+        .then((scores) => {
+          // Build map from results
+          const map = new Map<string, { score: number; label: string | null; reasons: string[] }>();
+          for (const result of scores) {
+            map.set(result.key, {
+              score: result.score / 100, // Convert from percentage to 0-1 for compatibility
+              label: result.label,
+              reasons: result.reasons,
+            });
+          }
+          setAttachmentSignalsMap(map);
+        })
+        .catch((error) => {
+          console.error("[ConnectFileOverlay] Error scoring attachments:", error);
+        })
+        .finally(() => {
+          setScoringLoading(false);
+        });
+    }, 300); // 300ms debounce
+
+    return () => {
+      if (scoringTimeoutRef.current) {
+        clearTimeout(scoringTimeoutRef.current);
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    allAttachments,
-    emailContentByMessageId,
+    // Use stable keys instead of objects to prevent infinite loops
+    attachmentsKey,
+    // Primitive values are stable
     partner?.name,
-    partner?.emailDomains,
-    partner?.fileSourcePatterns,
+    partner?.id,
+    transaction?.id,
     transaction?.amount,
     transaction?.name,
     transaction?.partner,
     transaction?.reference,
-    transactionDate,
+    transactionDate?.getTime(),
+    // Note: emailContentByMessageId excluded to prevent re-scoring on every content load
+    // Content will be included in the next scoring batch after debounce
+  ]);
+
+  // Use the state-based signals map
+  const attachmentSignals = attachmentSignalsMap;
+  const emailSignals = emailSignalsMap;
+
+  // Create stable key for emails to prevent infinite loops
+  const emailsKey = useMemo(
+    () => emails.map((e) => e.messageId).join(","),
+    [emails]
+  );
+
+  // Score emails using the unified cloud function
+  useEffect(() => {
+    if (emails.length === 0 || !transaction) {
+      setEmailSignalsMap(new Map());
+      return;
+    }
+
+    const emailsToScore = emails.map((email) => ({
+      key: email.messageId,
+      filename: `${email.subject}.pdf`,
+      mimeType: "application/pdf",
+      emailSubject: email.subject,
+      emailFrom: email.from,
+      emailSnippet: email.snippet,
+      emailDate: email.date,
+      integrationId: email.integrationId,
+    }));
+
+    scoreAttachments(
+      emailsToScore,
+      {
+        amount: transaction.amount,
+        date: transactionDate,
+        name: transaction.name,
+        reference: transaction.reference,
+        partner: transaction.partner,
+      },
+      partner ? {
+        name: partner.name,
+        emailDomains: partner.emailDomains,
+        fileSourcePatterns: partner.fileSourcePatterns,
+      } : null
+    ).then((scores) => {
+      const map = new Map<string, { score: number; label: string | null; reasons: string[] }>();
+      for (const result of scores) {
+        map.set(result.key, {
+          score: result.score / 100,
+          label: result.label,
+          reasons: result.reasons,
+        });
+      }
+      setEmailSignalsMap(map);
+    }).catch((error) => {
+      console.error("[ConnectFileOverlay] Error scoring emails:", error);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    emailsKey,
+    transaction?.id,
+    transaction?.amount,
+    transaction?.name,
+    transaction?.partner,
+    transaction?.reference,
+    transactionDate?.getTime(),
+    partner?.id,
+    partner?.name,
   ]);
 
   const sortedAttachments = useMemo(() => {
@@ -506,15 +600,22 @@ export function ConnectFileOverlay({
     });
   }, [allAttachments, attachmentSignals, transactionDate]);
 
-  // Sort emails by proximity to transaction date
+  // Sort emails by score, then by proximity to transaction date
   const sortedEmails = useMemo(() => {
-    if (!transactionDate) return emails;
     return [...emails].sort((a, b) => {
-      const aDiff = Math.abs(a.date.getTime() - transactionDate.getTime());
-      const bDiff = Math.abs(b.date.getTime() - transactionDate.getTime());
-      return aDiff - bDiff;
+      const aScore = emailSignals.get(a.messageId)?.score ?? 0;
+      const bScore = emailSignals.get(b.messageId)?.score ?? 0;
+      if (bScore !== aScore) return bScore - aScore;
+
+      if (transactionDate) {
+        const aDiff = Math.abs(a.date.getTime() - transactionDate.getTime());
+        const bDiff = Math.abs(b.date.getTime() - transactionDate.getTime());
+        return aDiff - bDiff;
+      }
+
+      return b.date.getTime() - a.date.getTime();
     });
-  }, [emails, transactionDate]);
+  }, [emails, emailSignals, transactionDate]);
 
   // Best learned pattern
   const bestLearnedPattern = useMemo(() => {
@@ -694,9 +795,8 @@ export function ConnectFileOverlay({
     authIssue?: { integrationId: string; code: string; message: string };
   }> => {
     try {
-      const response = await fetch("/api/gmail/search", {
+      const response = await fetchWithAuth("/api/gmail/search", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           integrationId: integration.id,
           query,
@@ -999,8 +1099,8 @@ export function ConnectFileOverlay({
       const strategyApplied = await runPartnerStrategySearch();
       if (strategyApplied) return;
 
-      // Priority: 1) First AI suggestion, 2) Learned pattern, 3) Simple search
-      const queryToUse = suggestedQueries[0] || bestLearnedPattern?.pattern || simpleSearch;
+      // Priority: 1) First typed suggestion (sorted by effectiveness), 2) Learned pattern, 3) Simple search
+      const queryToUse = typedSuggestions[0]?.query || suggestedQueries[0] || bestLearnedPattern?.pattern || simpleSearch;
 
       if (queryToUse) {
         setSearchQuery(queryToUse);
@@ -1013,6 +1113,7 @@ export function ConnectFileOverlay({
     open,
     hasSearched,
     transaction,
+    typedSuggestions,
     suggestedQueries,
     suggestionsLoading,
     bestLearnedPattern,
@@ -1089,9 +1190,8 @@ export function ConnectFileOverlay({
       const integrationEmail = integrationEmails.get(selectedAttachment.integrationId);
       const strategyPattern = strategyQueryByMessageId.get(selectedAttachment.message.messageId);
       const searchPattern = strategyPattern || lastSearchTerm || searchQuery || undefined;
-      const response = await fetch("/api/gmail/attachment", {
+      const response = await fetchWithAuth("/api/gmail/attachment", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           integrationId: selectedAttachment.integrationId,
           messageId: selectedAttachment.attachment.messageId,
@@ -1124,7 +1224,7 @@ export function ConnectFileOverlay({
       });
 
       const senderDomain = extractEmailDomain(selectedAttachment.message.from);
-      if (partner && senderDomain) {
+      if (partner && senderDomain && userId) {
         try {
           await addEmailDomainToPartner(
             { db, userId },
@@ -1154,9 +1254,8 @@ export function ConnectFileOverlay({
     ));
 
     try {
-      const response = await fetch("/api/gmail/email-content", {
+      const response = await fetchWithAuth("/api/gmail/email-content", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           integrationId: email.integrationId,
           messageId: email.messageId,
@@ -1187,9 +1286,8 @@ export function ConnectFileOverlay({
       const integrationEmail = integrationEmails.get(selectedEmail.integrationId);
       const strategyPattern = strategyQueryByMessageId.get(selectedEmail.messageId);
       const searchPattern = strategyPattern || lastSearchTerm || searchQuery || undefined;
-      const response = await fetch("/api/gmail/convert-to-pdf", {
+      const response = await fetchWithAuth("/api/gmail/convert-to-pdf", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           integrationId: selectedEmail.integrationId,
           messageId: selectedEmail.messageId,
@@ -1217,7 +1315,7 @@ export function ConnectFileOverlay({
       });
 
       const senderDomain = extractEmailDomain(selectedEmail.from);
-      if (partner && senderDomain) {
+      if (partner && senderDomain && userId) {
         try {
           await addEmailDomainToPartner(
             { db, userId },
@@ -1243,17 +1341,6 @@ export function ConnectFileOverlay({
 
   const isFileConnected = (result: UnifiedSearchResult) => {
     return result.type === "local" && result.fileId ? connectedFileIds.includes(result.fileId) : false;
-  };
-
-  const getAttachmentPreviewUrl = (attachment: EmailAttachment, integrationId: string): string => {
-    const params = new URLSearchParams({
-      integrationId,
-      messageId: attachment.messageId,
-      attachmentId: attachment.attachmentId,
-      mimeType: attachment.mimeType,
-      filename: attachment.filename,
-    });
-    return `/api/gmail/attachment?${params.toString()}`;
   };
 
   // Subtitle
@@ -1306,8 +1393,45 @@ export function ConnectFileOverlay({
                 <Loader2 className="h-4 w-4 animate-spin" />
                 <span>Generating suggestions...</span>
               </div>
+            ) : typedSuggestions.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {typedSuggestions.map((suggestion, idx) => {
+                  const typeLabel = getSuggestionTypeLabel(suggestion.type);
+                  const isActive = searchQuery === suggestion.query;
+
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery(suggestion.query);
+                        handleSearch(suggestion.query, "manual");
+                      }}
+                      className={cn(
+                        "inline-flex items-stretch rounded-md text-xs font-medium transition-colors overflow-hidden border",
+                        isActive
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background border-input hover:bg-accent hover:text-accent-foreground"
+                      )}
+                    >
+                      {typeLabel && (
+                        <span
+                          className={cn(
+                            "px-1.5 py-0.5 text-[10px] font-semibold flex items-center",
+                            getSuggestionTypeLabelStyle(suggestion.type, isActive)
+                          )}
+                        >
+                          {typeLabel}
+                        </span>
+                      )}
+                      <span className="px-2 py-0.5">{suggestion.query}</span>
+                    </button>
+                  );
+                })}
+              </div>
             ) : suggestedQueries.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
+              // Fallback to plain queries if no typed suggestions
+              <div className="flex flex-wrap gap-1.5">
                 {suggestedQueries.map((query, idx) => (
                   <Badge
                     key={idx}
@@ -1410,93 +1534,43 @@ export function ConnectFileOverlay({
                   </div>
                 ) : (
                   <div className="p-2 space-y-1 overflow-hidden">
-                  {localFileResults.map((result) => {
-                    const isConnected = isFileConnected(result);
-                    const isSelected = selectedResult?.id === result.id;
-                    const isPdf = result.mimeType === "application/pdf";
-                    const isStrategyMatch =
-                      result.type === "local" &&
-                      result.fileId &&
-                      localStrategyMatchFileIds.has(result.fileId);
+                    {localFileResults.map((result) => {
+                      const isConnected = isFileConnected(result);
+                      const isSelected = selectedResult?.id === result.id;
+                      const isPdf = result.mimeType === "application/pdf";
+                      const isStrategyMatch = !!(
+                        result.type === "local" &&
+                        result.fileId &&
+                        localStrategyMatchFileIds.has(result.fileId)
+                      );
 
-                    return (
-                      <button
-                        key={result.id}
-                        type="button"
-                        disabled={isConnected}
-                        onClick={() => setSelectedResult(result)}
-                        className={cn(
-                          "w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors overflow-hidden",
-                          isSelected && "bg-primary/10 ring-1 ring-primary",
-                          !isSelected &&
-                            !isConnected &&
-                            !isStrategyMatch &&
-                            "hover:bg-muted",
-                          isStrategyMatch &&
-                            !isSelected &&
-                            "bg-blue-50 dark:bg-blue-950/20",
-                          isConnected && "opacity-50 cursor-not-allowed"
-                        )}
-                      >
-                          <div className="flex-shrink-0 w-10 h-10 rounded bg-muted flex items-center justify-center">
-                            {isPdf ? <FileText className="h-5 w-5 text-red-500" /> : <Image className="h-5 w-5 text-blue-500" />}
-                          </div>
-                          <div className="flex-1 min-w-0 overflow-hidden">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <p className="text-sm font-medium truncate flex-1 min-w-0">{result.filename}</p>
-                              {isConnected && (
-                                <Badge variant="secondary" className="text-xs">
-                                  <Link2 className="h-3 w-3 mr-1" />
-                                  Connected
-                                </Badge>
-                              )}
+                      return (
+                        <ConnectResultRow
+                          key={result.id}
+                          id={result.id}
+                          title={result.filename}
+                          date={result.date ? format(result.date, "MMM d, yyyy") : undefined}
+                          amount={result.amount ? formatAmount(result.amount, result.currency) ?? undefined : undefined}
+                          subtitle={result.partner}
+                          icon={
+                            <div className="flex-shrink-0 w-10 h-10 rounded bg-muted flex items-center justify-center">
+                              {isPdf ? <FileText className="h-5 w-5 text-red-500" /> : <Image className="h-5 w-5 text-blue-500" />}
                             </div>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              {result.date && <span>{format(result.date, "MMM d, yyyy")}</span>}
-                              {result.amount && (
-                                <>
-                                  <span>·</span>
-                                  <span>{formatAmount(result.amount, result.currency)}</span>
-                                </>
-                              )}
-                              {result.score > 0 && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge
-                                      variant="outline"
-                                      className={cn(
-                                        "text-xs py-0 h-4 cursor-help",
-                                        result.score >= 85
-                                          ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/50 dark:text-green-200 dark:border-green-700"
-                                          : result.score >= 70
-                                          ? "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200 dark:border-yellow-700"
-                                          : "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600"
-                                      )}
-                                    >
-                                      {result.score}%
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="max-w-[260px] text-xs">
-                                    <div className="font-medium mb-1">Match signals</div>
-                                    <div className="space-y-0.5">
-                                      {result.matchReasons?.length ? (
-                                        result.matchReasons.map((reason, idx) => (
-                                          <div key={idx}>{reason}</div>
-                                        ))
-                                      ) : result.matchedFields?.length ? (
-                                        <div>Matched: {result.matchedFields.join(", ")}</div>
-                                      ) : (
-                                        <div>No specific signals</div>
-                                      )}
-                                    </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
-                            </div>
-                            {result.partner && <p className="text-xs text-muted-foreground truncate mt-0.5">{result.partner}</p>}
-                          </div>
-                          {isSelected && <Check className="h-4 w-4 text-primary flex-shrink-0 mt-1" />}
-                        </button>
+                          }
+                          isSelected={isSelected}
+                          isConnected={isConnected}
+                          isHighlighted={isStrategyMatch}
+                          highlightVariant="strategy"
+                          confidence={result.score > 0 ? result.score : undefined}
+                          matchSignals={
+                            result.matchReasons?.length
+                              ? result.matchReasons
+                              : result.matchedFields?.length
+                              ? [`Matched: ${result.matchedFields.join(", ")}`]
+                              : undefined
+                          }
+                          onClick={() => setSelectedResult(result)}
+                        />
                       );
                     })}
                   </div>
@@ -1547,66 +1621,27 @@ export function ConnectFileOverlay({
                       const confidence = signal ? Math.round(signal.score * 100) : null;
 
                       return (
-                        <button
+                        <ConnectResultRow
                           key={item.key}
-                          type="button"
-                          onClick={() => setSelectedAttachmentKey(item.key)}
-                          className={cn(
-                            "w-full max-w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors min-w-0 overflow-hidden",
-                            isSelected && "bg-primary/10 ring-1 ring-primary",
-                            !isSelected &&
-                              !isStrategyMatch &&
-                              "hover:bg-muted",
-                            isStrategyMatch &&
-                              !isSelected &&
-                              "bg-blue-50 dark:bg-blue-950/20"
-                          )}
-                        >
-                          <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
-                            {isPdf ? <FileText className="h-5 w-5 text-red-500" /> : <Image className="h-5 w-5 text-blue-500" />}
-                          </div>
-                          <div className="flex-1 min-w-0 overflow-hidden">
-                            <p className="text-sm font-medium truncate">{item.attachment.filename}</p>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {item.message.fromName || item.message.from}
-                            </p>
-                            <p className="text-[11px] text-muted-foreground truncate">
-                              {integrationLabels.get(item.message.integrationId) || "Gmail"}
-                            </p>
-                            <div className="flex flex-wrap items-center gap-2 mt-0.5 min-w-0">
-                              <span className="text-xs text-muted-foreground">{format(item.message.date, "MMM d, yyyy")}</span>
-                              <span className="text-xs text-muted-foreground">·</span>
-                              <span className="text-xs text-muted-foreground">{Math.round(item.attachment.size / 1024)} KB</span>
-                              {signal?.label && (
-                                <Badge variant="secondary" className="text-xs py-0 h-4 text-green-600">
-                                  {signal.label}
-                                </Badge>
-                              )}
-                              {confidence !== null && confidence > 0 && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge variant="outline" className="text-xs py-0 h-4">
-                                      {confidence}%
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="max-w-[260px] text-xs">
-                                    <div className="font-medium mb-1">Confidence signals</div>
-                                    <div className="space-y-0.5">
-                                      {signal?.reasons?.length
-                                        ? signal.reasons.map((reason, index) => (
-                                            <div key={`${item.key}-reason-${index}`}>
-                                              {reason}
-                                            </div>
-                                          ))
-                                        : "No signals yet"}
-                                    </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
+                          id={item.key}
+                          title={item.attachment.filename}
+                          subtitle={item.message.fromName || item.message.from}
+                          secondarySubtitle={integrationLabels.get(item.message.integrationId) || "Gmail"}
+                          date={format(item.message.date, "MMM d, yyyy")}
+                          meta={`${Math.round(item.attachment.size / 1024)} KB`}
+                          labelBadge={signal?.label ?? undefined}
+                          icon={
+                            <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                              {isPdf ? <FileText className="h-5 w-5 text-red-500" /> : <Image className="h-5 w-5 text-blue-500" />}
                             </div>
-                          </div>
-                          {isSelected && <Check className="h-4 w-4 text-primary flex-shrink-0 mt-1" />}
-                        </button>
+                          }
+                          isSelected={isSelected}
+                          isHighlighted={isStrategyMatch}
+                          highlightVariant="strategy"
+                          confidence={confidence !== null && confidence > 0 ? confidence : undefined}
+                          matchSignals={signal?.reasons}
+                          onClick={() => setSelectedAttachmentKey(item.key)}
+                        />
                       );
                     })}
                   </div>
@@ -1648,33 +1683,30 @@ export function ConnectFileOverlay({
                       const isSelected = selectedEmail?.messageId === email.messageId;
                       const isStrategyMatch =
                         strategyMode && strategyEmailMessageIds.has(email.messageId);
+                      const signal = emailSignals.get(email.messageId);
+                      const confidence = signal ? Math.round(signal.score * 100) : null;
 
                       return (
-                        <button
+                        <ConnectResultRow
                           key={email.messageId}
-                          type="button"
+                          id={email.messageId}
+                          title={email.subject}
+                          subtitle={email.fromName || email.from}
+                          secondarySubtitle={integrationLabels.get(email.integrationId) || "Gmail"}
+                          date={format(email.date, "MMM d, yyyy")}
+                          labelBadge={signal?.label ?? undefined}
+                          icon={
+                            <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                              <Mail className="h-5 w-5 text-muted-foreground" />
+                            </div>
+                          }
+                          isSelected={isSelected}
+                          isHighlighted={isStrategyMatch}
+                          highlightVariant="strategy"
+                          confidence={confidence !== null && confidence > 0 ? confidence : undefined}
+                          matchSignals={signal?.reasons}
                           onClick={() => handleSelectEmail(email)}
-                          className={cn(
-                            "w-full max-w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors min-w-0 overflow-hidden",
-                            isSelected && "bg-primary/10 ring-1 ring-primary",
-                            !isSelected &&
-                              !isStrategyMatch &&
-                              "hover:bg-muted",
-                            isStrategyMatch &&
-                              !isSelected &&
-                              "bg-blue-50 dark:bg-blue-950/20"
-                          )}
-                        >
-                          <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
-                            <Mail className="h-5 w-5 text-muted-foreground" />
-                          </div>
-                          <div className="flex-1 min-w-0 overflow-hidden">
-                            <p className="text-sm font-medium truncate">{email.subject}</p>
-                            <p className="text-xs text-muted-foreground truncate">{email.fromName || email.from}</p>
-                            <span className="text-xs text-muted-foreground">{format(email.date, "MMM d, yyyy")}</span>
-                          </div>
-                          {isSelected && <Check className="h-4 w-4 text-primary flex-shrink-0 mt-1" />}
-                        </button>
+                        />
                       );
                     })}
                   </div>
@@ -1788,7 +1820,18 @@ export function ConnectFileOverlay({
             selectedResult ? (
               <>
                 <div className="flex-1 overflow-hidden">
-                  <FilePreview downloadUrl={selectedResult.previewUrl} fileType={selectedResult.mimeType} fileName={selectedResult.filename} fullSize />
+                  {selectedResult.type === "gmail" && selectedResult.integrationId && selectedResult.messageId && selectedResult.attachmentId ? (
+                    <GmailAttachmentPreview
+                      integrationId={selectedResult.integrationId}
+                      messageId={selectedResult.messageId}
+                      attachmentId={selectedResult.attachmentId}
+                      mimeType={selectedResult.mimeType}
+                      filename={selectedResult.filename}
+                      fullSize
+                    />
+                  ) : (
+                    <FilePreview downloadUrl={selectedResult.previewUrl} fileType={selectedResult.mimeType} fileName={selectedResult.filename} fullSize />
+                  )}
                 </div>
                 <div className="border-t p-4 flex justify-end gap-2 shrink-0">
                   <Button variant="outline" onClick={onClose}>Cancel</Button>
@@ -1813,10 +1856,12 @@ export function ConnectFileOverlay({
             selectedAttachment ? (
               <>
                 <div className="flex-1 overflow-hidden">
-                  <FilePreview
-                    downloadUrl={getAttachmentPreviewUrl(selectedAttachment.attachment, selectedAttachment.integrationId)}
-                    fileType={selectedAttachment.attachment.mimeType}
-                    fileName={selectedAttachment.attachment.filename}
+                  <GmailAttachmentPreview
+                    integrationId={selectedAttachment.integrationId}
+                    messageId={selectedAttachment.attachment.messageId}
+                    attachmentId={selectedAttachment.attachment.attachmentId}
+                    mimeType={selectedAttachment.attachment.mimeType}
+                    filename={selectedAttachment.attachment.filename}
                     fullSize
                   />
                 </div>
@@ -1848,7 +1893,12 @@ export function ConnectFileOverlay({
                       <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                     </div>
                   ) : selectedEmail.htmlBody ? (
-                    <iframe srcDoc={selectedEmail.htmlBody} className="w-full h-full border-0 bg-white" sandbox="allow-same-origin" title="Email content" />
+                    <iframe
+                      srcDoc={`<style>html, body { margin: 0; padding: 8px; overflow-x: hidden; width: 100%; }</style>${selectedEmail.htmlBody}`}
+                      className="w-full h-full border-0 bg-white"
+                      sandbox="allow-same-origin"
+                      title="Email content"
+                    />
                   ) : selectedEmail.textBody ? (
                     <div className="p-4 overflow-auto h-full">
                       <pre className="whitespace-pre-wrap text-sm font-sans">{selectedEmail.textBody}</pre>

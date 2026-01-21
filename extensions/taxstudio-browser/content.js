@@ -47,9 +47,9 @@
   }
 
   if (isTopFrame) {
-    console.log("[TaxStudio] Content script ready (TOP)", window.location.href, "name:", window.name);
+    console.log("[FiBuKI] Content script ready (TOP)", window.location.href, "name:", window.name);
   } else {
-    console.log("[TaxStudio] Content script ready (IFRAME)", window.location.href, "name:", window.name);
+    console.log("[FiBuKI] Content script ready (IFRAME)", window.location.href, "name:", window.name);
   }
   chrome.runtime.sendMessage({ type: "TS_INJECT_HOOK" });
 
@@ -72,13 +72,13 @@
     }
 
     if (isEmbeddedInBilling) {
-      console.log("[TaxStudio] Payments iframe in billing context, checking for active run...");
+      console.log("[FiBuKI] Payments iframe in billing context, checking for active run...");
       // Small delay to ensure all functions are defined
       setTimeout(function () {
         // Ask background if there's an active run for this tab
         chrome.runtime.sendMessage({ type: "TS_CHECK_ACTIVE_RUN" }, function (response) {
           if (response && response.runId && !currentRunId) {
-            console.log("[TaxStudio] Found active run, self-starting automation:", response.runId);
+            console.log("[FiBuKI] Found active run, self-starting automation:", response.runId);
             currentRunId = response.runId;
             clickGooglePaymentsRetryCount = 0; // Reset retry counter
             // IMPORTANT: Expand ALL cards FIRST, then do downloads
@@ -99,7 +99,7 @@
     if (event.source !== window) return;
     var data = event.data || {};
     if (data.type === "TAXSTUDIO_VISIBLE_PULL" && data.url && data.runId) {
-      console.log("[TaxStudio] Start visible pull:", data.runId, data.url);
+      console.log("[FiBuKI] Start visible pull:", data.runId, data.url);
       chrome.runtime.sendMessage({
         type: "TS_START_PULL",
         url: data.url,
@@ -287,7 +287,7 @@
     titleWrap.style.gap = "2px";
 
     var title = document.createElement("div");
-    title.textContent = "TaxStudio Collector";
+    title.textContent = "FiBuKI Collector";
     title.style.fontWeight = "600";
     title.style.fontSize = "12px";
 
@@ -332,13 +332,13 @@
         pauseBtn.style.background = "rgba(34, 197, 94, 0.2)";
         pauseBtn.style.color = "#86efac";
         setOverlayStatus("PAUSED - Click Resume to continue");
-        console.log("[TaxStudio] Automation PAUSED by user");
+        console.log("[FiBuKI] Automation PAUSED by user");
       } else {
         pauseBtn.textContent = "Pause";
         pauseBtn.style.background = "rgba(239, 68, 68, 0.2)";
         pauseBtn.style.color = "#fca5a5";
         setOverlayStatus("Resumed...");
-        console.log("[TaxStudio] Automation RESUMED by user");
+        console.log("[FiBuKI] Automation RESUMED by user");
         // Restart automation
         setTimeout(function() { expandGooglePaymentsCards(); }, 500);
         setTimeout(function() { clickGooglePaymentsDownloadButtons(); }, 2000);
@@ -521,7 +521,7 @@
   }
 
   function resumeAfterLogin() {
-    console.log("[TaxStudio] Resuming after login, original URL:", originalPullUrl);
+    console.log("[FiBuKI] Resuming after login, original URL:", originalPullUrl);
     pausedForLogin = false;
 
     // If we're on a different page than where we started, go back
@@ -557,7 +557,7 @@
 
     // Check if we're on a login page
     if (isLoginPage(currentUrl)) {
-      console.log("[TaxStudio] Login page detected:", currentUrl);
+      console.log("[FiBuKI] Login page detected:", currentUrl);
       pausedForLogin = true;
       showLoginPrompt();
       return;
@@ -565,7 +565,7 @@
 
     // If we were paused and now we're back on the original URL, resume
     if (originalPullUrl && currentUrl === originalPullUrl && pausedForLogin) {
-      console.log("[TaxStudio] Back on original page, resuming");
+      console.log("[FiBuKI] Back on original page, resuming");
       hideLoginPrompt();
       resumeAfterLogin();
     }
@@ -1059,7 +1059,7 @@
   chrome.runtime.onMessage.addListener(function (message) {
     if (!message || message.type !== "TS_SHOW_OVERLAY") return;
     var frameType = isTopFrame ? "TOP" : "IFRAME";
-    console.log("[TaxStudio] TS_SHOW_OVERLAY (" + frameType + ")", message.runId || "", window.location.origin);
+    console.log("[FiBuKI] TS_SHOW_OVERLAY (" + frameType + ")", message.runId || "", window.location.origin);
     if (isTopFrame) {
       ensureOverlay();
     }
@@ -1073,17 +1073,17 @@
       clickGooglePaymentsRetryCount = 0;
       // Store original URL for returning after login
       originalPullUrl = window.location.href;
-      console.log("[TaxStudio] Original pull URL stored:", originalPullUrl);
+      console.log("[FiBuKI] Original pull URL stored:", originalPullUrl);
     }
     if (isTopFrame) {
-      console.log("[TaxStudio] Visible pull active:", currentRunId || "");
+      console.log("[FiBuKI] Visible pull active:", currentRunId || "");
       setOverlayStatus("Waiting for invoice buttons...");
       // Start monitoring for login redirects
       startLoginCheck();
     }
     // Check if we're already on a login page
     if (isLoginPage()) {
-      console.log("[TaxStudio] Already on login page, pausing");
+      console.log("[FiBuKI] Already on login page, pausing");
       pausedForLogin = true;
       if (isTopFrame) {
         showLoginPrompt();
@@ -1135,7 +1135,7 @@
     if (!message.runId || message.runId !== currentRunId) return;
     pausedForLogin = message.paused;
     var ft = isTopFrame ? "TOP" : "IFRAME";
-    console.log("[TaxStudio] Pause state set (" + ft + "):", pausedForLogin);
+    console.log("[FiBuKI] Pause state set (" + ft + "):", pausedForLogin);
   });
 
   chrome.runtime.onMessage.addListener(function (message) {
@@ -1191,7 +1191,7 @@
   try {
     if (window.name && window.name.indexOf(WINDOW_NAME_PREFIX) === 0) {
       var runId = window.name.slice(WINDOW_NAME_PREFIX.length);
-      console.log("[TaxStudio] Attaching to run", runId);
+      console.log("[FiBuKI] Attaching to run", runId);
       chrome.runtime.sendMessage({
         type: "TS_ATTACH_PULL",
         runId: runId,
@@ -1205,7 +1205,7 @@
     if (window.location.hash && window.location.hash.indexOf(HASH_PREFIX) !== -1) {
       var hashRunId = window.location.hash.replace("#", "").split(HASH_PREFIX)[1];
       if (hashRunId) {
-        console.log("[TaxStudio] Attaching via hash", hashRunId);
+        console.log("[FiBuKI] Attaching via hash", hashRunId);
         chrome.runtime.sendMessage({
           type: "TS_ATTACH_PULL",
           runId: hashRunId,
@@ -1228,14 +1228,14 @@
     // Log all clickable elements in payments.google.com iframe for debugging
     if (!isTopFrame && window.location.origin.indexOf("payments.google.com") !== -1) {
       var clickables = document.querySelectorAll('[role="button"], [jsaction], button, a[href]');
-      console.log("[TaxStudio] Payments iframe clickables:", clickables.length);
+      console.log("[FiBuKI] Payments iframe clickables:", clickables.length);
       Array.prototype.slice.call(clickables).slice(0, 10).forEach(function (el, i) {
         var text = (el.textContent || "").trim().slice(0, 60);
         var tag = el.tagName;
         var role = el.getAttribute("role") || "";
         var jsaction = (el.getAttribute("jsaction") || "").slice(0, 50);
         if (text && text.length < 200 && !/wiz_progress/.test(text)) {
-          console.log("[TaxStudio]   " + i + ": <" + tag + "> role=" + role + " text=\"" + text + "\" jsaction=" + jsaction);
+          console.log("[FiBuKI]   " + i + ": <" + tag + "> role=" + role + " text=\"" + text + "\" jsaction=" + jsaction);
         }
       });
     }
@@ -1275,7 +1275,7 @@
     });
 
     var frameType = isTopFrame ? "TOP" : "IFRAME";
-    console.log("[TaxStudio] Invoice link scan (" + frameType + "):", matches.length, "found", window.location.origin);
+    console.log("[FiBuKI] Invoice link scan (" + frameType + "):", matches.length, "found", window.location.origin);
     overlayState.items = matches.map(function (url) {
       return { url: url, label: guessLabel(url) };
     });
@@ -1387,7 +1387,7 @@
         node.setAttribute("data-ts-menu-opened", "true");
         clicked += 1;
         var ft = isTopFrame ? "TOP" : "IFRAME";
-        console.log("[TaxStudio] Opened download menu (" + ft + ")", window.location.origin);
+        console.log("[FiBuKI] Opened download menu (" + ft + ")", window.location.origin);
       } catch (err) {
         // ignore
       }
@@ -1446,7 +1446,7 @@
     });
 
     if (urls.length && urls.length !== lastDataAttrCount) {
-      console.log("[TaxStudio] Data-attr download candidates:", urls.length);
+      console.log("[FiBuKI] Data-attr download candidates:", urls.length);
       lastDataAttrCount = urls.length;
     }
     return urls.slice(0, 30);
@@ -1492,21 +1492,21 @@
       if (node.hasAttribute("disabled")) return;
       // Skip CSV downloads - only want PDFs
       if (isInCsvGroup(node)) {
-        console.log("[TaxStudio] Skipping CSV group element");
+        console.log("[FiBuKI] Skipping CSV group element");
         return;
       }
       var downloadUrl = node.getAttribute("data-download-url") ||
                         node.getAttribute("data-download") ||
                         node.getAttribute("data-url") || "";
       if (downloadUrl && /\.csv|format=csv|account_activities/i.test(downloadUrl)) {
-        console.log("[TaxStudio] Skipping CSV download URL");
+        console.log("[FiBuKI] Skipping CSV download URL");
         return;
       }
       try {
         node.click();
         node.setAttribute("data-ts-clicked", "true");
         clicked += 1;
-        console.log("[TaxStudio] Clicked data-download trigger (PDF)");
+        console.log("[FiBuKI] Clicked data-download trigger (PDF)");
       } catch (err) {
         // ignore
       }
@@ -1566,7 +1566,7 @@
     if (pausedForLogin) return;
     // SKIP for payments.google.com - clickGooglePaymentsDownloadButtons handles this
     if (window.location.origin.indexOf("payments.google.com") !== -1) {
-      console.log("[TaxStudio] triggerInvoiceClicks SKIPPED for payments.google.com");
+      console.log("[FiBuKI] triggerInvoiceClicks SKIPPED for payments.google.com");
       return;
     }
     var candidates = Array.prototype.slice.call(
@@ -1593,14 +1593,14 @@
       try {
         el.click();
         clicked += 1;
-        console.log("[TaxStudio] Clicked download trigger:", text);
+        console.log("[FiBuKI] Clicked download trigger:", text);
       } catch (err) {
         // ignore
       }
     });
 
     if (clicked === 0) {
-      console.log("[TaxStudio] No PDF/invoice buttons found to click.");
+      console.log("[FiBuKI] No PDF/invoice buttons found to click.");
       setOverlayStatus("No PDF buttons found yet.");
     } else {
       setOverlayStatus("Triggered download buttons.");
@@ -1629,13 +1629,13 @@
 
     // Check for visible PDF groups (cards that ARE expanded)
     var visiblePdfGroups = document.querySelectorAll('.b3id-document-zippy-group');
-    console.log("[TaxStudio] PDF download check: " + unexpandedCards.length + " unexpanded cards, " + visiblePdfGroups.length + " visible PDF groups");
+    console.log("[FiBuKI] PDF download check: " + unexpandedCards.length + " unexpanded cards, " + visiblePdfGroups.length + " visible PDF groups");
 
     // If there are unexpanded cards but no visible PDF groups, cards need to expand first
     if (unexpandedCards.length > 0 && visiblePdfGroups.length === 0) {
       clickGooglePaymentsRetryCount++;
       if (clickGooglePaymentsRetryCount < 5) {
-        console.log("[TaxStudio] Cards not expanded yet, triggering expansion and retrying in 3s... (attempt " + clickGooglePaymentsRetryCount + ")");
+        console.log("[FiBuKI] Cards not expanded yet, triggering expansion and retrying in 3s... (attempt " + clickGooglePaymentsRetryCount + ")");
         // Try to expand cards
         unexpandedCards.slice(0, 3).forEach(function(card, i) {
           setTimeout(function() {
@@ -1643,7 +1643,7 @@
               card.click();
               dispatchMouseSequence(card);
               card.setAttribute("data-ts-expanded", "true");
-              console.log("[TaxStudio] Expanded card " + i);
+              console.log("[FiBuKI] Expanded card " + i);
             } catch (err) {}
           }, i * 500);
         });
@@ -1671,13 +1671,13 @@
 
       // Only include if it's a PDF Invoice group
       if (/pdf\s*invoice/i.test(headerText)) {
-        console.log("[TaxStudio] Found PDF invoice group:", headerText.slice(0, 50));
+        console.log("[FiBuKI] Found PDF invoice group:", headerText.slice(0, 50));
         return true;
       }
       return false;
     });
 
-    console.log("[TaxStudio] PDF invoice line items with dropdown (IFRAME):", pdfLineItems.length);
+    console.log("[FiBuKI] PDF invoice line items with dropdown (IFRAME):", pdfLineItems.length);
 
     if (pdfLineItems.length === 0) {
       // Log what groups we do see for debugging
@@ -1685,7 +1685,7 @@
         var header = group.querySelector('.b3id-document-zippy-group-header');
         var headerText = header ? (header.textContent || "").trim().slice(0, 60) : "no header";
         var lineItems = group.querySelectorAll('.b3id-document-zippy-line-item');
-        console.log("[TaxStudio] Group " + i + ": \"" + headerText + "\" with " + lineItems.length + " line items");
+        console.log("[FiBuKI] Group " + i + ": \"" + headerText + "\" with " + lineItems.length + " line items");
       });
     }
 
@@ -1701,7 +1701,7 @@
   function processNextPdfInvoice() {
     if (pausedForLogin) return;
     if (currentPdfInvoiceIndex >= pdfInvoiceQueue.length) {
-      console.log("[TaxStudio] PDF invoice queue complete");
+      console.log("[FiBuKI] PDF invoice queue complete");
       return;
     }
 
@@ -1713,7 +1713,7 @@
     }
 
     var text = (lineItem.textContent || "").trim().slice(0, 50);
-    console.log("[TaxStudio] Processing PDF invoice " + (currentPdfInvoiceIndex + 1) + "/" + pdfInvoiceQueue.length + ": \"" + text + "\"");
+    console.log("[FiBuKI] Processing PDF invoice " + (currentPdfInvoiceIndex + 1) + "/" + pdfInvoiceQueue.length + ": \"" + text + "\"");
 
     // Scroll into view
     lineItem.scrollIntoView({ behavior: "instant", block: "center" });
@@ -1724,7 +1724,7 @@
       dispatchMouseSequence(lineItem);
       lineItem.setAttribute("data-ts-invoice-done", "true");
     } catch (err) {
-      console.log("[TaxStudio] Invoice click error:", err.message);
+      console.log("[FiBuKI] Invoice click error:", err.message);
       currentPdfInvoiceIndex++;
       setTimeout(processNextPdfInvoice, 100);
       return;
@@ -1746,7 +1746,7 @@
 
       if (menus.length > 0) {
         clearInterval(checkInterval);
-        console.log("[TaxStudio] Dropdown appeared after " + attempts + " checks");
+        console.log("[FiBuKI] Dropdown appeared after " + attempts + " checks");
 
         // Find and click Download
         var downloadClicked = false;
@@ -1757,7 +1757,7 @@
             if (downloadClicked) return;
             var itemText = (item.textContent || "").trim().toLowerCase();
             if (itemText === "download") {
-              console.log("[TaxStudio] Clicking Download in dropdown");
+              console.log("[FiBuKI] Clicking Download in dropdown");
               item.click();
               dispatchMouseSequence(item);
               downloadClicked = true;
@@ -1766,7 +1766,7 @@
         });
 
         if (!downloadClicked) {
-          console.log("[TaxStudio] No Download found in dropdown");
+          console.log("[FiBuKI] No Download found in dropdown");
         }
 
         // Move to next invoice
@@ -1777,7 +1777,7 @@
 
       if (attempts >= maxAttempts) {
         clearInterval(checkInterval);
-        console.log("[TaxStudio] Dropdown did not appear after " + attempts + " checks");
+        console.log("[FiBuKI] Dropdown did not appear after " + attempts + " checks");
         currentPdfInvoiceIndex++;
         setTimeout(processNextPdfInvoice, 500);
       }
@@ -1794,7 +1794,7 @@
       return rect.width > 0 && rect.height > 0;
     });
 
-    console.log("[TaxStudio] Visible menus for Download:", menus.length);
+    console.log("[FiBuKI] Visible menus for Download:", menus.length);
 
     // Find Download in the visible menu
     var downloadClicked = false;
@@ -1804,7 +1804,7 @@
       // Check if this menu is for a PDF (not CSV)
       var menuText = (menu.textContent || "").toLowerCase();
       if (/csv|account.*activit/i.test(menuText) && !/pdf/i.test(menuText.slice(0, 50))) {
-        console.log("[TaxStudio] Skipping CSV menu");
+        console.log("[FiBuKI] Skipping CSV menu");
         return;
       }
 
@@ -1820,7 +1820,7 @@
         if (item.querySelector('svg')) return; // Skip if contains SVG icon
 
         if (itemText === "download") {
-          console.log("[TaxStudio] Clicking Download in dropdown");
+          console.log("[FiBuKI] Clicking Download in dropdown");
           dispatchMouseSequence(item);
           downloadClicked = true;
         }
@@ -1828,7 +1828,7 @@
     });
 
     if (!downloadClicked) {
-      console.log("[TaxStudio] No Download button found in dropdown");
+      console.log("[FiBuKI] No Download button found in dropdown");
     }
   }
 
@@ -1870,24 +1870,24 @@
 
       // Skip if CSV markers found
       if (/csv|account.*activit/i.test(contextText) && !/pdf/i.test(contextText.slice(0, 100))) {
-        console.log("[TaxStudio] Skipping CSV Download menu item");
+        console.log("[FiBuKI] Skipping CSV Download menu item");
         return false;
       }
 
       return true;
     });
 
-    console.log("[TaxStudio] Google Payments Download menu items (IFRAME, PDF only):", menuItems.length);
+    console.log("[FiBuKI] Google Payments Download menu items (IFRAME, PDF only):", menuItems.length);
 
     menuItems.slice(0, 3).forEach(function (item, i) {
       if (item.getAttribute("data-ts-menu-clicked") === "true") return;
       var text = (item.textContent || "").trim();
-      console.log("[TaxStudio] Clicking Download menu item " + i + ": \"" + text + "\"");
+      console.log("[FiBuKI] Clicking Download menu item " + i + ": \"" + text + "\"");
       try {
         dispatchMouseSequence(item);
         item.setAttribute("data-ts-menu-clicked", "true");
       } catch (err) {
-        console.log("[TaxStudio] Menu click error:", err.message);
+        console.log("[FiBuKI] Menu click error:", err.message);
       }
     });
 
@@ -1895,7 +1895,7 @@
     // (not the header activity download icons)
     var menuPopups = document.querySelectorAll('[role="menu"], .goog-menu, [class*="popup"]');
     if (menuPopups.length === 0) {
-      console.log("[TaxStudio] No menu popup visible, skipping small download buttons");
+      console.log("[FiBuKI] No menu popup visible, skipping small download buttons");
       return;
     }
 
@@ -1905,7 +1905,7 @@
       var menuText = (menu.textContent || "").toLowerCase();
       var isCSVMenu = /csv|account.*activit/i.test(menuText) && !/pdf/i.test(menuText.slice(0, 100));
       if (isCSVMenu) {
-        console.log("[TaxStudio] Skipping CSV menu popup");
+        console.log("[FiBuKI] Skipping CSV menu popup");
         return;
       }
 
@@ -1918,16 +1918,16 @@
       });
     });
 
-    console.log("[TaxStudio] Google Payments menu Download buttons (IFRAME, PDF only):", downloadBtns.length);
+    console.log("[FiBuKI] Google Payments menu Download buttons (IFRAME, PDF only):", downloadBtns.length);
 
     downloadBtns.slice(0, 2).forEach(function (btn, i) {
       if (btn.getAttribute("data-ts-dl-clicked") === "true") return;
-      console.log("[TaxStudio] Clicking menu Download button " + i);
+      console.log("[FiBuKI] Clicking menu Download button " + i);
       try {
         dispatchMouseSequence(btn);
         btn.setAttribute("data-ts-dl-clicked", "true");
       } catch (err) {
-        console.log("[TaxStudio] Menu download click error:", err.message);
+        console.log("[FiBuKI] Menu download click error:", err.message);
       }
     });
   }
@@ -2011,21 +2011,21 @@
       }
     });
 
-    console.log("[TaxStudio] Expandable billing cards found (IFRAME):", uniqueCards.length);
+    console.log("[FiBuKI] Expandable billing cards found (IFRAME):", uniqueCards.length);
 
     // Process cards SEQUENTIALLY with delays - this prevents focus issues
     var cardsToExpand = uniqueCards.slice(0, 12);
 
     function expandNextCard(index) {
       if (index >= cardsToExpand.length) {
-        console.log("[TaxStudio] Card expansion complete");
+        console.log("[FiBuKI] Card expansion complete");
         return;
       }
 
       var card = cardsToExpand[index];
       var text = (card.textContent || "").trim();
       var match = text.match(datePattern);
-      console.log("[TaxStudio] Expanding card " + index + "/" + cardsToExpand.length + ":", match ? match[0] : text.slice(0, 30));
+      console.log("[FiBuKI] Expanding card " + index + "/" + cardsToExpand.length + ":", match ? match[0] : text.slice(0, 30));
 
       // Find the actual clickable element - Google uses complex jsaction handlers
       // The actual clickable is often NOT the header-container but a parent or sibling
@@ -2063,7 +2063,7 @@
       }
 
       // Debug: log element details
-      console.log("[TaxStudio] Card element:", header.tagName,
+      console.log("[FiBuKI] Card element:", header.tagName,
         "class=" + (header.className || "").slice(0, 60),
         "jsaction=" + (header.getAttribute("jsaction") || "none").slice(0, 50),
         "aria-expanded=" + header.getAttribute("aria-expanded"),
@@ -2072,7 +2072,7 @@
 
       // Skip if already expanded
       if (header.getAttribute("aria-expanded") === "true") {
-        console.log("[TaxStudio] Card already expanded, skipping to next");
+        console.log("[FiBuKI] Card already expanded, skipping to next");
         setTimeout(function() { expandNextCard(index + 1); }, 100);
         return;
       }
@@ -2096,7 +2096,7 @@
           clickTargets.push(header.parentElement);
         }
 
-        console.log("[TaxStudio] Card " + index + " click targets:", clickTargets.length);
+        console.log("[FiBuKI] Card " + index + " click targets:", clickTargets.length);
 
         // Small delay then try all targets
         setTimeout(function() {
@@ -2141,14 +2141,14 @@
           // Check if it worked and log result
           setTimeout(function() {
             var ariaVal = header.getAttribute("aria-expanded");
-            console.log("[TaxStudio] Card " + index + " expand result: aria-expanded=" + ariaVal);
+            console.log("[FiBuKI] Card " + index + " expand result: aria-expanded=" + ariaVal);
             // Continue to next card after delay
             setTimeout(function() { expandNextCard(index + 1); }, 300);
           }, 200);
         }, 100);
 
       } catch (err) {
-        console.log("[TaxStudio] Card expand error:", err.message);
+        console.log("[FiBuKI] Card expand error:", err.message);
         setTimeout(function() { expandNextCard(index + 1); }, 100);
       }
     }
@@ -2175,7 +2175,7 @@
               /month|year|time|date/i.test(text) && text.length < 50);
     });
 
-    console.log("[TaxStudio] Date range selectors found (IFRAME):", dateSelectors.length);
+    console.log("[FiBuKI] Date range selectors found (IFRAME):", dateSelectors.length);
 
     if (dateSelectors.length === 0) return;
 
@@ -2185,13 +2185,13 @@
 
     // SKIP if already showing "All time" - don't re-open the dropdown
     if (selectorText === "all time" || /^all\s*time$/i.test(selectorText)) {
-      console.log("[TaxStudio] Already set to 'All time', skipping");
+      console.log("[FiBuKI] Already set to 'All time', skipping");
       return;
     }
 
     if (selector.getAttribute("data-ts-alltime-done") === "true") return;
 
-    console.log("[TaxStudio] Clicking date range selector:", (selector.textContent || "").trim().slice(0, 30));
+    console.log("[FiBuKI] Clicking date range selector:", (selector.textContent || "").trim().slice(0, 30));
     try {
       dispatchMouseSequence(selector);
 
@@ -2215,7 +2215,7 @@
         })[0];
 
         if (allTimeOption) {
-          console.log("[TaxStudio] Found 'All time' option, clicking:", allTimeOption.tagName);
+          console.log("[FiBuKI] Found 'All time' option, clicking:", allTimeOption.tagName);
           clearInterval(checkInterval);
           dispatchMouseSequence(allTimeOption);
           selector.setAttribute("data-ts-alltime-done", "true");
@@ -2223,13 +2223,13 @@
         }
 
         if (attempts >= maxAttempts) {
-          console.log("[TaxStudio] 'All time' option not found after", attempts, "attempts");
+          console.log("[FiBuKI] 'All time' option not found after", attempts, "attempts");
           clearInterval(checkInterval);
         }
       }, 50); // Check every 50ms
 
     } catch (err) {
-      console.log("[TaxStudio] Date selector click error:", err.message);
+      console.log("[FiBuKI] Date selector click error:", err.message);
     }
   }
 
@@ -2262,27 +2262,27 @@
         return text.indexOf("all time") !== -1 && el.getBoundingClientRect().width > 0;
       });
       if (debugElements.length > 0) {
-        console.log("[TaxStudio] Elements containing 'all time':", debugElements.length);
+        console.log("[FiBuKI] Elements containing 'all time':", debugElements.length);
         debugElements.slice(0, 3).forEach(function (el, i) {
-          console.log("[TaxStudio]   " + i + ": <" + el.tagName + "> text=\"" + (el.textContent || "").trim().slice(0, 50) + "\"");
+          console.log("[FiBuKI]   " + i + ": <" + el.tagName + "> text=\"" + (el.textContent || "").trim().slice(0, 50) + "\"");
         });
       }
     }
 
     var menuItems = allElements;
-    console.log("[TaxStudio] 'All time' options found (IFRAME):", menuItems.length);
+    console.log("[FiBuKI] 'All time' options found (IFRAME):", menuItems.length);
 
     if (menuItems.length === 0) return;
 
     var option = menuItems[0];
     if (option.getAttribute("data-ts-alltime-clicked") === "true") return;
 
-    console.log("[TaxStudio] Clicking 'All time' option");
+    console.log("[FiBuKI] Clicking 'All time' option");
     try {
       dispatchMouseSequence(option);
       option.setAttribute("data-ts-alltime-clicked", "true");
     } catch (err) {
-      console.log("[TaxStudio] All time click error:", err.message);
+      console.log("[FiBuKI] All time click error:", err.message);
     }
   }
 
@@ -2303,18 +2303,18 @@
               /expand|more\s*transactions|more\s*invoices/i.test(text));
     });
 
-    console.log("[TaxStudio] Load more buttons found (IFRAME):", loadMoreBtns.length);
+    console.log("[FiBuKI] Load more buttons found (IFRAME):", loadMoreBtns.length);
 
     if (loadMoreBtns.length === 0) return;
 
     loadMoreBtns.slice(0, 2).forEach(function (btn, i) {
       if (btn.getAttribute("data-ts-loadmore-clicked") === "true") return;
-      console.log("[TaxStudio] Clicking load more button " + i + ":", (btn.textContent || "").trim().slice(0, 30));
+      console.log("[FiBuKI] Clicking load more button " + i + ":", (btn.textContent || "").trim().slice(0, 30));
       try {
         dispatchMouseSequence(btn);
         btn.setAttribute("data-ts-loadmore-clicked", "true");
       } catch (err) {
-        console.log("[TaxStudio] Load more click error:", err.message);
+        console.log("[FiBuKI] Load more click error:", err.message);
       }
     });
   }
@@ -2323,7 +2323,7 @@
     if (pausedForLogin) return;
     // SKIP for payments.google.com - clickGooglePaymentsDownloadButtons handles this
     if (window.location.origin.indexOf("payments.google.com") !== -1) {
-      console.log("[TaxStudio] triggerPdfMenuDownloads SKIPPED for payments.google.com");
+      console.log("[FiBuKI] triggerPdfMenuDownloads SKIPPED for payments.google.com");
       return;
     }
     var pdfGroups = Array.prototype.slice.call(
@@ -2356,7 +2356,7 @@
         btn.click();
         btn.setAttribute("data-ts-menu-opened", "true");
         var ft = isTopFrame ? "TOP" : "IFRAME";
-        console.log("[TaxStudio] Opened download menu (" + ft + ")", window.location.origin);
+        console.log("[FiBuKI] Opened download menu (" + ft + ")", window.location.origin);
       } catch (err) {
         // ignore
       }
@@ -2379,7 +2379,7 @@
   function scanAndClickMenuItems() {
     // SKIP for payments.google.com - clickGooglePaymentsDownloadButtons handles this
     if (window.location.origin.indexOf("payments.google.com") !== -1) {
-      console.log("[TaxStudio] scanAndClickMenuItems SKIPPED for payments.google.com");
+      console.log("[FiBuKI] scanAndClickMenuItems SKIPPED for payments.google.com");
       return 0;
     }
     // SKIP for ogs.google.com - Google apps widget, not relevant
@@ -2411,10 +2411,10 @@
       });
       if (visibleMenuItems.length > 0 && visibleMenuItems.length <= 10) {
         var ft = isTopFrame ? "TOP" : "IFRAME";
-        console.log("[TaxStudio] Found visible menu items directly (" + ft + "):", visibleMenuItems.length);
+        console.log("[FiBuKI] Found visible menu items directly (" + ft + "):", visibleMenuItems.length);
         visibleMenuItems.forEach(function (item, i) {
           var text = (item.textContent || "").trim().slice(0, 50);
-          console.log("[TaxStudio]   MenuItem " + i + ": \"" + text + "\"");
+          console.log("[FiBuKI]   MenuItem " + i + ": \"" + text + "\"");
         });
       }
     }
@@ -2462,7 +2462,7 @@
     }
     var ft = isTopFrame ? "TOP" : "IFRAME";
     console.log(
-      "[TaxStudio] Menu containers (" + ft + "):",
+      "[FiBuKI] Menu containers (" + ft + "):",
       menuContainers.length,
       "items:",
       menuItems.length,
@@ -2482,7 +2482,7 @@
       // Log outerHTML for debugging Google's structure
       var outerSnippet = (item.outerHTML || "").slice(0, 300);
       console.log(
-        "[TaxStudio] Menu item",
+        "[FiBuKI] Menu item",
         index + 1,
         "label:",
         label.slice(0, 50),
@@ -2544,7 +2544,7 @@
         dispatchMouseSequence(item);
         item.setAttribute("data-ts-clicked", "true");
         clicked += 1;
-        console.log("[TaxStudio] Clicked menu item:", label || dataLabel || dataAction || dataValue || "menuitem");
+        console.log("[FiBuKI] Clicked menu item:", label || dataLabel || dataAction || dataValue || "menuitem");
       } catch (err) {
         // ignore
       }
@@ -2558,20 +2558,20 @@
             dispatchMouseSequence(item);
             item.setAttribute("data-ts-clicked", "true");
           });
-          console.log("[TaxStudio] Clicked menu items fallback (pdf) with dispatchMouseSequence");
+          console.log("[FiBuKI] Clicked menu items fallback (pdf) with dispatchMouseSequence");
         } catch (err) {
-          console.log("[TaxStudio] Fallback (pdf) error:", err.message);
+          console.log("[FiBuKI] Fallback (pdf) error:", err.message);
         }
       } else {
         try {
           dispatchMouseSequence(menuItems[0]);
           menuItems[0].setAttribute("data-ts-clicked", "true");
-          console.log("[TaxStudio] Clicked first menu item fallback with dispatchMouseSequence");
+          console.log("[FiBuKI] Clicked first menu item fallback with dispatchMouseSequence");
         } catch (err) {
-          console.log("[TaxStudio] Fallback error:", err.message);
+          console.log("[FiBuKI] Fallback error:", err.message);
         }
       }
-      console.log("[TaxStudio] Menu items found but no download match.");
+      console.log("[FiBuKI] Menu items found but no download match.");
       setOverlayStatus("Menu open, no PDF action detected.");
     }
     if (clicked === 0 && lastMenuContext === "pdf") {
@@ -2579,7 +2579,7 @@
         try {
           dispatchMouseSequence(menuItems[0]);
           menuItems[0].setAttribute("data-ts-clicked", "true");
-          console.log("[TaxStudio] Clicked single menu item fallback");
+          console.log("[FiBuKI] Clicked single menu item fallback");
           clicked += 1;
         } catch (err) {
           // ignore
@@ -2676,7 +2676,7 @@
         try {
           clickable.click();
           clickable.setAttribute("data-ts-clicked", "true");
-          console.log("[TaxStudio] Clicked near-menu fallback:", clickable.className || clickable.tagName);
+          console.log("[FiBuKI] Clicked near-menu fallback:", clickable.className || clickable.tagName);
           return true;
         } catch (err) {
           // ignore
@@ -2710,7 +2710,7 @@
       var enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
       lastMenuButton.dispatchEvent(down);
       lastMenuButton.dispatchEvent(enter);
-      console.log("[TaxStudio] Keyboard menu fallback sent");
+      console.log("[FiBuKI] Keyboard menu fallback sent");
     } catch (err) {
       // ignore
     }
@@ -2749,7 +2749,7 @@
       // Also try native click
       node.click();
     } catch (err) {
-      console.log("[TaxStudio] dispatchMouseSequence error:", err.message);
+      console.log("[FiBuKI] dispatchMouseSequence error:", err.message);
     }
   }
 

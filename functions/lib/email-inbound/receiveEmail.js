@@ -2,7 +2,7 @@
 /**
  * Inbound Email Webhook
  *
- * Receives emails forwarded to user's unique TaxStudio email address.
+ * Receives emails forwarded to user's unique FiBuKI email address.
  * Processes attachments and converts email body to PDF.
  *
  * Designed for SendGrid Inbound Parse webhook.
@@ -622,7 +622,7 @@ exports.receiveInboundEmail = (0, https_1.onRequest)({
             }
         }
         if (!emailPrefix) {
-            console.log("[receiveEmail] No valid TaxStudio recipient found");
+            console.log("[receiveEmail] No valid FiBuKI recipient found");
             res.status(404).send("Recipient not found");
             return;
         }

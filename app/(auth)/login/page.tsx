@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/components/auth";
@@ -17,14 +17,31 @@ import {
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FileSpreadsheet, AlertCircle, Loader2 } from "lucide-react";
+import { MfaChallengeDialog } from "@/components/mfa";
+import { useMfaChallenge } from "@/hooks/use-mfa-challenge";
+import { usePasskeys } from "@/hooks/use-passkeys";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const { signIn, signInWithGoogle } = useAuth();
+  const { signIn, signInWithGoogle, mfaRequired, mfaResolver, clearMfaChallenge } = useAuth();
+  const { handleMfaRequired } = useMfaChallenge();
+  const { hasPasskeys } = usePasskeys();
   const router = useRouter();
+
+  // When MFA is required by the auth provider, trigger the MFA challenge handler
+  useEffect(() => {
+    if (mfaRequired && mfaResolver) {
+      // Create a mock error to pass to the challenge handler
+      const mfaError = {
+        code: "auth/multi-factor-auth-required",
+        customData: { _serverResponse: { mfaInfo: mfaResolver.hints } },
+      } as unknown as import("firebase/auth").MultiFactorError;
+      handleMfaRequired(mfaError, hasPasskeys);
+    }
+  }, [mfaRequired, mfaResolver, handleMfaRequired, hasPasskeys]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,7 +82,7 @@ export default function LoginPage() {
         <div className="flex justify-center mb-4">
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="h-8 w-8 text-primary" />
-            <span className="font-bold text-2xl">TaxStudio</span>
+            <span className="font-bold text-2xl">FiBuKI</span>
           </div>
         </div>
         <CardTitle className="text-2xl">Sign in</CardTitle>
@@ -170,6 +187,19 @@ export default function LoginPage() {
           </Link>
         </p>
       </CardFooter>
+
+      {/* MFA Challenge Dialog */}
+      <MfaChallengeDialog
+        open={mfaRequired}
+        onSuccess={() => {
+          clearMfaChallenge();
+          router.push("/transactions");
+        }}
+        onCancel={() => {
+          clearMfaChallenge();
+          setError("Two-factor authentication is required");
+        }}
+      />
     </Card>
   );
 }

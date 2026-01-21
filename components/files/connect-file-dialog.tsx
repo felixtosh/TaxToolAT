@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { format, subDays, addDays } from "date-fns";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 import {
   Search,
   FileText,
@@ -36,6 +37,7 @@ import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { FilePreview } from "./file-preview";
+import { GmailAttachmentPreview } from "./gmail-attachment-preview";
 import {
   useUnifiedFileSearch,
   UnifiedSearchResult,
@@ -322,9 +324,8 @@ export function ConnectFileDialog({
         });
       } else if (selectedResult.type === "gmail") {
         // Gmail attachment - save it first, then connect
-        const response = await fetch("/api/gmail/attachment", {
+        const response = await fetchWithAuth("/api/gmail/attachment", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             integrationId: selectedResult.integrationId,
             messageId: selectedResult.messageId,
@@ -355,7 +356,7 @@ export function ConnectFileDialog({
           resultType: "gmail_attachment",
         });
 
-        if (partner && selectedResult.emailFrom) {
+        if (partner && selectedResult.emailFrom && userId) {
           const match = selectedResult.emailFrom.toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
           const domain = match ? match[1] : null;
           if (domain) {
@@ -677,12 +678,23 @@ export function ConnectFileDialog({
               <>
                 {/* Preview */}
                 <div className="flex-1 overflow-hidden">
-                  <FilePreview
-                    downloadUrl={selectedResult.previewUrl}
-                    fileType={selectedResult.mimeType}
-                    fileName={selectedResult.filename}
-                    fullSize
-                  />
+                  {selectedResult.type === "gmail" && selectedResult.integrationId && selectedResult.messageId && selectedResult.attachmentId ? (
+                    <GmailAttachmentPreview
+                      integrationId={selectedResult.integrationId}
+                      messageId={selectedResult.messageId}
+                      attachmentId={selectedResult.attachmentId}
+                      mimeType={selectedResult.mimeType}
+                      filename={selectedResult.filename}
+                      fullSize
+                    />
+                  ) : (
+                    <FilePreview
+                      downloadUrl={selectedResult.previewUrl}
+                      fileType={selectedResult.mimeType}
+                      fileName={selectedResult.filename}
+                      fullSize
+                    />
+                  )}
                 </div>
 
                 {/* Selected file info */}

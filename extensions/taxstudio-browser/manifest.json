@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "TaxStudio Browser Plugin (Dev)",
+  "name": "FiBuKI Browser Plugin (Dev)",
   "version": "0.0.1",
-  "description": "Development build for TaxStudio invoice pulls.",
+  "description": "Development build for FiBuKI invoice pulls.",
   "host_permissions": ["<all_urls>"],
   "permissions": ["tabs", "scripting", "downloads", "storage", "webRequest", "webNavigation", "notifications"],
   "icons": {
@@ -22,7 +22,7 @@
     }
   ],
   "action": {
-    "default_title": "TaxStudio Browser Plugin"
+    "default_title": "FiBuKI Browser Plugin"
   },
   "sandbox": {
     "pages": ["sandbox.html"]

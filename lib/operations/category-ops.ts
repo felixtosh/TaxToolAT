@@ -219,6 +219,18 @@ export async function assignCategoryToTransaction(
 
   await batch.commit();
 
+  // Clear any manual removal entry for this transaction (user is re-adding it)
+  if (category.manualRemovals?.some((r) => r.transactionId === transactionId)) {
+    const updatedRemovals = category.manualRemovals.filter(
+      (r) => r.transactionId !== transactionId
+    );
+    await updateDoc(categoryRef, {
+      manualRemovals: updatedRemovals,
+      updatedAt: Timestamp.now(),
+    });
+    console.log(`[Category] Cleared manual removal for tx ${transactionId} from category ${categoryId}`);
+  }
+
   // Learn patterns from this assignment (non-blocking)
   if (matchedBy === "manual" || matchedBy === "suggestion") {
     learnCategoryPatternFromTransaction(ctx, categoryId, txData).catch((error) => {
@@ -320,9 +332,8 @@ export async function removeCategoryFromTransaction(
 
   const batch = writeBatch(ctx.db);
 
-  // Check if transaction has files (if so, it might still be complete)
+  // Check if transaction has files (if so, it's still complete)
   const hasFiles = txData.fileIds && txData.fileIds.length > 0;
-  const hasDescription = txData.description && txData.description.trim().length > 0;
 
   // Clear category fields
   batch.update(txDoc, {
@@ -332,7 +343,7 @@ export async function removeCategoryFromTransaction(
     noReceiptCategoryConfidence: null,
     receiptLostEntry: null,
     // Only mark incomplete if no files attached
-    isComplete: hasFiles && hasDescription,
+    isComplete: hasFiles,
     updatedAt: Timestamp.now(),
   });
 
@@ -749,12 +760,14 @@ export async function retriggerUserCategories(
         batchCount++;
       } else {
         // Can't migrate - clear the category
+        // Only mark incomplete if transaction has no files
+        const hasFiles = txData.fileIds && txData.fileIds.length > 0;
         batch.update(txDoc.ref, {
           noReceiptCategoryId: null,
           noReceiptCategoryTemplateId: null,
           noReceiptCategoryMatchedBy: null,
           noReceiptCategoryConfidence: null,
-          isComplete: false,
+          isComplete: hasFiles,
           updatedAt: Timestamp.now(),
         });
         batchCount++;

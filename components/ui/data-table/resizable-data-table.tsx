@@ -50,6 +50,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
     sectionHeaderHeight = DEFAULT_SECTION_HEADER_HEIGHT,
     overscan = DEFAULT_OVERSCAN,
     emptyMessage = "No data found.",
+    emptyState,
     autoScrollToSelected = true,
     initialSorting = [],
     onSortingChange,
@@ -262,9 +263,13 @@ function ResizableDataTableInner<TData extends { id: string }>(
   });
 
   // Initialize on mount and when display items change (e.g., after sorting)
-  React.useLayoutEffect(() => {
-    setTotalSize(virtualizer.getTotalSize());
-    setVisibleRows(virtualizer.getVirtualItems());
+  // Use requestAnimationFrame to defer state updates and avoid flushSync warning
+  React.useEffect(() => {
+    const frameId = requestAnimationFrame(() => {
+      setTotalSize(virtualizer.getTotalSize());
+      setVisibleRows(virtualizer.getVirtualItems());
+    });
+    return () => cancelAnimationFrame(frameId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayItems.length, displayItems]);
 
@@ -623,8 +628,12 @@ function ResizableDataTableInner<TData extends { id: string }>(
             })
           ) : (
             <tr>
-              <td colSpan={columns.length} className="h-24 text-center">
-                {emptyMessage}
+              <td colSpan={columns.length}>
+                {emptyState || (
+                  <div className="h-24 flex items-center justify-center text-muted-foreground">
+                    {emptyMessage}
+                  </div>
+                )}
               </td>
             </tr>
           )}

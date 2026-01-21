@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { format, subDays, addDays } from "date-fns";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 import {
   Search,
   Mail,
@@ -18,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
 import { useGmailSearchQueries } from "@/hooks/use-gmail-search-queries";
+import { useAttachmentScoring, ScoredAttachment } from "@/hooks/use-attachment-scoring";
 import { EmailMessage } from "@/types/email-integration";
 
 interface EmailInvoiceTabProps {
@@ -51,6 +53,7 @@ export function EmailInvoiceTab({
   // Simple query suggestions - disabled for this older component
   // TODO: This tab component should receive full Transaction instead of transactionInfo
   const { queries: suggestedQueries } = useGmailSearchQueries({});
+  const { scoreAttachments } = useAttachmentScoring();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [emails, setEmails] = useState<EmailWithContent[]>([]);
@@ -60,6 +63,7 @@ export function EmailInvoiceTab({
   const [error, setError] = useState<string | null>(null);
   const [activeQuery, setActiveQuery] = useState<string | null>(null);
   const [converting, setConverting] = useState(false);
+  const [emailScores, setEmailScores] = useState<Map<string, ScoredAttachment>>(new Map());
 
   // Calculate date range from transaction
   const dateRange = useMemo(() => {
@@ -69,6 +73,51 @@ export function EmailInvoiceTab({
       to: addDays(transactionInfo.date, 7),
     };
   }, [transactionInfo]);
+
+  // Sort emails by score (highest first)
+  const sortedEmails = useMemo(() => {
+    if (emailScores.size === 0) return emails;
+    return [...emails].sort((a, b) => {
+      const scoreA = emailScores.get(a.messageId)?.score || 0;
+      const scoreB = emailScores.get(b.messageId)?.score || 0;
+      return scoreB - scoreA;
+    });
+  }, [emails, emailScores]);
+
+  // Score emails when they change
+  useEffect(() => {
+    if (emails.length === 0 || !transactionInfo) {
+      setEmailScores(new Map());
+      return;
+    }
+
+    const emailsToScore = emails.map((email) => ({
+      key: email.messageId,
+      filename: `${email.subject}.pdf`, // Treat email as if it were a PDF
+      mimeType: "application/pdf",
+      emailSubject: email.subject,
+      emailFrom: email.from,
+      emailSnippet: email.snippet,
+      emailDate: email.date,
+      integrationId: email.integrationId,
+    }));
+
+    scoreAttachments(
+      emailsToScore,
+      {
+        amount: transactionInfo.amount,
+        date: transactionInfo.date,
+        name: transactionInfo.name,
+        partner: transactionInfo.partner,
+      }
+    ).then((scores) => {
+      const scoreMap = new Map<string, ScoredAttachment>();
+      for (const score of scores) {
+        scoreMap.set(score.key, score);
+      }
+      setEmailScores(scoreMap);
+    });
+  }, [emails, transactionInfo, scoreAttachments]);
 
   // Search emails
   const handleSearch = async (query?: string) => {
@@ -86,9 +135,8 @@ export function EmailInvoiceTab({
       const results = await Promise.all(
         gmailIntegrations.map(async (integration) => {
           try {
-            const response = await fetch("/api/gmail/search", {
+            const response = await fetchWithAuth("/api/gmail/search", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 integrationId: integration.id,
                 query: searchWith,
@@ -134,9 +182,8 @@ export function EmailInvoiceTab({
     ));
 
     try {
-      const response = await fetch("/api/gmail/email-content", {
+      const response = await fetchWithAuth("/api/gmail/email-content", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           integrationId: email.integrationId,
           messageId: email.messageId,
@@ -180,9 +227,8 @@ export function EmailInvoiceTab({
     setError(null);
 
     try {
-      const response = await fetch("/api/gmail/convert-to-pdf", {
+      const response = await fetchWithAuth("/api/gmail/convert-to-pdf", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           integrationId: selectedEmail.integrationId,
           messageId: selectedEmail.messageId,
@@ -294,7 +340,7 @@ export function EmailInvoiceTab({
 
         {/* Results */}
         <ScrollArea className="flex-1">
-          {emails.length === 0 && !searchLoading ? (
+          {sortedEmails.length === 0 && !searchLoading ? (
             <div className="p-8 text-center text-muted-foreground">
               <Mail className="h-8 w-8 mx-auto mb-2 opacity-30" />
               <p className="text-sm">
@@ -303,34 +349,58 @@ export function EmailInvoiceTab({
             </div>
           ) : (
             <div className="p-2 space-y-1">
-              {emails.map((email) => (
-                <button
-                  key={email.messageId}
-                  type="button"
-                  onClick={() => handleSelectEmail(email)}
-                  className={cn(
-                    "w-full flex items-start gap-3 p-3 rounded-md transition-colors text-left overflow-hidden",
-                    selectedEmail?.messageId === email.messageId && "bg-primary/10 ring-1 ring-primary",
-                    selectedEmail?.messageId !== email.messageId && "hover:bg-muted"
-                  )}
-                >
-                  <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
-                    <Mail className="h-5 w-5 text-muted-foreground" />
-                  </div>
-                  <div className="flex-1 min-w-0 overflow-hidden">
-                    <p className="text-sm font-medium truncate">{email.subject}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {email.fromName || email.from}
-                    </p>
-                    <span className="text-xs text-muted-foreground">
-                      {format(email.date, "MMM d, yyyy")}
-                    </span>
-                  </div>
-                  {selectedEmail?.messageId === email.messageId && (
-                    <Check className="h-4 w-4 text-primary flex-shrink-0 mt-1" />
-                  )}
-                </button>
-              ))}
+              {sortedEmails.map((email) => {
+                const score = emailScores.get(email.messageId);
+                return (
+                  <button
+                    key={email.messageId}
+                    type="button"
+                    onClick={() => handleSelectEmail(email)}
+                    className={cn(
+                      "w-full flex items-start gap-3 p-3 rounded-md transition-colors text-left overflow-hidden",
+                      selectedEmail?.messageId === email.messageId && "bg-primary/10 ring-1 ring-primary",
+                      selectedEmail?.messageId !== email.messageId && "hover:bg-muted"
+                    )}
+                  >
+                    <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                      <Mail className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div className="flex-1 min-w-0 overflow-hidden">
+                      <p className="text-sm font-medium truncate">{email.subject}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {email.fromName || email.from}
+                      </p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-xs text-muted-foreground">
+                          {format(email.date, "MMM d, yyyy")}
+                        </span>
+                        {score && score.score > 0 && (
+                          <>
+                            {score.label && (
+                              <Badge
+                                variant="secondary"
+                                className={cn(
+                                  "text-xs py-0 h-4",
+                                  score.label === "Strong" && "text-green-600",
+                                  score.label === "Likely" && "text-amber-600"
+                                )}
+                              >
+                                {score.label}
+                              </Badge>
+                            )}
+                            <span className="text-xs text-muted-foreground">
+                              {score.score}%
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {selectedEmail?.messageId === email.messageId && (
+                      <Check className="h-4 w-4 text-primary flex-shrink-0 mt-1" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
         </ScrollArea>
@@ -356,7 +426,7 @@ export function EmailInvoiceTab({
                 </div>
               ) : selectedEmail.htmlBody ? (
                 <iframe
-                  srcDoc={selectedEmail.htmlBody}
+                  srcDoc={`<style>html, body { margin: 0; padding: 8px; overflow-x: hidden; width: 100%; }</style>${selectedEmail.htmlBody}`}
                   className="w-full h-full border-0 bg-white"
                   sandbox="allow-same-origin"
                   title="Email content"

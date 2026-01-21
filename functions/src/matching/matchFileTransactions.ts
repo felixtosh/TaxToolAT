@@ -7,32 +7,20 @@
 
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
+import {
+  SCORING_CONFIG,
+  scoreTransaction,
+  formatScoreBreakdown,
+  TransactionMatchScore,
+  TransactionMatchSource,
+} from "./transactionScoring";
 
 const db = getFirestore();
 
-// === Configuration ===
-
-const CONFIG = {
-  /** Minimum confidence for auto-matching (creates connection) */
-  AUTO_MATCH_THRESHOLD: 85,
-  /** Minimum confidence to show as suggestion */
-  SUGGESTION_THRESHOLD: 50,
-  /** Days to search before/after file date */
-  DATE_RANGE_DAYS: 30,
-  /** Max suggestions to store per file */
-  MAX_SUGGESTIONS: 5,
-};
+// Use shared config
+const CONFIG = SCORING_CONFIG;
 
 // === Types ===
-
-type TransactionMatchSource =
-  | "amount_exact"
-  | "amount_close"
-  | "date_exact"
-  | "date_close"
-  | "partner"
-  | "iban"
-  | "reference";
 
 interface TransactionSuggestion {
   transactionId: string;
@@ -44,278 +32,6 @@ interface TransactionSuggestion {
     currency: string;
     name: string;
     partner: string | null;
-  };
-}
-
-interface TransactionMatchScore {
-  transactionId: string;
-  confidence: number;
-  matchSources: TransactionMatchSource[];
-  preview: {
-    date: Timestamp;
-    amount: number;
-    currency: string;
-    name: string;
-    partner: string | null;
-  };
-}
-
-// === Scoring Functions ===
-
-function normalizeIban(iban: string): string {
-  return iban.replace(/\s+/g, "").toUpperCase();
-}
-
-function calculateAmountScore(
-  fileAmount: number,
-  txAmount: number
-): { score: number; source: TransactionMatchSource | null } {
-  const absFile = Math.abs(fileAmount);
-  const absTx = Math.abs(txAmount);
-
-  if (absFile === 0 || absTx === 0) {
-    return { score: 0, source: null };
-  }
-
-  if (absFile === absTx) {
-    return { score: 40, source: "amount_exact" };
-  }
-
-  const difference = Math.abs(absFile - absTx);
-  const tolerance = absFile;
-
-  if (difference <= tolerance * 0.01) {
-    return { score: 38, source: "amount_close" };
-  }
-  if (difference <= tolerance * 0.05) {
-    return { score: 30, source: "amount_close" };
-  }
-  if (difference <= tolerance * 0.1) {
-    return { score: 20, source: "amount_close" };
-  }
-
-  return { score: 0, source: null };
-}
-
-function calculateDateScore(
-  fileDate: Date,
-  txDate: Date
-): { score: number; source: TransactionMatchSource | null } {
-  const daysDiff = Math.abs(
-    Math.floor((fileDate.getTime() - txDate.getTime()) / (1000 * 60 * 60 * 24))
-  );
-
-  if (daysDiff === 0) return { score: 25, source: "date_exact" };
-  if (daysDiff <= 3) return { score: 22, source: "date_close" };
-  if (daysDiff <= 7) return { score: 15, source: "date_close" };
-  if (daysDiff <= 14) return { score: 8, source: "date_close" };
-  if (daysDiff <= 30) return { score: 3, source: "date_close" };
-
-  return { score: 0, source: null };
-}
-
-function calculateReferenceScore(
-  extractedText: string,
-  reference: string,
-  currentDateScore: number
-): { score: number; dateBonus: number; source: TransactionMatchSource | null } {
-  if (!reference || reference.length < 3) {
-    return { score: 0, dateBonus: 0, source: null };
-  }
-
-  const normalizedText = extractedText.toLowerCase();
-  const normalizedRef = reference.toLowerCase();
-
-  if (normalizedText.includes(normalizedRef)) {
-    const dateBonus = currentDateScore < 15 ? 10 : 0;
-    return { score: 5, dateBonus, source: "reference" };
-  }
-
-  return { score: 0, dateBonus: 0, source: null };
-}
-
-/**
- * Normalize a name for comparison (lowercase, remove common suffixes, trim)
- */
-function normalizeName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/\s*(gmbh|ag|kg|ohg|ug|e\.?k\.?|inc\.?|ltd\.?|llc|co\.?)\s*/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Check if two names match (fuzzy comparison)
- * Scoring rationale:
- * - Exact match = 25 pts (same as partner ID match - high trust)
- * - Contains match = 18 pts (e.g., "Amazon" vs "Amazon EU S.a.r.l.")
- * - Word overlap = 12-15 pts (partial confidence)
- */
-function namesMatch(name1: string, name2: string): { match: boolean; score: number } {
-  const n1 = normalizeName(name1);
-  const n2 = normalizeName(name2);
-
-  // Exact match after normalization - treat as strong as partner ID match
-  if (n1 === n2) {
-    return { match: true, score: 25 };
-  }
-
-  // One contains the other (for partial matches like "Amazon" vs "Amazon EU S.a.r.l.")
-  if (n1.includes(n2) || n2.includes(n1)) {
-    return { match: true, score: 18 };
-  }
-
-  // Check for significant word overlap (at least 2 words match)
-  const words1 = n1.split(" ").filter(w => w.length > 2);
-  const words2 = n2.split(" ").filter(w => w.length > 2);
-  const matchingWords = words1.filter(w => words2.some(w2 => w === w2 || w.includes(w2) || w2.includes(w)));
-
-  if (matchingWords.length >= 2) {
-    return { match: true, score: 15 };
-  }
-  if (matchingWords.length >= 1 && (words1.length <= 2 || words2.length <= 2)) {
-    return { match: true, score: 12 };
-  }
-
-  return { match: false, score: 0 };
-}
-
-/**
- * Calculate partner score with multiple matching strategies:
- * 1. Partner ID match (strongest signal)
- * 2. Partner text match (file's extractedPartner vs transaction's name/partner)
- * 3. Partner alias match (check if transaction name matches any alias of file's assigned partner)
- */
-function calculatePartnerScore(
-  fileData: FirebaseFirestore.DocumentData,
-  txData: FirebaseFirestore.DocumentData,
-  partnerAliases?: string[]
-): { score: number; source: TransactionMatchSource | null } {
-  // 1. Direct partner ID match (strongest - both have partnerId assigned)
-  if (fileData.partnerId && txData.partnerId && fileData.partnerId === txData.partnerId) {
-    return { score: 25, source: "partner" };
-  }
-
-  // Get transaction's text name (could be in 'name', 'partner', or 'partnerName' field)
-  const txName = txData.name || txData.partner || txData.partnerName || "";
-  if (!txName) {
-    return { score: 0, source: null };
-  }
-
-  // 2. Check file's extracted partner text against transaction name
-  if (fileData.extractedPartner) {
-    const result = namesMatch(fileData.extractedPartner, txName);
-    if (result.match) {
-      return { score: result.score, source: "partner" };
-    }
-  }
-
-  // 3. Check partner aliases against transaction name
-  if (partnerAliases && partnerAliases.length > 0) {
-    for (const alias of partnerAliases) {
-      const result = namesMatch(alias, txName);
-      if (result.match) {
-        return { score: result.score, source: "partner" };
-      }
-    }
-  }
-
-  return { score: 0, source: null };
-}
-
-interface ScoreBreakdown {
-  amount: number;
-  date: number;
-  partner: number;
-  iban: number;
-  reference: number;
-}
-
-interface TransactionMatchScoreWithBreakdown extends TransactionMatchScore {
-  breakdown: ScoreBreakdown;
-}
-
-function scoreTransaction(
-  fileData: FirebaseFirestore.DocumentData,
-  txId: string,
-  txData: FirebaseFirestore.DocumentData,
-  partnerAliases?: string[]
-): TransactionMatchScoreWithBreakdown {
-  let amountScore = 0;
-  let dateScore = 0;
-  let partnerScore = 0;
-  let ibanScore = 0;
-  let referenceScore = 0;
-  const matchSources: TransactionMatchSource[] = [];
-
-  // 1. Amount scoring (0-40)
-  if (fileData.extractedAmount != null) {
-    const result = calculateAmountScore(fileData.extractedAmount, txData.amount);
-    amountScore = result.score;
-    if (result.source) matchSources.push(result.source);
-  }
-
-  // 2. Date scoring (0-25)
-  if (fileData.extractedDate) {
-    const result = calculateDateScore(
-      fileData.extractedDate.toDate(),
-      txData.date.toDate()
-    );
-    dateScore = result.score;
-    if (result.source) matchSources.push(result.source);
-  }
-
-  // 3. Partner scoring (0-25 for ID match, 0-15 for text match)
-  // Uses multiple strategies: ID match, extracted text match, alias match
-  const partnerResult = calculatePartnerScore(fileData, txData, partnerAliases);
-  partnerScore = partnerResult.score;
-  if (partnerResult.source) matchSources.push(partnerResult.source);
-
-  // 4. IBAN scoring (0-10)
-  if (fileData.extractedIban && txData.partnerIban) {
-    const fileIban = normalizeIban(fileData.extractedIban);
-    const txIban = normalizeIban(txData.partnerIban);
-    if (fileIban === txIban) {
-      ibanScore = 10;
-      matchSources.push("iban");
-    }
-  }
-
-  // 5. Reference scoring (0-5, with date bonus)
-  if (fileData.extractedText && txData.reference) {
-    const result = calculateReferenceScore(
-      fileData.extractedText,
-      txData.reference,
-      dateScore
-    );
-    referenceScore = result.score;
-    if (result.dateBonus) {
-      dateScore = Math.min(25, dateScore + result.dateBonus);
-    }
-    if (result.source) matchSources.push(result.source);
-  }
-
-  const confidence = amountScore + dateScore + partnerScore + ibanScore + referenceScore;
-
-  return {
-    transactionId: txId,
-    confidence,
-    matchSources,
-    breakdown: {
-      amount: amountScore,
-      date: dateScore,
-      partner: partnerScore,
-      iban: ibanScore,
-      reference: referenceScore,
-    },
-    preview: {
-      date: txData.date,
-      amount: txData.amount,
-      currency: txData.currency || "EUR",
-      name: txData.name || "",
-      partner: txData.partner || null,
-    },
   };
 }
 
@@ -421,6 +137,12 @@ export async function runTransactionMatching(
   fileId: string,
   fileData: FirebaseFirestore.DocumentData
 ): Promise<void> {
+  // Skip soft-deleted files
+  if (fileData.deletedAt) {
+    console.log(`[TxMatch] Skipping deleted file: ${fileId}`);
+    return;
+  }
+
   const userId = fileData.userId;
   const t0 = Date.now();
 
@@ -469,6 +191,22 @@ export async function runTransactionMatching(
 
   console.log(`[TxMatch] Found ${transactions.length} candidate transactions (${dateRangeStr})`);
 
+  // If there's a precision search hint with a transaction ID, ensure it's in the candidate set
+  // The hint means automation already validated this transaction is relevant (by amount/partner search)
+  // but it might be outside the date range
+  if (fileData.precisionSearchHint?.transactionId) {
+    const hintedTxId = fileData.precisionSearchHint.transactionId;
+    const alreadyIncluded = transactions.some(doc => doc.id === hintedTxId);
+
+    if (!alreadyIncluded) {
+      const hintedTxDoc = await db.collection("transactions").doc(hintedTxId).get();
+      if (hintedTxDoc.exists && hintedTxDoc.data()?.userId === userId) {
+        transactions.push(hintedTxDoc as FirebaseFirestore.QueryDocumentSnapshot);
+        console.log(`[TxMatch] Added hinted transaction ${hintedTxId} to candidates (was outside date range)`);
+      }
+    }
+  }
+
   if (transactions.length === 0) {
     await db.collection("files").doc(fileId).update({
       transactionMatchComplete: true,
@@ -499,31 +237,63 @@ export async function runTransactionMatching(
     }
   }
 
-  // Exclude already connected transactions
+  // Exclude already connected transactions and transactions that rejected this file
   const connectedIds = new Set(fileData.transactionIds || []);
-  const candidateCount = transactions.length - connectedIds.size;
-  console.log(`[TxMatch] Scoring ${candidateCount} transactions (${connectedIds.size} already connected)`);
+  let rejectedCount = 0;
+
+  // Filter out transactions that have rejected this file
+  const eligibleTransactions = transactions.filter((doc) => {
+    if (connectedIds.has(doc.id)) return false;
+    const txData = doc.data();
+    const rejectedFileIds: string[] = txData.rejectedFileIds || [];
+    if (rejectedFileIds.includes(fileId)) {
+      rejectedCount++;
+      return false;
+    }
+    return true;
+  });
+
+  const candidateCount = eligibleTransactions.length;
+  console.log(`[TxMatch] Scoring ${candidateCount} transactions (${connectedIds.size} connected, ${rejectedCount} rejected this file)`);
 
   // Score each transaction
-  const allScores = transactions
-    .filter((doc) => !connectedIds.has(doc.id))
-    .map((doc) => scoreTransaction(fileData, doc.id, doc.data(), partnerAliases));
+  const allScores = eligibleTransactions
+    .map((doc) => {
+      const txData = doc.data();
+      return scoreTransaction(
+        {
+          extractedAmount: fileData.extractedAmount,
+          extractedCurrency: fileData.extractedCurrency,
+          extractedDate: fileData.extractedDate,
+          extractedPartner: fileData.extractedPartner,
+          extractedIban: fileData.extractedIban,
+          extractedText: fileData.extractedText,
+          partnerId: fileData.partnerId,
+          precisionSearchHint: fileData.precisionSearchHint,
+        },
+        {
+          id: doc.id,
+          amount: txData.amount,
+          date: txData.date,
+          currency: txData.currency,
+          name: txData.name,
+          partner: txData.partner,
+          partnerName: txData.partnerName,
+          partnerId: txData.partnerId,
+          partnerIban: txData.partnerIban,
+          reference: txData.reference,
+        },
+        partnerAliases
+      );
+    });
 
   const matches = allScores
     .filter((m) => m.confidence >= CONFIG.SUGGESTION_THRESHOLD)
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, CONFIG.MAX_SUGGESTIONS);
 
-  // Helper to format score breakdown
-  const formatBreakdown = (m: TransactionMatchScoreWithBreakdown) => {
-    const parts: string[] = [];
-    if (m.breakdown.amount > 0) parts.push(`amt:${m.breakdown.amount}`);
-    if (m.breakdown.date > 0) parts.push(`date:${m.breakdown.date}`);
-    if (m.breakdown.partner > 0) parts.push(`partner:${m.breakdown.partner}`);
-    if (m.breakdown.iban > 0) parts.push(`iban:${m.breakdown.iban}`);
-    if (m.breakdown.reference > 0) parts.push(`ref:${m.breakdown.reference}`);
-    return parts.join(" + ");
-  };
+  // Helper to format score breakdown (using shared function)
+  const formatBreakdown = (m: TransactionMatchScore) => formatScoreBreakdown(m.breakdown);
 
   // Log top matches with breakdown
   if (matches.length > 0) {
@@ -531,7 +301,7 @@ export async function runTransactionMatching(
     for (const m of matches.slice(0, 5)) {
       const txAmount = (m.preview.amount / 100).toFixed(2);
       const txDate = m.preview.date.toDate().toISOString().split("T")[0];
-      const breakdown = formatBreakdown(m as TransactionMatchScoreWithBreakdown);
+      const breakdown = formatBreakdown(m);
       console.log(`[TxMatch]   ${m.confidence}% - "${m.preview.name}" | ${txAmount} ${m.preview.currency} | ${txDate}`);
       console.log(`[TxMatch]       Breakdown: ${breakdown}`);
     }
@@ -541,7 +311,7 @@ export async function runTransactionMatching(
     if (bestNonMatch) {
       const txAmount = (bestNonMatch.preview.amount / 100).toFixed(2);
       const txDate = bestNonMatch.preview.date.toDate().toISOString().split("T")[0];
-      const breakdown = formatBreakdown(bestNonMatch as TransactionMatchScoreWithBreakdown);
+      const breakdown = formatBreakdown(bestNonMatch);
       console.log(`[TxMatch] No matches above ${CONFIG.SUGGESTION_THRESHOLD}%. Best was ${bestNonMatch.confidence}%:`);
       console.log(`[TxMatch]   "${bestNonMatch.preview.name}" | ${txAmount} ${bestNonMatch.preview.currency} | ${txDate}`);
       console.log(`[TxMatch]   Breakdown: ${breakdown}`);
@@ -551,9 +321,27 @@ export async function runTransactionMatching(
   }
 
   // Separate auto-matches from suggestions
-  const autoMatches = matches.filter((m) => m.confidence >= CONFIG.AUTO_MATCH_THRESHOLD);
+  const potentialAutoMatches = matches.filter((m) => m.confidence >= CONFIG.AUTO_MATCH_THRESHOLD);
 
-  // Build suggestions for storage
+  // Filter out auto-matches for transactions that are already "covered"
+  // This prevents over-matching (e.g., 6 monthly invoices all matching one transaction)
+  const autoMatches: typeof potentialAutoMatches = [];
+  for (const match of potentialAutoMatches) {
+    const isCovered = await isTransactionCovered(
+      match.transactionId,
+      match.preview.amount
+    );
+    if (isCovered) {
+      console.log(
+        `[TxMatch] Skipping auto-match for ${match.transactionId} (already covered by existing files)`
+      );
+    } else {
+      autoMatches.push(match);
+    }
+  }
+
+  // Build suggestions for storage (still show covered transactions as suggestions,
+  // but mark them so UI can indicate they're already covered)
   const suggestions: TransactionSuggestion[] = matches.map((m) => ({
     transactionId: m.transactionId,
     confidence: m.confidence,
@@ -565,7 +353,7 @@ export async function runTransactionMatching(
   const fileRef = db.collection("files").doc(fileId);
   const newTransactionIds: string[] = [];
 
-  // Create auto-connections
+  // Create auto-connections (only for non-covered transactions)
   for (const match of autoMatches) {
     const connectionRef = db.collection("fileConnections").doc();
     batch.set(connectionRef, {
@@ -681,6 +469,72 @@ async function hasManualTransactionConnections(fileId: string): Promise<boolean>
   return !manualConnections.empty;
 }
 
+// === Helper: Check if transaction is already "covered" by existing files ===
+
+/**
+ * Checks if a transaction already has enough files matched to cover its amount.
+ * This prevents over-matching (e.g., 6 files matched to a single transaction
+ * when only 1 file should match).
+ *
+ * @param transactionId - Transaction to check
+ * @param transactionAmount - Transaction amount in cents (absolute value)
+ * @param tolerance - Percentage tolerance (default 10% - transaction is "covered" if
+ *                   sum of file amounts is within 10% of transaction amount)
+ * @returns true if transaction is covered and shouldn't receive more files
+ */
+async function isTransactionCovered(
+  transactionId: string,
+  transactionAmount: number,
+  tolerance: number = 0.1
+): Promise<boolean> {
+  // Get existing file connections for this transaction
+  const connectionsSnapshot = await db
+    .collection("fileConnections")
+    .where("transactionId", "==", transactionId)
+    .get();
+
+  if (connectionsSnapshot.empty) {
+    return false; // No files connected, not covered
+  }
+
+  // Get the connected files to sum their amounts
+  const fileIds = connectionsSnapshot.docs.map((doc) => doc.data().fileId);
+
+  // Firestore 'in' queries have a limit of 30, batch if needed
+  let totalFileAmount = 0;
+  for (let i = 0; i < fileIds.length; i += 30) {
+    const batch = fileIds.slice(i, i + 30);
+    const filesSnapshot = await db
+      .collection("files")
+      .where("__name__", "in", batch)
+      .get();
+
+    for (const fileDoc of filesSnapshot.docs) {
+      const fileData = fileDoc.data();
+      if (fileData.extractedAmount != null) {
+        totalFileAmount += Math.abs(fileData.extractedAmount);
+      }
+    }
+  }
+
+  const absTxAmount = Math.abs(transactionAmount);
+
+  // Transaction is "covered" if file total is within tolerance of transaction amount
+  // or exceeds it
+  const coverageRatio = totalFileAmount / absTxAmount;
+  const isCovered = coverageRatio >= (1 - tolerance);
+
+  if (isCovered) {
+    console.log(
+      `[TxMatch] Transaction ${transactionId} is already covered: ` +
+      `${(totalFileAmount / 100).toFixed(2)} / ${(absTxAmount / 100).toFixed(2)} ` +
+      `(${(coverageRatio * 100).toFixed(0)}%)`
+    );
+  }
+
+  return isCovered;
+}
+
 // === Firestore Trigger ===
 
 /**
@@ -715,6 +569,12 @@ export const matchFileTransactions = onDocumentUpdated(
       before.partnerId !== after.partnerId &&
       after.transactionMatchComplete === true; // Only re-run if already ran once
 
+    // Case 3: Precision search requested re-matching (transactionMatchComplete flipped to false)
+    const precisionSearchRequested =
+      before.transactionMatchComplete === true &&
+      after.transactionMatchComplete === false &&
+      after.precisionSearchHint;
+
     // Determine if we should run
     let shouldRun = false;
     let reason = "";
@@ -722,6 +582,10 @@ export const matchFileTransactions = onDocumentUpdated(
     if (partnerMatchJustCompleted && !after.transactionMatchComplete) {
       shouldRun = true;
       reason = "partner_match_complete";
+    } else if (precisionSearchRequested) {
+      // Precision search added a hint and requested re-matching
+      shouldRun = true;
+      reason = "precision_search_hint";
     } else if (partnerIdChanged) {
       // Check for manual connections before re-running
       const hasManual = await hasManualTransactionConnections(fileId);

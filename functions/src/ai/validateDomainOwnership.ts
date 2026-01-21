@@ -84,7 +84,7 @@ Examples:
         model: modelName,
         inputTokens: usageMetadata.promptTokenCount || 0,
         outputTokens: usageMetadata.candidatesTokenCount || 0,
-        metadata: { fileId: undefined },
+        metadata: null,
       });
     }
 

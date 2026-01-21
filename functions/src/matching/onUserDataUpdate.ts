@@ -263,15 +263,22 @@ export const onUserDataUpdate = onDocumentUpdated(
     console.log(`[onUserDataUpdate] Found ${sourceIbans.length} source IBANs`);
 
     // Find files that have extracted entities
+    // Note: We query all extracted files and filter isNotInvoice client-side
+    // because isNotInvoice can be false, null, or undefined (undefined = not an invoice marker)
     const filesSnapshot = await db
       .collection("files")
       .where("userId", "==", userId)
       .where("extractionComplete", "==", true)
-      .where("isNotInvoice", "==", false)
       .limit(CONFIG.MAX_FILES_PER_UPDATE)
       .get();
 
-    console.log(`[onUserDataUpdate] Found ${filesSnapshot.size} files to check`);
+    // Filter out files marked as not invoice (client-side filter)
+    const invoiceFiles = filesSnapshot.docs.filter((doc) => {
+      const data = doc.data();
+      return data.isNotInvoice !== true; // Include false, null, undefined
+    });
+
+    console.log(`[onUserDataUpdate] Found ${invoiceFiles.length} invoice files to check (${filesSnapshot.size - invoiceFiles.length} non-invoices skipped)`);
 
     let updatedCount = 0;
     let skippedCount = 0;
@@ -281,7 +288,7 @@ export const onUserDataUpdate = onDocumentUpdated(
     const MAX_BATCH_SIZE = 500;
     let batchCount = 0;
 
-    for (const fileDoc of filesSnapshot.docs) {
+    for (const fileDoc of invoiceFiles) {
       const fileData = fileDoc.data();
 
       // Skip files without extracted entities (can't re-calculate)

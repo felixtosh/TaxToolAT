@@ -359,10 +359,8 @@ export async function registerCategoryTools(
 
       const batch = writeBatch(ctx.db);
 
-      // Check if transaction has files
+      // Check if transaction has files (if so, it's still complete)
       const hasFiles = txData.fileIds && txData.fileIds.length > 0;
-      const hasDescription =
-        txData.description && txData.description.trim().length > 0;
 
       // Clear category fields
       batch.update(txDoc, {
@@ -371,7 +369,7 @@ export async function registerCategoryTools(
         noReceiptCategoryMatchedBy: null,
         noReceiptCategoryConfidence: null,
         receiptLostEntry: null,
-        isComplete: hasFiles && hasDescription,
+        isComplete: hasFiles,
         updatedAt: Timestamp.now(),
       });
 
@@ -388,7 +386,7 @@ export async function registerCategoryTools(
         content: [
           {
             type: "text",
-            text: `Removed no-receipt category from transaction ${transactionId}. Transaction is now marked as ${hasFiles && hasDescription ? "complete" : "incomplete"}.`,
+            text: `Removed no-receipt category from transaction ${transactionId}. Transaction is now marked as ${hasFiles ? "complete" : "incomplete"}.`,
           },
         ],
       };

@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, getDoc, addDoc, collection, Timestamp, updateDoc, arrayUnion } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { getServerDb, getServerStorage } from "@/lib/firebase/config-server";
+import { getAdminDb, getAdminBucket, getFirebaseStorageDownloadUrl } from "@/lib/firebase/admin";
+import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import { getEmailIntegration, markIntegrationNeedsReauth } from "@/lib/operations";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import puppeteer, { Browser } from "puppeteer";
 
 // Singleton browser instance for performance - reused across requests
@@ -42,9 +40,9 @@ async function getBrowser(): Promise<Browser> {
   return browserInstance;
 }
 
-const db = getServerDb();
-const storage = getServerStorage();
+const db = getAdminDb();
 
+const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const TOKENS_COLLECTION = "emailTokens";
 const FILES_COLLECTION = "files";
 const TRANSACTIONS_COLLECTION = "transactions";
@@ -117,11 +115,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId };
-
     // Verify integration
-    const integration = await getEmailIntegration(ctx, integrationId);
-    if (!integration) {
+    const integrationRef = db.collection(INTEGRATIONS_COLLECTION).doc(integrationId);
+    const integrationSnap = await integrationRef.get();
+
+    if (!integrationSnap.exists) {
+      return NextResponse.json(
+        { error: "Integration not found" },
+        { status: 404 }
+      );
+    }
+
+    const integration = integrationSnap.data()!;
+    if (integration.userId !== userId) {
       return NextResponse.json(
         { error: "Integration not found" },
         { status: 404 }
@@ -136,17 +142,23 @@ export async function POST(request: NextRequest) {
     }
 
     // Get tokens
-    const tokens = await getTokens(integrationId);
-    if (!tokens) {
+    const tokenSnap = await db.collection(TOKENS_COLLECTION).doc(integrationId).get();
+    if (!tokenSnap.exists) {
       return NextResponse.json(
         { error: "Tokens not found. Please reconnect Gmail.", code: "TOKENS_MISSING" },
         { status: 403 }
       );
     }
 
+    const tokens = tokenSnap.data()!;
+
     // Check token expiry
     if (tokens.expiresAt.toDate() < new Date()) {
-      await markIntegrationNeedsReauth(ctx, integrationId, "Access token expired");
+      await integrationRef.update({
+        needsReauth: true,
+        lastError: "Access token expired",
+        updatedAt: Timestamp.now(),
+      });
       return NextResponse.json(
         { error: "Token expired", code: "TOKEN_EXPIRED" },
         { status: 403 }
@@ -216,21 +228,30 @@ export async function POST(request: NextRequest) {
     const timestamp = Date.now();
     const filename = `${sanitizedSubject}_${timestamp}.pdf`;
 
-    // Upload to Firebase Storage
+    // Upload to Firebase Storage using Admin SDK
     const storagePath = `files/${userId}/${filename}`;
-    const storageRef = ref(storage, storagePath);
+    const bucket = getAdminBucket();
+    const file = bucket.file(storagePath);
 
-    await uploadBytes(storageRef, pdfResult.pdfBuffer, {
-      contentType: "application/pdf",
-      customMetadata: {
-        originalName: filename,
-        gmailMessageId: messageId,
-        gmailIntegrationId: integrationId,
-        convertedFromEmail: "true",
+    // Generate a download token (same as client SDK's getDownloadURL)
+    const downloadToken = randomUUID();
+
+    await file.save(pdfResult.pdfBuffer, {
+      metadata: {
+        contentType: "application/pdf",
+        contentDisposition: "inline",
+        metadata: {
+          originalName: filename,
+          gmailMessageId: messageId,
+          gmailIntegrationId: integrationId,
+          convertedFromEmail: "true",
+          firebaseStorageDownloadTokens: downloadToken,
+        },
       },
     });
 
-    const downloadUrl = await getDownloadURL(storageRef);
+    // Construct Firebase Storage download URL (permanent, like client SDK's getDownloadURL)
+    const downloadUrl = getFirebaseStorageDownloadUrl(bucket.name, storagePath, downloadToken);
 
     // Create file document
     const now = Timestamp.now();
@@ -262,20 +283,19 @@ export async function POST(request: NextRequest) {
       transactionIds: transactionId ? [transactionId] : [],
     };
 
-    const fileRef = await addDoc(collection(db, FILES_COLLECTION), fileData);
+    const fileRef = await db.collection(FILES_COLLECTION).add(fileData);
     const fileId = fileRef.id;
 
     // If transactionId provided, connect file to transaction
     if (transactionId) {
-      const txRef = doc(db, TRANSACTIONS_COLLECTION, transactionId);
-      await updateDoc(txRef, {
-        fileIds: arrayUnion(fileId),
+      await db.collection(TRANSACTIONS_COLLECTION).doc(transactionId).update({
+        fileIds: FieldValue.arrayUnion(fileId),
         isComplete: true,
         updatedAt: now,
       });
 
       // Also create file connection document
-      await addDoc(collection(db, "fileConnections"), {
+      await db.collection("fileConnections").add({
         fileId,
         transactionId,
         userId,
@@ -443,27 +463,4 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-/**
- * Get tokens from secure storage
- */
-async function getTokens(integrationId: string): Promise<{
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt: { toDate: () => Date };
-} | null> {
-  const tokenDoc = doc(db, TOKENS_COLLECTION, integrationId);
-  const snapshot = await getDoc(tokenDoc);
-
-  if (!snapshot.exists()) {
-    return null;
-  }
-
-  const data = snapshot.data();
-  return {
-    accessToken: data.accessToken,
-    refreshToken: data.refreshToken,
-    expiresAt: data.expiresAt,
-  };
 }

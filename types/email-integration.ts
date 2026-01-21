@@ -121,6 +121,27 @@ export interface EmailTokenDocument {
 }
 
 /**
+ * Email classification based on content analysis.
+ * Used to determine email type BEFORE downloading attachments.
+ */
+export interface EmailClassification {
+  /** Email has PDF attachment(s) */
+  hasPdfAttachment: boolean;
+
+  /** Email body appears to be an invoice/receipt (e.g., order confirmation) */
+  possibleMailInvoice: boolean;
+
+  /** Email contains links to download an invoice */
+  possibleInvoiceLink: boolean;
+
+  /** Classification confidence (0-100) */
+  confidence: number;
+
+  /** Keywords that triggered the classification */
+  matchedKeywords?: string[];
+}
+
+/**
  * Email attachment metadata
  */
 export interface EmailAttachment {
@@ -141,6 +162,9 @@ export interface EmailAttachment {
 
   /** Whether this is likely a receipt/invoice based on filename/type */
   isLikelyReceipt: boolean;
+
+  /** If this attachment has already been imported, the file ID */
+  existingFileId?: string | null;
 }
 
 /**
@@ -176,6 +200,9 @@ export interface EmailMessage {
 
   /** Labels/folders (Gmail labels, Outlook folders) */
   labels?: string[];
+
+  /** Email classification based on content analysis */
+  classification?: EmailClassification;
 }
 
 /**
@@ -206,6 +233,9 @@ export interface EmailSearchParams {
 
   /** Page token for pagination */
   pageToken?: string;
+
+  /** Whether to expand threads and return all messages (default: false) */
+  expandThreads?: boolean;
 }
 
 /**

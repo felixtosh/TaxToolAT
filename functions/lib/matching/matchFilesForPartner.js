@@ -10,6 +10,39 @@
  * 2. After partner is manually assigned to a transaction
  * 3. Manually via callable function
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.matchFilesForPartner = void 0;
 exports.matchFilesForPartnerInternal = matchFilesForPartnerInternal;
@@ -30,6 +63,10 @@ const CONFIG = {
     MAX_FILES_PER_PARTNER: 100,
     /** Max transactions to process per partner */
     MAX_TRANSACTIONS_PER_PARTNER: 50,
+    /** Minimum unmatched items to trigger AI matching */
+    AI_MATCH_MIN_UNMATCHED: 2,
+    /** AI match confidence threshold */
+    AI_MATCH_CONFIDENCE: 90,
 };
 // === Scoring Functions ===
 /**
@@ -129,6 +166,105 @@ function scoreFileForTransaction(fileData, txData, partnerPatterns) {
         matchReasons.push("Likely receipt");
     }
     return { score, matchReasons };
+}
+/**
+ * Use Gemini AI to match files to transactions when score-based matching is insufficient.
+ * Analyzes invoice details and transaction descriptions to find matches.
+ */
+async function matchWithAI(files, transactions, partnerName) {
+    const { VertexAI } = await Promise.resolve().then(() => __importStar(require("@google-cloud/vertexai")));
+    const projectId = process.env.GCLOUD_PROJECT ||
+        process.env.GCP_PROJECT ||
+        process.env.GOOGLE_CLOUD_PROJECT;
+    if (!projectId) {
+        console.log("Google Cloud project ID not set, skipping AI matching");
+        return [];
+    }
+    const vertexAI = new VertexAI({
+        project: projectId,
+        location: process.env.VERTEX_LOCATION || "europe-west1",
+    });
+    const model = vertexAI.getGenerativeModel({ model: "gemini-2.0-flash-001" });
+    // Build file summaries
+    const fileSummaries = files.map((doc) => {
+        const data = doc.data();
+        const amount = data.extractedAmount
+            ? `${(data.extractedAmount / 100).toFixed(2)} ${data.extractedCurrency || "EUR"}`
+            : "unknown";
+        const date = data.extractedDate
+            ? data.extractedDate.toDate().toISOString().split("T")[0]
+            : "unknown";
+        return {
+            id: doc.id,
+            fileName: data.fileName || "unknown",
+            amount,
+            date,
+            invoiceNumber: data.extractedInvoiceNumber || null,
+            description: data.extractedDescription?.substring(0, 200) || null,
+        };
+    });
+    // Build transaction summaries
+    const txSummaries = transactions.map((doc) => {
+        const data = doc.data();
+        const amount = `${(data.amount / 100).toFixed(2)} ${data.currency || "EUR"}`;
+        const date = data.date
+            ? data.date.toDate().toISOString().split("T")[0]
+            : "unknown";
+        return {
+            id: doc.id,
+            amount,
+            date,
+            description: data.name || "",
+            reference: data.reference || null,
+        };
+    });
+    const prompt = `You are matching invoices/receipts to bank transactions for the company "${partnerName}".
+
+FILES (invoices/receipts):
+${JSON.stringify(fileSummaries, null, 2)}
+
+TRANSACTIONS (bank records):
+${JSON.stringify(txSummaries, null, 2)}
+
+Match each file to the most likely transaction. Consider:
+1. Amount match (exact or very close, accounting for currency/rounding)
+2. Date proximity (invoice date should be close to transaction date)
+3. Reference numbers that appear in both
+4. Description matches
+
+Return ONLY a JSON array of confident matches. Only include matches where you're highly confident.
+Each match should have: fileId, transactionId, reasoning (brief explanation).
+
+If no confident matches can be made, return an empty array [].
+
+Response format (JSON only, no markdown):
+[{"fileId": "...", "transactionId": "...", "reasoning": "..."}]`;
+    try {
+        const result = await model.generateContent({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+        });
+        const responseText = result.response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "[]";
+        // Parse JSON response (handle markdown code blocks)
+        let jsonText = responseText;
+        if (responseText.startsWith("```")) {
+            const match = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (match) {
+                jsonText = match[1].trim();
+            }
+        }
+        const matches = JSON.parse(jsonText);
+        // Validate matches - ensure file and transaction IDs exist
+        const validFileIds = new Set(files.map((f) => f.id));
+        const validTxIds = new Set(transactions.map((t) => t.id));
+        return matches.filter((m) => m.fileId &&
+            m.transactionId &&
+            validFileIds.has(m.fileId) &&
+            validTxIds.has(m.transactionId));
+    }
+    catch (error) {
+        console.error("Failed to parse AI matching response:", error);
+        return [];
+    }
 }
 // === Main Matching Logic ===
 /**
@@ -319,9 +455,68 @@ async function matchFilesForPartnerInternal(userId, partnerId, specificTransacti
     if (batchCount > 0) {
         await batch.commit();
     }
-    console.log(`File matching complete for partner ${partnerName}: ` +
+    console.log(`Score-based matching for partner ${partnerName}: ` +
         `${autoMatched} auto-matched, ${suggested} suggested`);
-    // 6. Create notification if matches found
+    // 6. AI fallback matching for remaining unmatched items
+    // If there are multiple unmatched files AND transactions, use AI to match them
+    const remainingUnmatchedFiles = unconnectedFiles.filter((doc) => !usedFiles.has(doc.id));
+    const remainingUnmatchedTxs = unfiledTransactions.filter((doc) => !usedTransactions.has(doc.id));
+    if (remainingUnmatchedFiles.length >= CONFIG.AI_MATCH_MIN_UNMATCHED &&
+        remainingUnmatchedTxs.length >= CONFIG.AI_MATCH_MIN_UNMATCHED) {
+        console.log(`Attempting AI matching for ${remainingUnmatchedFiles.length} files and ${remainingUnmatchedTxs.length} transactions`);
+        try {
+            const aiMatches = await matchWithAI(remainingUnmatchedFiles, remainingUnmatchedTxs, partnerName);
+            if (aiMatches.length > 0) {
+                const aiBatch = db.batch();
+                let aiBatchCount = 0;
+                for (const match of aiMatches) {
+                    // Skip if already used (shouldn't happen but be safe)
+                    if (usedFiles.has(match.fileId) || usedTransactions.has(match.transactionId)) {
+                        continue;
+                    }
+                    // Create connection
+                    const connectionRef = db.collection("fileConnections").doc();
+                    aiBatch.set(connectionRef, {
+                        fileId: match.fileId,
+                        transactionId: match.transactionId,
+                        userId,
+                        connectionType: "ai_matched",
+                        matchSources: ["ai_analysis"],
+                        matchConfidence: CONFIG.AI_MATCH_CONFIDENCE,
+                        aiReasoning: match.reasoning,
+                        createdAt: firestore_1.Timestamp.now(),
+                    });
+                    // Update file's transactionIds
+                    const fileRef = db.collection("files").doc(match.fileId);
+                    aiBatch.update(fileRef, {
+                        transactionIds: firestore_1.FieldValue.arrayUnion(match.transactionId),
+                        updatedAt: firestore_1.Timestamp.now(),
+                    });
+                    // Update transaction's fileIds
+                    const txRef = db.collection("transactions").doc(match.transactionId);
+                    aiBatch.update(txRef, {
+                        fileIds: firestore_1.FieldValue.arrayUnion(match.fileId),
+                        updatedAt: firestore_1.Timestamp.now(),
+                    });
+                    usedFiles.add(match.fileId);
+                    usedTransactions.add(match.transactionId);
+                    autoMatched++;
+                    aiBatchCount += 3;
+                }
+                if (aiBatchCount > 0) {
+                    await aiBatch.commit();
+                    console.log(`AI matching: ${aiMatches.length} additional matches`);
+                }
+            }
+        }
+        catch (error) {
+            console.error("AI matching failed:", error);
+            // Non-critical - continue without AI matches
+        }
+    }
+    console.log(`File matching complete for partner ${partnerName}: ` +
+        `${autoMatched} total auto-matched, ${suggested} suggested`);
+    // 7. Create notification if matches found
     if (autoMatched > 0) {
         try {
             await db.collection(`users/${userId}/notifications`).add({
@@ -357,8 +552,10 @@ exports.matchFilesForPartner = (0, https_1.onCall)({
     memory: "256MiB",
     timeoutSeconds: 60,
 }, async (request) => {
-    // TODO: Use real auth when ready for multi-user
-    const userId = "dev-user-123";
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
     const { partnerId, transactionIds } = request.data;
     if (!partnerId) {
         throw new https_1.HttpsError("invalid-argument", "partnerId is required");

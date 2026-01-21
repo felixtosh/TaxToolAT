@@ -17,9 +17,21 @@ import {
   GoogleAuthProvider,
   signOut as firebaseSignOut,
   sendPasswordResetEmail,
+  MultiFactorError,
+  MultiFactorResolver,
+  getMultiFactorResolver,
 } from "firebase/auth";
 import { httpsCallable } from "firebase/functions";
 import { auth, functions } from "@/lib/firebase/config";
+
+// Check if an error is an MFA required error
+function isMfaError(error: unknown): error is MultiFactorError {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as { code: string }).code === "auth/multi-factor-auth-required"
+  );
+}
 
 interface AuthContextValue {
   user: User | null;
@@ -32,6 +44,10 @@ interface AuthContextValue {
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   refreshAdminStatus: () => Promise<void>;
+  // MFA challenge state
+  mfaRequired: boolean;
+  mfaResolver: MultiFactorResolver | null;
+  clearMfaChallenge: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -42,6 +58,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null);
 
   const refreshAdminStatus = useCallback(async () => {
     if (!user) {
@@ -71,7 +89,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error) {
+      if (isMfaError(error)) {
+        // MFA is required - set up the resolver for the UI to handle
+        const resolver = getMultiFactorResolver(auth, error);
+        setMfaResolver(resolver);
+        setMfaRequired(true);
+        // Don't throw - the UI will show the MFA dialog
+        return;
+      }
+      throw error;
+    }
+  }, []);
+
+  const clearMfaChallenge = useCallback(() => {
+    setMfaRequired(false);
+    setMfaResolver(null);
   }, []);
 
   const signUp = useCallback(async (email: string, password: string) => {
@@ -94,29 +129,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    const result = await signInWithPopup(auth, googleProvider);
-    const email = result.user.email;
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const email = result.user.email;
 
-    // For new users signing up with Google, validate against allowedEmails
-    // Check if this is a new user by checking metadata
-    const isNewUser =
-      result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
+      // For new users signing up with Google, validate against allowedEmails
+      // Check if this is a new user by checking metadata
+      const isNewUser =
+        result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
 
-    if (isNewUser && email) {
-      const validateFn = httpsCallable<
-        { email: string },
-        { allowed: boolean; reason?: string }
-      >(functions, "validateRegistration");
+      if (isNewUser && email) {
+        const validateFn = httpsCallable<
+          { email: string },
+          { allowed: boolean; reason?: string }
+        >(functions, "validateRegistration");
 
-      const validation = await validateFn({ email: email.toLowerCase() });
+        const validation = await validateFn({ email: email.toLowerCase() });
 
-      if (!validation.data.allowed) {
-        // Delete the newly created account and throw error
-        await result.user.delete();
-        throw new Error(
-          "Registration not allowed. Please request an invite from an admin."
-        );
+        if (!validation.data.allowed) {
+          // Delete the newly created account and throw error
+          await result.user.delete();
+          throw new Error(
+            "Registration not allowed. Please request an invite from an admin."
+          );
+        }
       }
+    } catch (error) {
+      if (isMfaError(error)) {
+        // MFA is required - set up the resolver for the UI to handle
+        const resolver = getMultiFactorResolver(auth, error);
+        setMfaResolver(resolver);
+        setMfaRequired(true);
+        return;
+      }
+      throw error;
     }
   }, []);
 
@@ -139,6 +185,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut,
     resetPassword,
     refreshAdminStatus,
+    // MFA challenge state
+    mfaRequired,
+    mfaResolver,
+    clearMfaChallenge,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

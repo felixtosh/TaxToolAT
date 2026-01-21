@@ -2,6 +2,8 @@
 
 import { useMemo, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { Receipt, Search, Building2 } from "lucide-react";
 import { useTransactions } from "@/hooks/use-transactions";
 import { useSources } from "@/hooks/use-sources";
 import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
@@ -14,10 +16,12 @@ import { DataTable, DataTableHandle } from "./data-table";
 import { getTransactionColumns } from "./transaction-columns";
 import { TransactionToolbar } from "./transaction-toolbar";
 import { AutomationDialog } from "@/components/automations";
+import { TableEmptyState, emptyStatePresets } from "@/components/ui/table-empty-state";
 import { Transaction, TransactionFilters } from "@/types/transaction";
 import { UserPartner, GlobalPartner } from "@/types/partner";
 import { CategorySuggestion } from "@/types/no-receipt-category";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { usePrecisionSearchContext } from "@/hooks/use-precision-search-context";
 
 interface TransactionTableProps {
   onSelectTransaction: (transaction: Transaction) => void;
@@ -51,6 +55,7 @@ export function TransactionTable({
     closeAutomationDialog,
     integrationStatuses,
   } = useAutomations();
+  const { searchingTransactions } = usePrecisionSearchContext();
 
   // Internal ref for DataTable, use external if provided
   const internalTableRef = useRef<DataTableHandle>(null);
@@ -79,6 +84,15 @@ export function TransactionTable({
     filters,
     searchValue
   );
+
+  // Calculate assigned count (transactions with files or no-receipt category)
+  const { assignedCount, totalCount } = useMemo(() => {
+    const total = filteredTransactions.length;
+    const assigned = filteredTransactions.filter(
+      (tx) => (tx.fileIds && tx.fileIds.length > 0) || tx.noReceiptCategoryId
+    ).length;
+    return { assignedCount: assigned, totalCount: total };
+  }, [filteredTransactions]);
 
   // Scroll to and highlight a transaction by ID (uses virtualizer for off-screen items)
   const scrollToTransactionById = useCallback((transactionId: string) => {
@@ -235,14 +249,54 @@ export function TransactionTable({
       categories,
       categorySuggestions,
       fileAmountsMap,
-      openAutomationDialog
+      openAutomationDialog,
+      searchingTransactions
     ),
-    [sources, userPartners, globalPartners, categories, categorySuggestions, fileAmountsMap, openAutomationDialog]
+    [sources, userPartners, globalPartners, categories, categorySuggestions, fileAmountsMap, openAutomationDialog, searchingTransactions]
   );
 
   const handleRowClick = (transaction: Transaction) => {
     onSelectTransaction(transaction);
   };
+
+  // Determine which empty state to show
+  const hasAnyFilters = searchValue || filters.dateFrom || filters.dateTo ||
+    filters.hasFile !== undefined || filters.amountType || filters.partnerIds?.length;
+
+  const emptyState = useMemo(() => {
+    // Don't show empty state while still loading - prevents flicker
+    if (loading) {
+      return null;
+    }
+    if (transactions.length === 0) {
+      // No transactions at all - show "add account" CTA
+      return (
+        <TableEmptyState
+          icon={<Receipt className="h-full w-full" />}
+          title={emptyStatePresets.transactions.noData.title}
+          description={emptyStatePresets.transactions.noData.description}
+          action={{
+            label: emptyStatePresets.transactions.noData.actionLabel!,
+            onClick: () => router.push("/sources"),
+            icon: <Building2 className="h-4 w-4" />,
+          }}
+        />
+      );
+    }
+    // Has transactions but filters returned nothing
+    return (
+      <TableEmptyState
+        icon={<Search className="h-full w-full" />}
+        title={emptyStatePresets.transactions.noResults.title}
+        description={emptyStatePresets.transactions.noResults.description}
+        action={hasAnyFilters ? {
+          label: emptyStatePresets.transactions.noResults.actionLabel!,
+          onClick: () => router.push("/transactions"),
+        } : undefined}
+        size="sm"
+      />
+    );
+  }, [loading, transactions.length, hasAnyFilters, router]);
 
   if (error) {
     return (
@@ -262,6 +316,8 @@ export function TransactionTable({
         filters={filters}
         onFiltersChange={handleFiltersChange}
         userPartners={userPartners}
+        assignedCount={assignedCount}
+        totalCount={totalCount}
       />
 
       {/* Scrollable table area */}
@@ -273,6 +329,7 @@ export function TransactionTable({
             data={filteredTransactions}
             onRowClick={handleRowClick}
             selectedRowId={selectedTransactionId}
+            emptyState={emptyState}
           />
         </TooltipProvider>
       </div>

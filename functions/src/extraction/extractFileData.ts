@@ -1,10 +1,57 @@
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { runExtraction } from "./extractionCore";
 
 const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 const db = getFirestore();
+
+/**
+ * Triggered when a file document is updated.
+ * Re-runs extraction when:
+ * - File was undeleted (deletedAt went from non-null to null)
+ * - extractionComplete is false
+ */
+export const extractFileDataOnUndelete = onDocumentUpdated(
+  {
+    document: "files/{fileId}",
+    region: "europe-west1",
+    timeoutSeconds: 120,
+    memory: "512MiB",
+    maxInstances: 10,
+    secrets: [anthropicApiKey],
+  },
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after) return;
+
+    const fileId = event.params.fileId;
+
+    // Check if this is an undelete operation
+    const wasDeleted = !!before.deletedAt;
+    const isNowNotDeleted = !after.deletedAt;
+    const needsExtraction = !after.extractionComplete;
+
+    if (wasDeleted && isNowNotDeleted && needsExtraction) {
+      console.log(`[${new Date().toISOString()}] File ${fileId} was undeleted, starting extraction`);
+
+      try {
+        await runExtraction(fileId, after, {
+          anthropicApiKey: anthropicApiKey.value(),
+          skipClassification: false,
+        });
+      } catch (error) {
+        console.error(`Extraction failed for undeleted file ${fileId}:`, error);
+        await db.collection("files").doc(fileId).update({
+          extractionComplete: true,
+          extractionError: error instanceof Error ? error.message : "Unknown extraction error",
+          updatedAt: Timestamp.now(),
+        });
+      }
+    }
+  }
+);
 
 /**
  * Triggered when a new file document is created in Firestore.

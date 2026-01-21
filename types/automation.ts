@@ -12,7 +12,7 @@ export type IntegrationId = "gmail" | "outlook" | "gocardless" | "browser" | nul
 /**
  * Pipeline types for different automation flows
  */
-export type PipelineId = "find-partner" | "find-file";
+export type PipelineId = "find-partner" | "find-file" | "trigger-based";
 
 /**
  * How an automation step is triggered within its pipeline
@@ -21,6 +21,7 @@ export type AutomationTrigger =
   | "always"           // Always runs as part of the pipeline
   | "if_no_match"      // Only runs if previous steps didn't find a match
   | "if_integration"   // Only runs if required integration is connected
+  | "on_partner_assign" // Runs when a partner is assigned to a file or transaction
   | "manual";          // Only runs when user explicitly triggers
 
 /**
@@ -29,8 +30,11 @@ export type AutomationTrigger =
 export type PipelineTrigger =
   | "on_import"           // When transactions are imported
   | "on_partner_create"   // When a new partner is created
+  | "on_partner_update"   // When a partner's details change
   | "on_file_upload"      // When a file is uploaded
   | "on_extraction_complete" // When file extraction completes
+  | "on_category_create"  // When a new no-receipt category is created
+  | "on_transaction_update" // When a transaction is updated (e.g., partner assigned)
   | "chained"             // Runs after another pipeline completes
   | "manual";             // User manually triggers
 
@@ -91,6 +95,16 @@ export interface AutomationStep {
 
   /** Category for grouping in UI (e.g., "matching", "search", "ai") */
   category: "matching" | "search" | "ai" | "scoring";
+
+  /** Where this automation is exposed/accessible */
+  exposure: {
+    /** UI pages where this automation is visible/actionable */
+    ui: string[];
+    /** Whether this automation is callable via MCP server tools */
+    mcp: boolean;
+    /** Whether this automation can be queried/explained via chat */
+    chat: boolean;
+  };
 }
 
 /**

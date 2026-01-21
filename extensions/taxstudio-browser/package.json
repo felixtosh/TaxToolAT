@@ -1,7 +1,7 @@
 {
   "name": "taxstudio-browser-extension",
   "version": "0.0.1",
-  "description": "TaxStudio Browser Extension for invoice collection",
+  "description": "FiBuKI Browser Extension for invoice collection",
   "private": true,
   "scripts": {
     "test": "jest",

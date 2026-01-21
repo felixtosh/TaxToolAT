@@ -25,6 +25,7 @@ export function CategoryTable({
   // Filter categories by search
   const filteredCategories = useMemo(() => {
     if (!searchValue) return categories;
+
     const search = searchValue.toLowerCase();
     return categories.filter(
       (c) =>
@@ -68,19 +69,17 @@ export function CategoryTable({
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-background">
+    <div className="h-full flex flex-col overflow-hidden bg-background">
       <CategoryToolbar
         searchValue={searchValue}
         onSearchChange={onSearchChange}
       />
 
-      <div className="flex-1 overflow-auto">
-        <CategoryDataTable
-          data={filteredCategories}
-          onRowClick={onSelectCategory}
-          selectedRowId={selectedCategoryId}
-        />
-      </div>
+      <CategoryDataTable
+        data={filteredCategories}
+        onRowClick={onSelectCategory}
+        selectedRowId={selectedCategoryId}
+      />
     </div>
   );
 }

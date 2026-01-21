@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { format } from "date-fns";
-import { Search, Receipt, Check, Link2, Sparkles } from "lucide-react";
+import { Search, Receipt, Check, Link2, Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,16 +20,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Transaction } from "@/types/transaction";
-import { TransactionSuggestion, TaxFile } from "@/types/file";
+import { TransactionSuggestion } from "@/types/file";
 import { useTransactions } from "@/hooks/use-transactions";
+import { useTransactionMatching } from "@/hooks/use-transaction-matching";
 import { cn } from "@/lib/utils";
 import {
-  getTransactionMatchSourceLabel,
-  scoreTransactionMatch,
-  toTransactionSuggestion,
+  TransactionMatchResult,
+  getMatchSourceLabel,
+  isSuggestedMatch,
   TRANSACTION_MATCH_CONFIG,
-} from "@/lib/matching/transaction-matcher";
-import { Timestamp } from "firebase/firestore";
+} from "@/types/transaction-matching";
 
 interface ConnectTransactionDialogProps {
   open: boolean;
@@ -37,7 +37,9 @@ interface ConnectTransactionDialogProps {
   onSelect: (transactionIds: string[]) => Promise<void>;
   /** Transaction IDs that are already connected (to show as disabled) */
   connectedTransactionIds?: string[];
-  /** File info for display and real-time matching */
+  /** File ID for server-side matching */
+  fileId?: string;
+  /** File info for display (and for matching if fileId not provided) */
   fileInfo?: {
     fileName: string;
     extractedDate?: Date | null;
@@ -48,7 +50,7 @@ interface ConnectTransactionDialogProps {
     extractedText?: string | null;
     partnerId?: string | null;
   };
-  /** Pre-computed transaction suggestions from file matching (optional, will compute if not provided) */
+  /** Pre-computed transaction suggestions (fallback if server call fails) */
   suggestions?: TransactionSuggestion[];
 }
 
@@ -57,6 +59,7 @@ export function ConnectTransactionDialog({
   onClose,
   onSelect,
   connectedTransactionIds = [],
+  fileId,
   fileInfo,
   suggestions = [],
 }: ConnectTransactionDialogProps) {
@@ -64,180 +67,134 @@ export function ConnectTransactionDialog({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [previewTransaction, setPreviewTransaction] = useState<Transaction | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  const { transactions, loading } = useTransactions();
+  // Get all transactions for display (server provides scoring)
+  const { transactions, loading: transactionsLoading } = useTransactions();
 
-  // Compute real-time suggestions if not provided or empty
-  // This ensures users always see recommended transactions even for older files
-  const computedSuggestions = useMemo(() => {
-    // If we have pre-computed suggestions, use them
-    if (suggestions && suggestions.length > 0) {
-      return suggestions;
-    }
-
-    // Otherwise, compute in real-time if we have file info
-    if (!fileInfo || !transactions.length) {
-      return [];
-    }
-
-    // Build a minimal TaxFile object for scoring
-    const fileForScoring: TaxFile = {
-      id: "",
-      userId: "",
-      fileName: fileInfo.fileName,
-      fileType: "",
-      fileSize: 0,
-      storagePath: "",
-      downloadUrl: "",
-      transactionIds: connectedTransactionIds || [],
-      extractionComplete: true,
-      uploadedAt: Timestamp.now(),
-      createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-      extractedDate: fileInfo.extractedDate ? Timestamp.fromDate(fileInfo.extractedDate) : null,
-      extractedAmount: fileInfo.extractedAmount ?? null,
-      extractedCurrency: fileInfo.extractedCurrency ?? null,
-      extractedPartner: fileInfo.extractedPartner ?? null,
-      extractedIban: fileInfo.extractedIban ?? null,
-      extractedText: fileInfo.extractedText ?? null,
-      partnerId: fileInfo.partnerId ?? null,
+  // Memoize the fileInfo object to prevent unnecessary re-renders
+  const memoizedFileInfo = useMemo(() => {
+    if (!fileInfo) return undefined;
+    return {
+      extractedAmount: fileInfo.extractedAmount ?? undefined,
+      extractedDate: fileInfo.extractedDate?.toISOString() ?? undefined,
+      extractedPartner: fileInfo.extractedPartner ?? undefined,
+      extractedIban: fileInfo.extractedIban ?? undefined,
+      extractedText: fileInfo.extractedText ?? undefined,
+      partnerId: fileInfo.partnerId ?? undefined,
     };
+  }, [
+    fileInfo?.extractedAmount,
+    fileInfo?.extractedDate?.getTime(),
+    fileInfo?.extractedPartner,
+    fileInfo?.extractedIban,
+    fileInfo?.extractedText,
+    fileInfo?.partnerId,
+  ]);
 
-    // Filter out already connected transactions
-    const connectedSet = new Set(connectedTransactionIds || []);
-    const candidates = transactions.filter((tx) => !connectedSet.has(tx.id));
+  // Memoize excludeTransactionIds to prevent unnecessary re-renders
+  const memoizedExcludeIds = useMemo(
+    () => connectedTransactionIds,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [connectedTransactionIds.join(",")]
+  );
 
-    // Score and filter
-    const scored = candidates
-      .map((tx) => scoreTransactionMatch(fileForScoring, tx))
-      .filter((m) => m.confidence >= TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD)
-      .sort((a, b) => b.confidence - a.confidence)
-      .slice(0, 10)
-      .map(toTransactionSuggestion);
+  // Server-side transaction matching
+  const {
+    matches: serverMatches,
+    isLoading: matchesLoading,
+    fetchMatches,
+  } = useTransactionMatching({
+    fileId,
+    fileInfo: memoizedFileInfo,
+    excludeTransactionIds: memoizedExcludeIds,
+    limit: 50,
+  });
 
-    return scored;
-  }, [suggestions, fileInfo, transactions, connectedTransactionIds]);
+  // Track previous open state to detect dialog opening
+  const prevOpenRef = useRef(false);
 
-  // Create a map of suggestion info by transaction ID
-  const suggestionMap = useMemo(() => {
-    const map = new Map<string, TransactionSuggestion>();
-    for (const s of computedSuggestions) {
-      map.set(s.transactionId, s);
+  // Fetch matches: immediately on open, debounced on search change
+  useEffect(() => {
+    if (!open) {
+      prevOpenRef.current = false;
+      return;
+    }
+
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+
+    const justOpened = !prevOpenRef.current;
+    prevOpenRef.current = true;
+
+    // Fetch immediately on open, debounce on search changes
+    const delay = justOpened ? 0 : 300;
+
+    searchDebounceRef.current = setTimeout(() => {
+      if (fileId || memoizedFileInfo) {
+        fetchMatches(search || undefined);
+      }
+    }, delay);
+
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [search, open, fileId, memoizedFileInfo, fetchMatches]);
+
+  // Create a map of server match results by transaction ID
+  const matchMap = useMemo(() => {
+    const map = new Map<string, TransactionMatchResult>();
+    for (const m of serverMatches) {
+      map.set(m.transactionId, m);
+    }
+    // Also add fallback suggestions if server matches are empty
+    if (serverMatches.length === 0 && suggestions.length > 0) {
+      for (const s of suggestions) {
+        map.set(s.transactionId, {
+          transactionId: s.transactionId,
+          confidence: s.confidence,
+          matchSources: s.matchSources,
+          breakdown: { amount: 0, date: 0, partner: 0, iban: 0, reference: 0, hint: 0 },
+          preview: {
+            date: s.preview.date.toDate().toISOString(),
+            amount: s.preview.amount,
+            currency: s.preview.currency,
+            name: s.preview.name,
+            partner: s.preview.partner,
+          },
+        });
+      }
     }
     return map;
-  }, [computedSuggestions]);
+  }, [serverMatches, suggestions]);
 
-  // Parse amount from search string
-  // Supports: "123.45", "123,45", "-123.45", "€123", "123€", "123 EUR"
-  const parseSearchAmount = (searchStr: string): number | null => {
-    if (!searchStr) return null;
-
-    // Remove currency symbols and common words
-    let cleaned = searchStr
-      .replace(/[€$£]/g, "")
-      .replace(/\s*(EUR|USD|GBP|CHF)\s*/gi, "")
-      .trim();
-
-    // Handle European format (comma as decimal separator)
-    // If there's a comma followed by exactly 2 digits at the end, treat as decimal
-    if (/,\d{2}$/.test(cleaned)) {
-      cleaned = cleaned.replace(/\./g, "").replace(",", ".");
-    } else {
-      // Remove thousand separators (commas or dots not followed by 2 digits)
-      cleaned = cleaned.replace(/,/g, "");
-    }
-
-    const parsed = parseFloat(cleaned);
-    if (isNaN(parsed)) return null;
-
-    // Convert to cents
-    return Math.round(parsed * 100);
-  };
-
-  // Check if an amount matches the search amount (with tolerance)
-  const amountMatches = (transactionAmount: number, searchAmount: number): boolean => {
-    const absTransaction = Math.abs(transactionAmount);
-    const absSearch = Math.abs(searchAmount);
-
-    // Exact match
-    if (absTransaction === absSearch) return true;
-
-    // Within 5% tolerance (for rounding differences)
-    const tolerance = absSearch * 0.05;
-    return Math.abs(absTransaction - absSearch) <= Math.max(tolerance, 100); // At least 1€ tolerance
-  };
-
-  // Filter and sort transactions - suggestions first, then by search
+  // Sort transactions: server-matched first (by confidence), then by date
+  // Server handles search filtering, so we just sort here
   const filteredTransactions = useMemo(() => {
-    let filtered = transactions;
+    // Sort: server-matched transactions first (by confidence), then by date
+    return [...transactions].sort((a, b) => {
+      const aMatch = matchMap.get(a.id);
+      const bMatch = matchMap.get(b.id);
 
-    // Apply search filter
-    if (search) {
-      const searchLower = search.toLowerCase().trim();
-      const searchAmount = parseSearchAmount(search);
-
-      filtered = filtered.filter((t) => {
-        // Text matches
-        const textMatch =
-          t.name.toLowerCase().includes(searchLower) ||
-          (t.partner?.toLowerCase() || "").includes(searchLower) ||
-          (t.reference?.toLowerCase() || "").includes(searchLower);
-
-        // Amount match
-        const amountMatch = searchAmount !== null && amountMatches(t.amount, searchAmount);
-
-        return textMatch || amountMatch;
-      });
-
-      // If searching by amount, sort by amount match quality first
-      if (searchAmount !== null) {
-        filtered = filtered.sort((a, b) => {
-          const aAmountMatch = amountMatches(a.amount, searchAmount);
-          const bAmountMatch = amountMatches(b.amount, searchAmount);
-
-          // Exact/close amount matches first
-          if (aAmountMatch && !bAmountMatch) return -1;
-          if (bAmountMatch && !aAmountMatch) return 1;
-
-          // Among amount matches, prefer exact matches
-          if (aAmountMatch && bAmountMatch) {
-            const aDiff = Math.abs(Math.abs(a.amount) - Math.abs(searchAmount));
-            const bDiff = Math.abs(Math.abs(b.amount) - Math.abs(searchAmount));
-            if (aDiff !== bDiff) return aDiff - bDiff;
-          }
-
-          // Fall back to suggestion sorting
-          const aSuggestion = suggestionMap.get(a.id);
-          const bSuggestion = suggestionMap.get(b.id);
-          if (aSuggestion && bSuggestion) return bSuggestion.confidence - aSuggestion.confidence;
-          if (aSuggestion) return -1;
-          if (bSuggestion) return 1;
-
-          return b.date.toMillis() - a.date.toMillis();
-        });
-
-        return filtered;
-      }
-    }
-
-    // Sort: suggested transactions first (by confidence), then by date
-    return filtered.sort((a, b) => {
-      const aSuggestion = suggestionMap.get(a.id);
-      const bSuggestion = suggestionMap.get(b.id);
-
-      // Both are suggestions - sort by confidence
-      if (aSuggestion && bSuggestion) {
-        return bSuggestion.confidence - aSuggestion.confidence;
+      // Both have server scores - sort by confidence
+      if (aMatch && bMatch) {
+        return bMatch.confidence - aMatch.confidence;
       }
 
-      // Only one is a suggestion - it goes first
-      if (aSuggestion) return -1;
-      if (bSuggestion) return 1;
+      // Only one has a server score - it goes first
+      if (aMatch) return -1;
+      if (bMatch) return 1;
 
-      // Neither is a suggestion - sort by date (newest first)
+      // Neither has a server score - sort by date (newest first)
       return b.date.toMillis() - a.date.toMillis();
     });
-  }, [transactions, search, suggestionMap]);
+  }, [transactions, matchMap]);
+
+  // Combined loading state
+  const loading = transactionsLoading || matchesLoading;
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -337,8 +294,9 @@ export function ConnectTransactionDialog({
             {/* Transaction list */}
             <ScrollArea className="flex-1">
               {loading ? (
-                <div className="p-4 text-sm text-muted-foreground text-center">
-                  Loading transactions...
+                <div className="p-8 text-sm text-muted-foreground text-center">
+                  <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin" />
+                  {matchesLoading ? "Finding best matches..." : "Loading transactions..."}
                 </div>
               ) : filteredTransactions.length === 0 ? (
                 <div className="p-4 text-sm text-muted-foreground text-center">
@@ -351,7 +309,8 @@ export function ConnectTransactionDialog({
                       const isConnected = isTransactionConnected(transaction.id);
                       const isSelected = selectedIds.has(transaction.id);
                       const isPreviewing = previewTransaction?.id === transaction.id;
-                      const suggestion = suggestionMap.get(transaction.id);
+                      const matchResult = matchMap.get(transaction.id);
+                      const isSuggested = matchResult && isSuggestedMatch(matchResult);
 
                       return (
                         <button
@@ -365,7 +324,7 @@ export function ConnectTransactionDialog({
                             isPreviewing && "ring-1 ring-primary",
                             !isSelected && !isConnected && "hover:bg-muted",
                             isConnected && "opacity-50 cursor-not-allowed",
-                            suggestion && !isSelected && !isConnected && "bg-amber-50 dark:bg-amber-950/20"
+                            isSuggested && !isSelected && !isConnected && "bg-amber-50 dark:bg-amber-950/20"
                           )}
                         >
                           {/* Checkbox */}
@@ -396,7 +355,7 @@ export function ConnectTransactionDialog({
                                   Connected
                                 </Badge>
                               )}
-                              {suggestion && !isConnected && (
+                              {isSuggested && matchResult && !isConnected && (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Badge
@@ -404,14 +363,14 @@ export function ConnectTransactionDialog({
                                       className="text-xs bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700"
                                     >
                                       <Sparkles className="h-3 w-3 mr-1" />
-                                      {suggestion.confidence}%
+                                      {matchResult.confidence}%
                                     </Badge>
                                   </TooltipTrigger>
                                   <TooltipContent side="right" className="text-xs">
                                     <p className="font-medium mb-1">Suggested match</p>
                                     <p className="text-muted-foreground">
-                                      {suggestion.matchSources
-                                        .map((s) => getTransactionMatchSourceLabel(s))
+                                      {matchResult.matchSources
+                                        .map((s) => getMatchSourceLabel(s))
                                         .join(", ")}
                                     </p>
                                   </TooltipContent>

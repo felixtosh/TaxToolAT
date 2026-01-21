@@ -15,8 +15,10 @@ exports.matchCategories = (0, https_1.onCall)({
     region: "europe-west1",
     memory: "512MiB",
 }, async (request) => {
-    // TODO: Use real auth when ready for multi-user
-    const userId = "dev-user-123";
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
     const { transactionIds, matchAll } = request.data;
     console.log(`Category matching triggered by user ${userId}`, {
         transactionIds,
@@ -56,6 +58,7 @@ async function matchCategoriesForUser(userId, transactionIds, matchAll) {
             matchedPartnerIds: data.matchedPartnerIds || [],
             learnedPatterns: data.learnedPatterns || [],
             manualRemovals: removals,
+            transactionCount: data.transactionCount || 0,
             isActive: data.isActive,
         };
     });

@@ -194,7 +194,10 @@ export async function registerTestDataTools(
 
       const docRef = doc(ctx.db, SOURCES_COLLECTION, TEST_SOURCE_ID);
       const snapshot = await getDoc(docRef);
-      const isActive = snapshot.exists() && snapshot.data()?.isActive === true;
+      // Check if exists, is active, AND belongs to current user
+      const isActive = snapshot.exists() &&
+        snapshot.data()?.isActive === true &&
+        snapshot.data()?.userId === ctx.userId;
 
       return {
         content: [
@@ -209,10 +212,12 @@ export async function registerTestDataTools(
     case "toggle_test_data": {
       const { enable } = toggleTestDataSchema.parse(args);
 
-      // Check current status
+      // Check current status (must belong to current user)
       const docRef = doc(ctx.db, SOURCES_COLLECTION, TEST_SOURCE_ID);
       const snapshot = await getDoc(docRef);
-      const currentlyActive = snapshot.exists() && snapshot.data()?.isActive === true;
+      const currentlyActive = snapshot.exists() &&
+        snapshot.data()?.isActive === true &&
+        snapshot.data()?.userId === ctx.userId;
 
       if (enable && currentlyActive) {
         return {
@@ -254,10 +259,11 @@ export async function registerTestDataTools(
           ],
         };
       } else {
-        // Deactivate test data
+        // Deactivate test data (only for current user)
         const q = query(
           collection(ctx.db, TRANSACTIONS_COLLECTION),
-          where("sourceId", "==", TEST_SOURCE_ID)
+          where("sourceId", "==", TEST_SOURCE_ID),
+          where("userId", "==", ctx.userId)
         );
         const txnSnapshot = await getDocs(q);
 
@@ -276,9 +282,12 @@ export async function registerTestDataTools(
           }
         }
 
-        // Delete source
+        // Delete source only if it belongs to current user
         const sourceRef = doc(ctx.db, SOURCES_COLLECTION, TEST_SOURCE_ID);
-        batch.delete(sourceRef);
+        const sourceSnap = await getDoc(sourceRef);
+        if (sourceSnap.exists() && sourceSnap.data()?.userId === ctx.userId) {
+          batch.delete(sourceRef);
+        }
 
         await batch.commit();
 

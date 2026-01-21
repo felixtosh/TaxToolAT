@@ -41,6 +41,8 @@ export interface ResizableDataTableProps<TData extends { id: string }> {
   sectionHeaderHeight?: number;
   overscan?: number;
   emptyMessage?: string;
+  /** Custom empty state component (takes precedence over emptyMessage) */
+  emptyState?: ReactNode;
   /** Auto-scroll to selected row when it changes (default: true). Skips scroll if row is already visible. */
   autoScrollToSelected?: boolean;
   /** Initial sorting state */

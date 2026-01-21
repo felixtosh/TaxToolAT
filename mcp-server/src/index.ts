@@ -30,7 +30,14 @@ async function main() {
   );
 
   // Create operations context
-  const ctx = createContext();
+  // Get userId from environment variable (required for MCP server)
+  const userId = process.env.MCP_USER_ID;
+  if (!userId) {
+    console.error("Error: MCP_USER_ID environment variable is required");
+    console.error("Set it in your shell or .mcp.json to specify the user context");
+    process.exit(1);
+  }
+  const ctx = createContext(userId);
 
   // Combine all tool definitions
   const allTools = [
@@ -88,7 +95,7 @@ async function main() {
       if (browserDebugResult !== null) return browserDebugResult;
 
       // Try email inbound tools
-      const emailInboundResult = await registerEmailInboundTools(ctx, name, args);
+      const emailInboundResult = await registerEmailInboundTools(ctx, name, args ?? {});
       if (emailInboundResult !== null) return emailInboundResult;
 
       throw new Error(`Unknown tool: ${name}`);
@@ -105,7 +112,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error("TaxStudio MCP server running on stdio");
+  console.error("FiBuKI MCP server running on stdio");
 }
 
 main().catch((error) => {

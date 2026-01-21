@@ -15,10 +15,10 @@ exports.matchPartners = (0, https_1.onCall)({
     region: "europe-west1",
     memory: "512MiB",
 }, async (request) => {
-    // TODO: Use real auth when ready for multi-user
-    // For now, always use mock user during development
-    // (Auth is only used for Gmail OAuth, not data ownership)
-    const userId = "dev-user-123";
+    if (!request.auth?.uid) {
+        throw new https_1.HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
     const { transactionIds, matchAll } = request.data;
     console.log(`Manual matching triggered by user ${userId}`, { transactionIds, matchAll });
     // Get partners

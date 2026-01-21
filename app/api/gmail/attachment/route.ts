@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, getDoc, addDoc, collection, Timestamp, updateDoc, arrayUnion } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { getServerDb, getServerStorage } from "@/lib/firebase/config-server";
+import { getAdminDb, getAdminBucket, getFirebaseStorageDownloadUrl } from "@/lib/firebase/admin";
+import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import { getEmailIntegration, markIntegrationNeedsReauth } from "@/lib/operations";
 import { GmailClient } from "@/lib/email-providers/gmail-client";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 
-const db = getServerDb();
-const storage = getServerStorage();
+const db = getAdminDb();
 
+const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const TOKENS_COLLECTION = "emailTokens";
 const FILES_COLLECTION = "files";
 const TRANSACTIONS_COLLECTION = "transactions";
@@ -62,11 +60,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId };
-
     // Verify integration
-    const integration = await getEmailIntegration(ctx, integrationId);
-    if (!integration) {
+    const integrationRef = db.collection(INTEGRATIONS_COLLECTION).doc(integrationId);
+    const integrationSnap = await integrationRef.get();
+
+    if (!integrationSnap.exists) {
+      return NextResponse.json(
+        { error: "Integration not found" },
+        { status: 404 }
+      );
+    }
+
+    const integration = integrationSnap.data()!;
+    if (integration.userId !== userId) {
       return NextResponse.json(
         { error: "Integration not found" },
         { status: 404 }
@@ -74,13 +80,15 @@ export async function GET(request: NextRequest) {
     }
 
     // Get tokens
-    const tokens = await getTokens(integrationId);
-    if (!tokens) {
+    const tokenSnap = await db.collection(TOKENS_COLLECTION).doc(integrationId).get();
+    if (!tokenSnap.exists) {
       return NextResponse.json(
         { error: "Tokens not found" },
         { status: 403 }
       );
     }
+
+    const tokens = tokenSnap.data()!;
 
     // Download attachment
     const gmailClient = new GmailClient(
@@ -99,7 +107,6 @@ export async function GET(request: NextRequest) {
     );
 
     // Return the attachment data with appropriate headers
-    // Convert Buffer to Uint8Array for NextResponse compatibility
     return new NextResponse(new Uint8Array(attachment.data), {
       headers: {
         "Content-Type": normalizedMimeType,
@@ -163,11 +170,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId };
-
     // Verify integration
-    const integration = await getEmailIntegration(ctx, integrationId);
-    if (!integration) {
+    const integrationRef = db.collection(INTEGRATIONS_COLLECTION).doc(integrationId);
+    const integrationSnap = await integrationRef.get();
+
+    if (!integrationSnap.exists) {
+      return NextResponse.json(
+        { error: "Integration not found" },
+        { status: 404 }
+      );
+    }
+
+    const integration = integrationSnap.data()!;
+    if (integration.userId !== userId) {
       return NextResponse.json(
         { error: "Integration not found" },
         { status: 404 }
@@ -175,17 +190,23 @@ export async function POST(request: NextRequest) {
     }
 
     // Get tokens
-    const tokens = await getTokens(integrationId);
-    if (!tokens) {
+    const tokenSnap = await db.collection(TOKENS_COLLECTION).doc(integrationId).get();
+    if (!tokenSnap.exists) {
       return NextResponse.json(
         { error: "Tokens not found" },
         { status: 403 }
       );
     }
 
+    const tokens = tokenSnap.data()!;
+
     // Check token expiry
     if (tokens.expiresAt.toDate() < new Date()) {
-      await markIntegrationNeedsReauth(ctx, integrationId, "Access token expired");
+      await integrationRef.update({
+        needsReauth: true,
+        lastError: "Access token expired",
+        updatedAt: Timestamp.now(),
+      });
       return NextResponse.json(
         { error: "Token expired", code: "TOKEN_EXPIRED" },
         { status: 403 }
@@ -211,22 +232,80 @@ export async function POST(request: NextRequest) {
     // Calculate file hash for deduplication
     const fileHash = createHash("sha256").update(attachment.data).digest("hex");
 
-    // Upload to Firebase Storage
+    // Check for existing file with same Gmail message + attachment ID
+    const existingByGmail = await db
+      .collection(FILES_COLLECTION)
+      .where("userId", "==", userId)
+      .where("gmailMessageId", "==", messageId)
+      .where("gmailAttachmentId", "==", attachmentId)
+      .limit(1)
+      .get();
+
+    if (!existingByGmail.empty) {
+      const existingFile = existingByGmail.docs[0];
+      const existingData = existingFile.data();
+
+      // If transactionId provided, connect existing file to transaction
+      if (transactionId) {
+        const now = Timestamp.now();
+        await db.collection(TRANSACTIONS_COLLECTION).doc(transactionId).update({
+          fileIds: FieldValue.arrayUnion(existingFile.id),
+          isComplete: true,
+          updatedAt: now,
+        });
+
+        // Update file's transactionIds
+        await existingFile.ref.update({
+          transactionIds: FieldValue.arrayUnion(transactionId),
+          updatedAt: now,
+        });
+
+        // Create file connection document
+        await db.collection("fileConnections").add({
+          fileId: existingFile.id,
+          transactionId,
+          userId,
+          connectionType: "gmail_import",
+          createdAt: now,
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        fileId: existingFile.id,
+        fileName: existingData.fileName,
+        downloadUrl: existingData.downloadUrl,
+        connectedToTransaction: !!transactionId,
+        alreadyExists: true,
+      });
+    }
+
+    // Upload to Firebase Storage using Admin SDK
     const timestamp = Date.now();
     const sanitizedFilename = attachment.filename.replace(/[^a-zA-Z0-9.-]/g, "_");
     const storagePath = `files/${userId}/${timestamp}_${sanitizedFilename}`;
-    const storageRef = ref(storage, storagePath);
 
-    await uploadBytes(storageRef, attachment.data, {
-      contentType: normalizedMimeType,
-      customMetadata: {
-        originalName: attachment.filename,
-        gmailMessageId: messageId,
-        gmailIntegrationId: integrationId,
+    const bucket = getAdminBucket();
+    const file = bucket.file(storagePath);
+
+    // Generate a download token (same as client SDK's getDownloadURL)
+    const downloadToken = randomUUID();
+
+    await file.save(Buffer.from(attachment.data), {
+      metadata: {
+        contentType: normalizedMimeType,
+        contentDisposition: "inline",
+        metadata: {
+          originalName: attachment.filename,
+          gmailMessageId: messageId,
+          gmailIntegrationId: integrationId,
+          firebaseStorageDownloadTokens: downloadToken,
+        },
       },
     });
 
-    const downloadUrl = await getDownloadURL(storageRef);
+    // Construct Firebase Storage download URL (permanent, like client SDK's getDownloadURL)
+    const downloadUrl = getFirebaseStorageDownloadUrl(bucket.name, storagePath, downloadToken);
 
     const parsedFrom = parseFromHeader(gmailMessageFrom);
     const senderEmail = parsedFrom.email;
@@ -251,7 +330,8 @@ export async function POST(request: NextRequest) {
       sourceSearchPattern: searchPattern || null,
       sourceResultType: resultType || "gmail_attachment",
       gmailMessageId: messageId,
-      gmailThreadId: messageId, // We don't have thread ID here
+      gmailAttachmentId: attachmentId,
+      gmailThreadId: messageId,
       gmailIntegrationId: integrationId,
       gmailIntegrationEmail: integration.email || null,
       gmailSubject: gmailMessageSubject || null,
@@ -263,20 +343,19 @@ export async function POST(request: NextRequest) {
       transactionIds: transactionId ? [transactionId] : [],
     };
 
-    const fileRef = await addDoc(collection(db, FILES_COLLECTION), fileData);
+    const fileRef = await db.collection(FILES_COLLECTION).add(fileData);
     const fileId = fileRef.id;
 
     // If transactionId provided, connect file to transaction
     if (transactionId) {
-      const txRef = doc(db, TRANSACTIONS_COLLECTION, transactionId);
-      await updateDoc(txRef, {
-        fileIds: arrayUnion(fileId),
+      await db.collection(TRANSACTIONS_COLLECTION).doc(transactionId).update({
+        fileIds: FieldValue.arrayUnion(fileId),
         isComplete: true,
         updatedAt: now,
       });
 
       // Also create file connection document
-      await addDoc(collection(db, "fileConnections"), {
+      await db.collection("fileConnections").add({
         fileId,
         transactionId,
         userId,
@@ -307,27 +386,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-/**
- * Get tokens from secure storage
- */
-async function getTokens(integrationId: string): Promise<{
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt: { toDate: () => Date };
-} | null> {
-  const tokenDoc = doc(db, TOKENS_COLLECTION, integrationId);
-  const snapshot = await getDoc(tokenDoc);
-
-  if (!snapshot.exists()) {
-    return null;
-  }
-
-  const data = snapshot.data();
-  return {
-    accessToken: data.accessToken,
-    refreshToken: data.refreshToken,
-    expiresAt: data.expiresAt,
-  };
 }

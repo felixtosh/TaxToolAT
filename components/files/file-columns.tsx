@@ -9,6 +9,12 @@ import { SortableHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { cn } from "@/lib/utils";
+import { convertCurrency } from "@/lib/currency";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export interface TransactionAmountInfo {
   amount: number;
@@ -141,6 +147,7 @@ export function getFileColumns(
         const currency = normalizeCurrency(row.original.extractedCurrency);
         const vatPercent = row.original.extractedVatPercent;
         const invoiceDirection = row.original.invoiceDirection;
+        const extractedDate = row.original.extractedDate;
 
         if (amount == null) {
           return <span className="text-sm text-muted-foreground">—</span>;
@@ -148,21 +155,42 @@ export function getFileColumns(
 
         // Apply sign based on direction (incoming = expense/negative, outgoing = income/positive)
         const signedAmount = invoiceDirection === "incoming" ? -(amount / 100) : amount / 100;
-        const formatted = new Intl.NumberFormat("de-DE", {
+        const originalFormatted = new Intl.NumberFormat("de-DE", {
           style: "currency",
           currency,
         }).format(signedAmount);
 
-        return (
+        // Convert to EUR if currency differs - EUR becomes primary display
+        let displayAmount = originalFormatted;
+        let conversionInfo: { original: string; converted: string; rate: number; rateCurrency: string } | null = null;
+
+        if (currency !== "EUR") {
+          const dateForConversion = extractedDate?.toDate() || new Date();
+          const conversion = convertCurrency(Math.abs(amount), currency, "EUR", dateForConversion);
+          if (conversion) {
+            const signedConverted = invoiceDirection === "incoming" ? -(conversion.amount / 100) : conversion.amount / 100;
+            displayAmount = "~" + new Intl.NumberFormat("de-DE", {
+              style: "currency",
+              currency: "EUR",
+            }).format(signedConverted);
+            conversionInfo = {
+              original: originalFormatted,
+              converted: displayAmount,
+              rate: conversion.rate,
+              rateCurrency: currency,
+            };
+          }
+        }
+
+        const amountDisplay = (
           <div>
             <p
               className={cn(
                 "text-sm tabular-nums whitespace-nowrap",
-                invoiceDirection === "outgoing" && "text-emerald-600",
-                invoiceDirection === "incoming" && "text-red-600"
+                signedAmount < 0 ? "text-amount-negative" : "text-amount-positive"
               )}
             >
-              {formatted}
+              {displayAmount}
             </p>
             {vatPercent != null && (
               <p className="text-xs text-muted-foreground">
@@ -171,6 +199,30 @@ export function getFileColumns(
             )}
           </div>
         );
+
+        // Wrap in tooltip if currency was converted
+        if (conversionInfo) {
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div>{amountDisplay}</div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">
+                  <span className="text-muted-foreground">Original:</span> {conversionInfo.original}
+                </p>
+                <p className="text-xs">
+                  <span className="text-muted-foreground">Converted:</span> {conversionInfo.converted}
+                </p>
+                <p className="text-xs">
+                  <span className="text-muted-foreground">Rate:</span> 1 {conversionInfo.rateCurrency} = {conversionInfo.rate.toFixed(4)} EUR
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
+
+        return amountDisplay;
       },
     },
     {

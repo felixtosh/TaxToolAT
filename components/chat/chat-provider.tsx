@@ -9,6 +9,7 @@ import { AutoActionNotification } from "@/types/notification";
 import { requiresConfirmation, getConfirmationDetails } from "@/lib/chat/confirmation-config";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useChatPersistence } from "@/hooks/use-chat-persistence";
+import { useAuth } from "@/components/auth";
 
 const ChatContext = createContext<ChatContextValue | null>(null);
 
@@ -32,6 +33,7 @@ interface ChatProviderProps {
 
 export function ChatProvider({ children }: ChatProviderProps) {
   const router = useRouter();
+  const { user } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [pendingConfirmations, setPendingConfirmations] = useState<ToolCall[]>([]);
@@ -53,10 +55,23 @@ export function ChatProvider({ children }: ChatProviderProps) {
     saveMessage,
   } = useChatPersistence();
 
+  // Get auth token for API requests
+  const getAuthHeaders = useCallback(async (): Promise<Record<string, string>> => {
+    if (!user) return {};
+    try {
+      const token = await user.getIdToken();
+      return { Authorization: `Bearer ${token}` };
+    } catch (e) {
+      console.error("[Chat] Failed to get auth token:", e);
+      return {};
+    }
+  }, [user]);
+
   // Use Vercel AI SDK's useChat hook
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const chatHook = (useVercelChat as any)({
     api: "/api/chat",
+    headers: getAuthHeaders,
     onToolCall: ({ toolCall }: { toolCall: any }) => {
       // Check if this tool requires confirmation
       if (requiresConfirmation(toolCall.toolName)) {

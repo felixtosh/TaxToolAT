@@ -90,7 +90,7 @@ export function PartnerDetailPanel({
   const [feedback, setFeedback] = useState<FeedbackMessage | null>(null);
 
   const isMarkedAsMe = isPartnerMarkedAsMe(partner.id);
-  const ctx = useMemo(() => ({ db, userId }), [userId]);
+  const ctx = useMemo(() => ({ db, userId: userId ?? "" }), [userId]);
 
   const integrationLabels = useMemo(() => {
     const map = new Map<string, string>();

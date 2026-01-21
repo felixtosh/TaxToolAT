@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { collection, addDoc } from "firebase/firestore";
-import { Timestamp } from "firebase/firestore";
-import { getServerDb } from "@/lib/firebase/config-server";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import {
-  getEmailIntegration,
-  resumeEmailIntegration,
-  getSyncDateRanges,
-  cleanupStaleQueueItems,
-  hasPendingSync,
-} from "@/lib/operations";
 
-const db = getServerDb();
+const db = getAdminDb();
+const INTEGRATIONS_COLLECTION = "emailIntegrations";
+const SYNC_QUEUE_COLLECTION = "gmailSyncQueue";
 
 /**
  * POST /api/gmail/resume
@@ -35,11 +29,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId };
-
     // Verify integration exists and belongs to user
-    const integration = await getEmailIntegration(ctx, integrationId);
-    if (!integration) {
+    const integrationRef = db.collection(INTEGRATIONS_COLLECTION).doc(integrationId);
+    const integrationSnap = await integrationRef.get();
+
+    if (!integrationSnap.exists) {
+      return NextResponse.json(
+        { error: "Integration not found" },
+        { status: 404 }
+      );
+    }
+
+    const integration = integrationSnap.data()!;
+    if (integration.userId !== userId) {
       return NextResponse.json(
         { error: "Integration not found" },
         { status: 404 }
@@ -47,7 +49,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Resume the integration
-    await resumeEmailIntegration(ctx, integrationId);
+    await integrationRef.update({
+      isPaused: false,
+      pausedAt: null,
+      updatedAt: Timestamp.now(),
+    });
     console.log(`[Gmail Resume] Resumed integration: ${integration.email}`);
 
     // Check if reauth is needed
@@ -60,15 +66,43 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Clean up any stale queue items
-    const cleanedUp = await cleanupStaleQueueItems(ctx, integrationId);
+    // Clean up any stale queue items (paused items that should be restarted)
+    const staleItemsQuery = await db
+      .collection(SYNC_QUEUE_COLLECTION)
+      .where("integrationId", "==", integrationId)
+      .where("status", "==", "paused")
+      .get();
+
+    let cleanedUp = 0;
+    for (const doc of staleItemsQuery.docs) {
+      // Restart paused items instead of deleting
+      await doc.ref.update({
+        status: "pending",
+        pausedAt: null,
+        updatedAt: Timestamp.now(),
+      });
+      cleanedUp++;
+    }
+
     if (cleanedUp > 0) {
-      console.log(`[Gmail Resume] Cleaned up ${cleanedUp} stale queue item(s)`);
+      console.log(`[Gmail Resume] Restarted ${cleanedUp} paused queue item(s)`);
+      return NextResponse.json({
+        success: true,
+        message: `Sync resumed, restarting ${cleanedUp} paused sync(s)`,
+        syncStarted: true,
+        restartedSyncs: cleanedUp,
+      });
     }
 
     // Check if there's already a pending sync
-    const hasPending = await hasPendingSync(ctx, integrationId);
-    if (hasPending) {
+    const pendingSyncsQuery = await db
+      .collection(SYNC_QUEUE_COLLECTION)
+      .where("integrationId", "==", integrationId)
+      .where("status", "in", ["pending", "processing"])
+      .limit(1)
+      .get();
+
+    if (!pendingSyncsQuery.empty) {
       return NextResponse.json({
         success: true,
         message: "Sync resumed, a sync is already in progress",
@@ -77,52 +111,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Get date ranges that need syncing
-    const gapsToSync = await getSyncDateRanges(ctx, integrationId);
-
-    if (gapsToSync.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: "Sync resumed, already up to date",
-        syncStarted: false,
-        alreadySynced: true,
-      });
-    }
-
-    // Create queue items for each gap (trigger immediate sync)
-    const now = Timestamp.now();
-    const queueIds: string[] = [];
-
-    for (const gap of gapsToSync) {
-      const queueRef = await addDoc(collection(db, "gmailSyncQueue"), {
-        userId,
-        integrationId,
-        type: "manual",
-        status: "pending",
-        dateFrom: Timestamp.fromDate(gap.from),
-        dateTo: Timestamp.fromDate(gap.to),
-        emailsProcessed: 0,
-        filesCreated: 0,
-        attachmentsSkipped: 0,
-        errors: [],
-        retryCount: 0,
-        maxRetries: 3,
-        processedMessageIds: [],
-        createdAt: now,
-      });
-      queueIds.push(queueRef.id);
-
-      console.log(
-        `[Gmail Resume] Queued sync for ${integration.email}: ${queueRef.id} ` +
-        `(${gap.from.toISOString()} - ${gap.to.toISOString()})`
-      );
-    }
-
+    // No paused or pending syncs - just resume without starting new sync
+    // The next scheduled sync will pick it up
     return NextResponse.json({
       success: true,
-      message: `Sync resumed and started for ${gapsToSync.length} date range(s)`,
-      syncStarted: true,
-      queueIds,
+      message: "Sync resumed, will sync on next scheduled run",
+      syncStarted: false,
     });
   } catch (error) {
     console.error("[Gmail Resume] Error:", error);

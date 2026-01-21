@@ -9,9 +9,33 @@ import {
   registerProviderFactory,
   isLikelyReceiptAttachment,
   buildGmailSearchQuery,
+  classifyEmail,
 } from "./interface";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 
 const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
+
+/** Max concurrent Gmail API requests to avoid 429 rate limit errors */
+const MAX_CONCURRENT_REQUESTS = 5;
+
+/**
+ * Process items with limited concurrency to avoid rate limiting
+ */
+async function batchWithConcurrency<T, R>(
+  items: T[],
+  processor: (item: T) => Promise<R>,
+  concurrency: number = MAX_CONCURRENT_REQUESTS
+): Promise<R[]> {
+  const results: R[] = [];
+
+  for (let i = 0; i < items.length; i += concurrency) {
+    const batch = items.slice(i, i + concurrency);
+    const batchResults = await Promise.all(batch.map(processor));
+    results.push(...batchResults);
+  }
+
+  return results;
+}
 
 /**
  * Gmail API client implementing the EmailProviderClient interface
@@ -113,16 +137,18 @@ export class GmailClient implements EmailProviderClient {
     let validMessages: EmailMessage[];
 
     if (params.expandThreads) {
-      // Get unique thread IDs and fetch full threads
+      // Get unique thread IDs and fetch full threads with concurrency limiting
       const threadIds = [...new Set(searchResult.messages.map((m) => m.threadId))];
-      const threadMessages = await Promise.all(
-        threadIds.map((threadId) => this.getThreadMessages(threadId))
+      const threadMessages = await batchWithConcurrency(
+        threadIds,
+        (threadId) => this.getThreadMessages(threadId)
       );
       validMessages = threadMessages.flat();
     } else {
-      // Fetch full message details for each result
-      const messages = await Promise.all(
-        searchResult.messages.map((msg) => this.getMessage(msg.id))
+      // Fetch full message details with concurrency limiting
+      const messages = await batchWithConcurrency(
+        searchResult.messages,
+        (msg) => this.getMessage(msg.id)
       );
       // Filter out null results (messages that couldn't be fetched)
       validMessages = messages.filter(
@@ -207,6 +233,9 @@ export class GmailClient implements EmailProviderClient {
     // Extract attachments
     const attachments = this.extractAttachments(message.payload, message.id);
 
+    // Classify email based on snippet and subject (before downloading)
+    const classification = classifyEmail(subject, message.snippet || "", attachments);
+
     return {
       messageId: message.id,
       threadId: message.threadId,
@@ -218,6 +247,7 @@ export class GmailClient implements EmailProviderClient {
       snippet: message.snippet || "",
       attachments,
       labels: message.labelIds,
+      classification,
     };
   }
 
@@ -394,9 +424,8 @@ export class GmailClient implements EmailProviderClient {
     }
 
     try {
-      const response = await fetch("/api/gmail/refresh", {
+      const response = await fetchWithAuth("/api/gmail/refresh", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ integrationId: this.integrationId }),
       });
 

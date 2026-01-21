@@ -20,6 +20,9 @@
   --color-info: hsl(45 93% 94%);
   --color-info-foreground: hsl(32 81% 29%);
   --color-info-border: hsl(45 80% 70%);
+  /* Amount colors for income/expense */
+  --color-amount-positive: hsl(142.1 76.2% 36.3%);
+  --color-amount-negative: hsl(0 72.2% 50.6%);
   --color-border: hsl(214.3 31.8% 91.4%);
   --color-input: hsl(214.3 31.8% 91.4%);
   --color-ring: hsl(222.2 84% 4.9%);

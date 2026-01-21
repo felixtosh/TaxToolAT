@@ -1,4 +1,4 @@
-import { onCall } from "firebase-functions/v2/https";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import {
   matchTransactionToCategories,
@@ -31,8 +31,10 @@ export const matchCategories = onCall<MatchCategoriesRequest>(
     memory: "512MiB",
   },
   async (request): Promise<MatchCategoriesResponse> => {
-    // TODO: Use real auth when ready for multi-user
-    const userId = "dev-user-123";
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
     const { transactionIds, matchAll } = request.data;
 
     console.log(`Category matching triggered by user ${userId}`, {
@@ -88,6 +90,7 @@ export async function matchCategoriesForUser(
       matchedPartnerIds: data.matchedPartnerIds || [],
       learnedPatterns: data.learnedPatterns || [],
       manualRemovals: removals,
+      transactionCount: data.transactionCount || 0,
       isActive: data.isActive,
     };
   });

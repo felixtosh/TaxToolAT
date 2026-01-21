@@ -24,6 +24,14 @@ export async function GET(request: NextRequest) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI || "http://localhost:3000/api/gmail/callback";
   const returnTo = request.nextUrl.searchParams.get("returnTo");
+  const userId = request.nextUrl.searchParams.get("userId");
+
+  if (!userId) {
+    return NextResponse.json(
+      { error: "Missing userId parameter" },
+      { status: 400 }
+    );
+  }
 
   if (!clientId) {
     return NextResponse.json(
@@ -72,6 +80,15 @@ export async function GET(request: NextRequest) {
       path: "/",
     });
   }
+
+  // Store user ID for callback to associate integration with correct user
+  response.cookies.set("gmail_oauth_user_id", userId, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    expires: stateExpiry,
+    path: "/",
+  });
 
   return response;
 }

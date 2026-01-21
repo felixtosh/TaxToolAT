@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Mail } from "lucide-react";
+import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Mail, Palette, Shield, Zap } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { ChatProvider, ChatSidebar, useChat } from "@/components/chat";
@@ -24,8 +24,6 @@ const navItems = [
   { href: "/files", label: "Files", icon: Files },
   { href: "/sources", label: "Accounts", icon: Building2 },
   { href: "/partners", label: "Partners", icon: Users },
-  { href: "/categories", label: "Categories", icon: Tag },
-  { href: "/integrations", label: "Integrations", icon: Link2 },
 ];
 
 /**
@@ -81,7 +79,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-8">
             <Link href="/transactions" className="flex items-center gap-2 hover:opacity-80">
               <FileSpreadsheet className="h-5 w-5 text-primary" />
-              <span className="font-semibold text-lg">TaxStudio</span>
+              <span className="font-semibold text-lg">FiBuKI</span>
             </Link>
             <nav className="flex items-center gap-1">
               {navItems.map((item) => {
@@ -117,15 +115,33 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>Settings</DropdownMenuLabel>
                 <DropdownMenuItem asChild>
-                  <Link href="/settings/profile" className="flex items-center gap-2">
-                    <User className="h-4 w-4" />
-                    Profile
+                  <Link href="/settings/sign-in" className="flex items-center gap-2">
+                    <Mail className="h-4 w-4" />
+                    Sign-in Methods
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
-                  <Link href="/settings/accounts" className="flex items-center gap-2">
-                    <Mail className="h-4 w-4" />
-                    Linked Accounts
+                  <Link href="/settings/security" className="flex items-center gap-2">
+                    <Shield className="h-4 w-4" />
+                    Security
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/settings/identity" className="flex items-center gap-2">
+                    <User className="h-4 w-4" />
+                    Your Identity
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/categories" className="flex items-center gap-2">
+                    <Tag className="h-4 w-4" />
+                    No-Receipt Categories
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/integrations" className="flex items-center gap-2">
+                    <Link2 className="h-4 w-4" />
+                    Integrations
                   </Link>
                 </DropdownMenuItem>
 
@@ -155,6 +171,18 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                       <Link href="/admin/users" className="flex items-center gap-2">
                         <UserPlus className="h-4 w-4" />
                         Manage Users
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href="/admin/automation" className="flex items-center gap-2">
+                        <Zap className="h-4 w-4" />
+                        Automations
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href="/design-system" className="flex items-center gap-2">
+                        <Palette className="h-4 w-4" />
+                        Design System
                       </Link>
                     </DropdownMenuItem>
                   </>

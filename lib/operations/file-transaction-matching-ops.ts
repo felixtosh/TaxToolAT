@@ -3,6 +3,9 @@
  *
  * Operations for accepting/dismissing transaction suggestions
  * and managing file-transaction connections from matching.
+ *
+ * IMPORTANT: All scoring is done server-side via the findTransactionMatchesForFile
+ * callable. This ensures consistent scoring across all UI surfaces.
  */
 
 import {
@@ -18,18 +21,26 @@ import {
   arrayUnion,
   orderBy,
 } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 import {
   TaxFile,
   TransactionSuggestion,
   TransactionMatchSource,
 } from "@/types/file";
-import { Transaction } from "@/types/transaction";
 import { OperationsContext } from "./types";
 import {
-  scoreTransactionMatch,
-  toTransactionSuggestion,
+  FindTransactionMatchesRequest,
+  FindTransactionMatchesResponse,
+  TransactionMatchResult,
   TRANSACTION_MATCH_CONFIG,
-} from "@/lib/matching/transaction-matcher";
+} from "@/types/transaction-matching";
+import { functions } from "@/lib/firebase/config";
+
+// Server callable for transaction matching (single source of truth for scoring)
+const findTransactionMatchesFn = httpsCallable<
+  FindTransactionMatchesRequest,
+  FindTransactionMatchesResponse
+>(functions, "findTransactionMatchesForFile");
 
 const FILES_COLLECTION = "files";
 const TRANSACTIONS_COLLECTION = "transactions";
@@ -151,74 +162,40 @@ export async function dismissTransactionSuggestion(
 }
 
 /**
- * Find potential transaction matches for a file (client-side matching)
- * Used for real-time suggestions in the UI
+ * Convert server match result to TransactionSuggestion for storage
  */
-export async function findTransactionMatchesForFile(
-  ctx: OperationsContext,
-  file: TaxFile,
-  options?: {
-    dateRangeDays?: number;
-    minConfidence?: number;
-    limit?: number;
-  }
-): Promise<TransactionSuggestion[]> {
-  const {
-    dateRangeDays = TRANSACTION_MATCH_CONFIG.DATE_RANGE_DAYS,
-    minConfidence = TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD,
-    limit = TRANSACTION_MATCH_CONFIG.MAX_SUGGESTIONS,
-  } = options || {};
-
-  // Can't match without extracted data
-  if (!file.extractionComplete || !file.extractedDate || file.extractedAmount == null) {
-    return [];
-  }
-
-  const centerDate = file.extractedDate.toDate();
-  const startDate = new Date(centerDate);
-  startDate.setDate(startDate.getDate() - dateRangeDays);
-  const endDate = new Date(centerDate);
-  endDate.setDate(endDate.getDate() + dateRangeDays);
-
-  // Query transactions in date range
-  const q = query(
-    collection(ctx.db, TRANSACTIONS_COLLECTION),
-    where("userId", "==", ctx.userId),
-    where("date", ">=", Timestamp.fromDate(startDate)),
-    where("date", "<=", Timestamp.fromDate(endDate)),
-    orderBy("date", "desc")
-  );
-
-  const snapshot = await getDocs(q);
-  const transactions = snapshot.docs.map((d) => ({
-    id: d.id,
-    ...d.data(),
-  })) as Transaction[];
-
-  // Exclude already connected transactions
-  const connectedIds = new Set(file.transactionIds || []);
-  const candidates = transactions.filter((tx) => !connectedIds.has(tx.id));
-
-  // Score and filter
-  const matches = candidates
-    .map((tx) => scoreTransactionMatch(file, tx))
-    .filter((m) => m.confidence >= minConfidence)
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, limit)
-    .map(toTransactionSuggestion);
-
-  return matches;
+function matchResultToSuggestion(
+  match: TransactionMatchResult
+): TransactionSuggestion {
+  return {
+    transactionId: match.transactionId,
+    confidence: match.confidence,
+    matchSources: match.matchSources as TransactionMatchSource[],
+    preview: {
+      date: Timestamp.fromDate(new Date(match.preview.date)),
+      amount: match.preview.amount,
+      currency: match.preview.currency,
+      name: match.preview.name,
+      partner: match.preview.partner,
+    },
+  };
 }
 
 /**
- * Re-run transaction matching for a file
- * Useful when file or transactions have been updated
+ * Re-run transaction matching for a file using server-side scoring
+ *
+ * This is the ONLY place transaction matching should be triggered from the client.
+ * All scoring is done server-side for consistency.
+ *
+ * - Matches ≥85% are auto-connected
+ * - Matches 50-84% are stored as suggestions
  */
 export async function refreshTransactionMatches(
   ctx: OperationsContext,
   fileId: string
 ): Promise<TransactionSuggestion[]> {
-  const fileDoc = await getDoc(doc(ctx.db, FILES_COLLECTION, fileId));
+  const fileRef = doc(ctx.db, FILES_COLLECTION, fileId);
+  const fileDoc = await getDoc(fileRef);
 
   if (!fileDoc.exists() || fileDoc.data().userId !== ctx.userId) {
     throw new Error("File not found or access denied");
@@ -226,11 +203,54 @@ export async function refreshTransactionMatches(
 
   const file = { id: fileDoc.id, ...fileDoc.data() } as TaxFile;
 
-  // Find new matches
-  const suggestions = await findTransactionMatchesForFile(ctx, file);
+  // Can't match without extracted data
+  if (!file.extractionComplete) {
+    return [];
+  }
 
-  // Update file with new suggestions
-  await updateDoc(doc(ctx.db, FILES_COLLECTION, fileId), {
+  // Call server callable for scoring (single source of truth)
+  const response = await findTransactionMatchesFn({
+    fileId,
+    excludeTransactionIds: file.transactionIds || [],
+    limit: TRANSACTION_MATCH_CONFIG.MAX_RESULTS,
+  });
+
+  const { matches } = response.data;
+
+  // Separate auto-matches (≥85%) from suggestions (50-84%)
+  const autoMatches = matches.filter(
+    (m) => m.confidence >= TRANSACTION_MATCH_CONFIG.AUTO_MATCH_THRESHOLD
+  );
+  const suggestionMatches = matches.filter(
+    (m) =>
+      m.confidence >= TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD &&
+      m.confidence < TRANSACTION_MATCH_CONFIG.AUTO_MATCH_THRESHOLD
+  );
+
+  // Auto-connect high-confidence matches
+  for (const match of autoMatches) {
+    try {
+      await acceptTransactionSuggestion(
+        ctx,
+        fileId,
+        match.transactionId,
+        match.confidence,
+        match.matchSources as TransactionMatchSource[]
+      );
+    } catch (err) {
+      // Log but continue - don't fail the whole refresh
+      console.error(
+        `Failed to auto-connect transaction ${match.transactionId}:`,
+        err
+      );
+    }
+  }
+
+  // Convert remaining matches to suggestions
+  const suggestions = suggestionMatches.map(matchResultToSuggestion);
+
+  // Update file with suggestions (auto-matched ones are already connected)
+  await updateDoc(fileRef, {
     transactionSuggestions: suggestions,
     transactionMatchedAt: Timestamp.now(),
     updatedAt: Timestamp.now(),

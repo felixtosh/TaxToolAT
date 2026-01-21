@@ -56,6 +56,7 @@ exports.onCategoryCreate = (0, firestore_1.onDocumentCreated)({
                 matchedPartnerIds: data.matchedPartnerIds || [],
                 learnedPatterns: data.learnedPatterns || [],
                 manualRemovals: removals,
+                transactionCount: data.transactionCount || 0,
                 isActive: data.isActive,
             };
         });

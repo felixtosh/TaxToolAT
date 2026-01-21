@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, forwardRef } from "react";
-import { Loader2, Mail } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Loader2, Mail, FileText, Search, Upload } from "lucide-react";
 import { FilesDataTable, FilesDataTableHandle } from "./files-data-table";
 import { FileToolbar } from "./file-toolbar";
 import { getFileColumns } from "./file-columns";
+import { TableEmptyState, emptyStatePresets } from "@/components/ui/table-empty-state";
 import { TaxFile, FileFilters } from "@/types/file";
 import { UserPartner, GlobalPartner } from "@/types/partner";
 import { useGmailSyncStatus } from "@/hooks/use-gmail-sync-status";
@@ -16,6 +18,10 @@ export interface TransactionAmountData {
 
 interface FileTableProps {
   files: TaxFile[];
+  /** Total count of all files before filtering (for empty state logic) */
+  allFilesCount?: number;
+  /** Loading state - when true, empty states are not shown to prevent flicker */
+  loading?: boolean;
   onSelectFile: (file: TaxFile) => void;
   selectedFileId?: string | null;
   searchValue: string;
@@ -29,12 +35,16 @@ interface FileTableProps {
   enableMultiSelect?: boolean;
   selectedRowIds?: Set<string>;
   onSelectionChange?: (selectedIds: Set<string>) => void;
+  /** Callback to trigger file upload dialog */
+  onUploadClick?: () => void;
 }
 
 export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
   function FileTable(
     {
       files,
+      allFilesCount,
+      loading,
       onSelectFile,
       selectedFileId,
       searchValue,
@@ -47,13 +57,66 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
       enableMultiSelect,
       selectedRowIds,
       onSelectionChange,
+      onUploadClick,
     },
     ref
   ) {
+    const router = useRouter();
+
     const columns = useMemo(
       () => getFileColumns(userPartners, globalPartners, transactionAmountsMap),
       [userPartners, globalPartners, transactionAmountsMap]
     );
+
+    // Calculate connected count (files connected to at least one transaction)
+    const { connectedCount, totalCount } = useMemo(() => {
+      const total = files.length;
+      const connected = files.filter(
+        (file) => file.transactionIds && file.transactionIds.length > 0
+      ).length;
+      return { connectedCount: connected, totalCount: total };
+    }, [files]);
+
+    // Determine which empty state to show
+    const totalUnfilteredCount = allFilesCount ?? files.length;
+    const hasAnyFilters = searchValue || filters.extractedDateFrom || filters.extractedDateTo ||
+      filters.hasConnections !== undefined || filters.amountType || filters.partnerIds?.length ||
+      filters.extractionComplete !== undefined || filters.isNotInvoice || filters.includeDeleted;
+
+    const emptyState = useMemo(() => {
+      // Don't show empty state while still loading - prevents flicker
+      if (loading) {
+        return null;
+      }
+      if (totalUnfilteredCount === 0) {
+        // No files at all
+        return (
+          <TableEmptyState
+            icon={<FileText className="h-full w-full" />}
+            title={emptyStatePresets.files.noData.title}
+            description={emptyStatePresets.files.noData.description}
+            action={onUploadClick ? {
+              label: emptyStatePresets.files.noData.actionLabel!,
+              onClick: onUploadClick,
+              icon: <Upload className="h-4 w-4" />,
+            } : undefined}
+          />
+        );
+      }
+      // Has files but filters returned nothing
+      return (
+        <TableEmptyState
+          icon={<Search className="h-full w-full" />}
+          title={emptyStatePresets.files.noResults.title}
+          description={emptyStatePresets.files.noResults.description}
+          action={hasAnyFilters ? {
+            label: emptyStatePresets.files.noResults.actionLabel!,
+            onClick: () => router.push("/files"),
+          } : undefined}
+          size="sm"
+        />
+      );
+    }, [loading, totalUnfilteredCount, hasAnyFilters, router, onUploadClick]);
 
     const syncStatus = useGmailSyncStatus();
 
@@ -64,6 +127,9 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
           onSearchChange={onSearchChange}
           filters={filters}
           onFiltersChange={onFiltersChange}
+          userPartners={userPartners}
+          connectedCount={connectedCount}
+          totalCount={totalCount}
         />
         {/* Gmail sync progress indicator */}
         {syncStatus.isActive && (
@@ -89,6 +155,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
           enableMultiSelect={enableMultiSelect}
           selectedRowIds={selectedRowIds}
           onSelectionChange={onSelectionChange}
+          emptyState={emptyState}
         />
       </div>
     );

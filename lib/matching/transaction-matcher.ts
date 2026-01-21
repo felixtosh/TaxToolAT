@@ -1,10 +1,18 @@
 /**
  * Transaction matching algorithm for files
  *
- * Matches files (receipts/invoices) to transactions based on:
+ * ⚠️ DEPRECATED: Client-side scoring functions are deprecated.
+ * All scoring should be done via the server callable `findTransactionMatchesForFile`.
+ * See `/lib/operations/file-transaction-matching-ops.ts` for the correct approach.
+ *
+ * This file is kept for:
+ * - UI helper functions (getTransactionMatchConfidenceColor, etc.)
+ * - Legacy compatibility during migration
+ *
+ * Scoring breakdown (for reference):
  * 1. Amount match (0-40 points)
  * 2. Date proximity (0-25 points)
- * 3. Partner overlap (0-20 points)
+ * 3. Partner overlap (0-25 points)
  * 4. IBAN match (0-10 points)
  * 5. Reference/Invoice ID match (0-5 points + date bonus)
  */
@@ -54,6 +62,9 @@ export interface TransactionMatchScore {
 /**
  * Score a transaction against a file
  * Returns a match score with breakdown
+ *
+ * @deprecated Use server callable `findTransactionMatchesForFile` instead.
+ * Client-side scoring causes inconsistencies with server-side auto-matching.
  */
 export function scoreTransactionMatch(
   file: TaxFile,
@@ -68,14 +79,19 @@ export function scoreTransactionMatch(
   };
   const matchSources: TransactionMatchSource[] = [];
 
-  // 1. Amount scoring (0-40)
+  // 1. Amount scoring (0-40, reduced if currency mismatch)
   if (file.extractedAmount != null) {
-    const result = calculateAmountScore(file.extractedAmount, transaction.amount);
+    const result = calculateAmountScore(
+      file.extractedAmount,
+      transaction.amount,
+      file.extractedCurrency,
+      transaction.currency
+    );
     breakdown.amountScore = result.score;
     if (result.source) matchSources.push(result.source);
   }
 
-  // 2. Date scoring (0-25, can get +10 bonus from reference match)
+  // 2. Date scoring (0-25, can get +10 bonus from reference match, boosted for partner matches)
   if (file.extractedDate) {
     const result = calculateDateScore(
       file.extractedDate.toDate(),
@@ -85,11 +101,23 @@ export function scoreTransactionMatch(
     if (result.source) matchSources.push(result.source);
   }
 
-  // 3. Partner scoring (0-20)
+  // 3. Partner scoring (0-25)
   if (file.partnerId && transaction.partnerId) {
     if (file.partnerId === transaction.partnerId) {
-      breakdown.partnerScore = 20;
+      breakdown.partnerScore = 25;
       matchSources.push("partner");
+    }
+  }
+
+  // 3b. Date boost for partner matches (recurring transaction disambiguation)
+  // When partner matches, date becomes critical for distinguishing monthly invoices.
+  if (breakdown.partnerScore >= 15 && file.extractedDate) {
+    if (breakdown.dateScore >= 15) {
+      // Good date match + partner match: boost date by 50%
+      breakdown.dateScore = Math.min(37, Math.round(breakdown.dateScore * 1.5));
+    } else if (breakdown.dateScore <= 3) {
+      // Poor date match + partner match: likely wrong month, penalize partner score
+      breakdown.partnerScore = Math.round(breakdown.partnerScore * 0.6);
     }
   }
 
@@ -142,12 +170,15 @@ export function scoreTransactionMatch(
 // === Individual Scoring Functions ===
 
 /**
- * Calculate amount score (0-40)
+ * Calculate amount score (0-40, reduced if currency mismatch)
  * Exact match = 40, within 1% = 38, within 5% = 30, within 10% = 20
+ * Currency mismatch applies 50% penalty
  */
 function calculateAmountScore(
   fileAmount: number,
-  txAmount: number
+  txAmount: number,
+  fileCurrency?: string | null,
+  txCurrency?: string | null
 ): { score: number; source: TransactionMatchSource | null } {
   const absFile = Math.abs(fileAmount);
   const absTx = Math.abs(txAmount);
@@ -157,30 +188,46 @@ function calculateAmountScore(
     return { score: 0, source: null };
   }
 
+  // Check for currency mismatch
+  const normFileCurrency = (fileCurrency || "EUR").toUpperCase();
+  const normTxCurrency = (txCurrency || "EUR").toUpperCase();
+  const currencyMismatch = normFileCurrency !== normTxCurrency;
+
+  // Calculate base score
+  let score = 0;
+  let source: TransactionMatchSource | null = null;
+
   // Exact match
   if (absFile === absTx) {
-    return { score: 40, source: "amount_exact" };
+    score = 40;
+    source = "amount_exact";
+  } else {
+    const difference = Math.abs(absFile - absTx);
+    const tolerance = absFile;
+
+    // Within 1%
+    if (difference <= tolerance * 0.01) {
+      score = 38;
+      source = "amount_close";
+    }
+    // Within 5%
+    else if (difference <= tolerance * 0.05) {
+      score = 30;
+      source = "amount_close";
+    }
+    // Within 10%
+    else if (difference <= tolerance * 0.1) {
+      score = 20;
+      source = "amount_close";
+    }
   }
 
-  const difference = Math.abs(absFile - absTx);
-  const tolerance = absFile;
-
-  // Within 1%
-  if (difference <= tolerance * 0.01) {
-    return { score: 38, source: "amount_close" };
+  // Apply currency mismatch penalty: reduce amount score by 50%
+  if (currencyMismatch && score > 0) {
+    score = Math.round(score * 0.5);
   }
 
-  // Within 5%
-  if (difference <= tolerance * 0.05) {
-    return { score: 30, source: "amount_close" };
-  }
-
-  // Within 10%
-  if (difference <= tolerance * 0.1) {
-    return { score: 20, source: "amount_close" };
-  }
-
-  return { score: 0, source: null };
+  return { score, source };
 }
 
 /**
@@ -235,6 +282,8 @@ function calculateReferenceScore(
 /**
  * Find matching transactions for a file
  * Returns scored matches sorted by confidence
+ *
+ * @deprecated Use server callable `findTransactionMatchesForFile` instead.
  */
 export function findTransactionMatches(
   file: TaxFile,
@@ -279,6 +328,8 @@ export function findTransactionMatches(
 
 /**
  * Convert TransactionMatchScore to TransactionSuggestion (for storage)
+ *
+ * @deprecated Use server callable response conversion instead.
  */
 export function toTransactionSuggestion(
   score: TransactionMatchScore

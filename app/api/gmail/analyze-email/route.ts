@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, getDoc } from "firebase/firestore";
-import { getServerDb } from "@/lib/firebase/config-server";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import { getEmailIntegration, markIntegrationNeedsReauth } from "@/lib/operations";
 import { VertexAI } from "@google-cloud/vertexai";
 
-const db = getServerDb();
+const db = getAdminDb();
+const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const TOKENS_COLLECTION = "emailTokens";
 const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
 
@@ -62,11 +62,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId };
-
     // Verify integration
-    const integration = await getEmailIntegration(ctx, integrationId);
-    if (!integration) {
+    const integrationRef = db.collection(INTEGRATIONS_COLLECTION).doc(integrationId);
+    const integrationSnap = await integrationRef.get();
+
+    if (!integrationSnap.exists) {
+      return NextResponse.json(
+        { error: "Integration not found" },
+        { status: 404 }
+      );
+    }
+
+    const integration = integrationSnap.data()!;
+    if (integration.userId !== userId) {
       return NextResponse.json(
         { error: "Integration not found" },
         { status: 404 }
@@ -81,18 +89,24 @@ export async function POST(request: NextRequest) {
     }
 
     // Get tokens
-    const tokens = await getTokens(integrationId);
-    if (!tokens) {
+    const tokenSnap = await db.collection(TOKENS_COLLECTION).doc(integrationId).get();
+    if (!tokenSnap.exists) {
       return NextResponse.json(
         { error: "Tokens not found. Please reconnect Gmail.", code: "TOKENS_MISSING" },
         { status: 403 }
       );
     }
 
+    const tokens = tokenSnap.data()!;
+
     // Check if token is expired
     const expiresAt = tokens.expiresAt.toDate();
     if (expiresAt < new Date()) {
-      await markIntegrationNeedsReauth(ctx, integrationId, "Access token expired");
+      await integrationRef.update({
+        needsReauth: true,
+        lastError: "Access token expired",
+        updatedAt: Timestamp.now(),
+      });
       return NextResponse.json(
         { error: "Access token expired. Please reconnect Gmail.", code: "TOKEN_EXPIRED" },
         { status: 403 }
@@ -316,27 +330,4 @@ Return JSON only:
       reasoning: "Parse error",
     };
   }
-}
-
-/**
- * Get tokens from secure storage
- */
-async function getTokens(integrationId: string): Promise<{
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt: { toDate: () => Date };
-} | null> {
-  const tokenDoc = doc(db, TOKENS_COLLECTION, integrationId);
-  const snapshot = await getDoc(tokenDoc);
-
-  if (!snapshot.exists()) {
-    return null;
-  }
-
-  const data = snapshot.data();
-  return {
-    accessToken: data.accessToken,
-    refreshToken: data.refreshToken,
-    expiresAt: data.expiresAt,
-  };
 }

@@ -262,8 +262,10 @@ export const matchColumns = onCall<MatchColumnsRequest>(
     secrets: [anthropicApiKey],
   },
   async (request): Promise<MatchColumnsResponse> => {
-    // TODO: Use real auth when ready for multi-user
-    const userId = "dev-user-123";
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be logged in");
+    }
+    const userId = request.auth.uid;
     const { headers, sampleRows } = request.data;
 
     // Validate input

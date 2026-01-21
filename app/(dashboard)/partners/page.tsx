@@ -6,7 +6,8 @@ import { PartnerTable } from "@/components/partners/partner-table";
 import { PartnerDetailPanel } from "@/components/partners/partner-detail-panel";
 import { usePartners } from "@/hooks/use-partners";
 import { Skeleton } from "@/components/ui/skeleton";
-import { UserPartner } from "@/types/partner";
+import { UserPartner, PartnerFilters } from "@/types/partner";
+import { parsePartnerFiltersFromUrl, buildPartnerFilterUrl } from "@/lib/filters/partner-url-params";
 import { cn } from "@/lib/utils";
 
 const PANEL_WIDTH_KEY = "partnerDetailPanelWidth";
@@ -53,21 +54,28 @@ function PartnersContent() {
   const selectedId = searchParams.get("id");
   const searchValue = searchParams.get("search") || "";
 
+  // Parse filters from URL
+  const filters = useMemo(
+    () => parsePartnerFiltersFromUrl(searchParams),
+    [searchParams]
+  );
+
   // Update search in URL
   const handleSearchChange = useCallback(
     (value: string) => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (value) {
-        params.set("search", value);
-      } else {
-        params.delete("search");
-      }
-      const newUrl = params.toString()
-        ? `/partners?${params.toString()}`
-        : "/partners";
-      router.replace(newUrl, { scroll: false });
+      const url = buildPartnerFilterUrl(filters, value, selectedId);
+      router.replace(url, { scroll: false });
     },
-    [router, searchParams]
+    [router, filters, selectedId]
+  );
+
+  // Update filters in URL
+  const handleFiltersChange = useCallback(
+    (newFilters: PartnerFilters) => {
+      const url = buildPartnerFilterUrl(newFilters, searchValue, selectedId);
+      router.push(url, { scroll: false });
+    },
+    [router, searchValue, selectedId]
   );
 
   // Find selected partner
@@ -155,6 +163,8 @@ function PartnersContent() {
           selectedPartnerId={selectedId}
           searchValue={searchValue}
           onSearchChange={handleSearchChange}
+          filters={filters}
+          onFiltersChange={handleFiltersChange}
         />
       </div>
 

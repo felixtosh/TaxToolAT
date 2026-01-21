@@ -369,7 +369,7 @@ function GmailAccountCard({
   const initialSyncComplete = integration.initialSyncComplete;
   const initialSyncStartedAt = integration.initialSyncStartedAt?.toDate();
 
-  const isSyncingNow = activeSync.isActive || (!initialSyncComplete && initialSyncStartedAt);
+  const isSyncingNow = !isPaused && (activeSync.isActive || (!initialSyncComplete && initialSyncStartedAt));
   const showReconnect = needsReauth || isExpired;
 
   return (
@@ -438,59 +438,79 @@ function GmailAccountCard({
 
           {/* Stats and sync status */}
           {!showReconnect && (
-            <div className="text-right">
-              {/* Active sync */}
-              {isSyncingNow ? (
-                <div className="flex items-center gap-2 text-sm text-blue-600">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>
-                    Syncing...
-                    {activeSync.filesCreated > 0 && ` (${activeSync.filesCreated} files)`}
-                  </span>
-                </div>
+            <>
+              {isPaused ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRefresh();
+                  }}
+                  disabled={refreshing}
+                >
+                  {refreshing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                </Button>
               ) : (
-                <>
-                  {/* Stats row */}
-                  <div className="flex items-center gap-3 text-xs">
-                    <span className="text-muted-foreground">
-                      <span className="font-medium text-foreground">
-                        {statsLoading ? "..." : stats?.totalFilesImported || 0}
-                      </span> imported
-                    </span>
-                    <span className="text-muted-foreground">
-                      <span className="font-medium text-foreground">
-                        {statsLoading ? "..." : stats?.filesExtracted || 0}
-                      </span> extracted
-                    </span>
-                    <span className="text-muted-foreground">
-                      <span className="font-medium text-foreground">
-                        {statsLoading ? "..." : stats?.filesMatched || 0}
-                      </span> matched
-                    </span>
-                    {(stats?.filesWithErrors || 0) > 0 && (
-                      <span className="text-destructive">
-                        <span className="font-medium">
-                          {stats?.filesWithErrors || 0}
-                        </span> errors
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Last synced */}
-                  {initialSyncComplete && lastSyncAt && (
-                    <div className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground mt-1">
-                      <FileCheck className="h-3 w-3" />
+                <div className="text-right">
+                  {/* Active sync */}
+                  {isSyncingNow ? (
+                    <div className="flex items-center gap-2 text-sm text-blue-600">
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       <span>
-                        Last synced {formatDistanceToNow(lastSyncAt, { addSuffix: true })}
-                        {lastSyncStatus === "failed" && (
-                          <span className="text-destructive ml-1">(failed)</span>
-                        )}
+                        Syncing...
+                        {activeSync.filesCreated > 0 && ` (${activeSync.filesCreated} files)`}
                       </span>
                     </div>
+                  ) : (
+                    <>
+                      {/* Stats row */}
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            {statsLoading ? "..." : stats?.totalFilesImported || 0}
+                          </span> imported
+                        </span>
+                        <span className="text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            {statsLoading ? "..." : stats?.filesExtracted || 0}
+                          </span> extracted
+                        </span>
+                        <span className="text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            {statsLoading ? "..." : stats?.filesMatched || 0}
+                          </span> matched
+                        </span>
+                        {(stats?.filesWithErrors || 0) > 0 && (
+                          <span className="text-destructive">
+                            <span className="font-medium">
+                              {stats?.filesWithErrors || 0}
+                            </span> errors
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Last synced */}
+                      {initialSyncComplete && lastSyncAt && (
+                        <div className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground mt-1">
+                          <FileCheck className="h-3 w-3" />
+                          <span>
+                            Last synced {formatDistanceToNow(lastSyncAt, { addSuffix: true })}
+                            {lastSyncStatus === "failed" && (
+                              <span className="text-destructive ml-1">(failed)</span>
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    </>
                   )}
-                </>
+                </div>
               )}
-            </div>
+            </>
           )}
 
           <ChevronRight className="h-5 w-5 text-muted-foreground" />

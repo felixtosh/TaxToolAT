@@ -43,7 +43,7 @@ export {
 } from "./gocardless/scheduledSync";
 
 // Export file extraction functions
-export { extractFileData } from "./extraction/extractFileData";
+export { extractFileData, extractFileDataOnUndelete } from "./extraction/extractFileData";
 export { retryFileExtraction } from "./extraction/retryExtraction";
 
 // Export file-partner matching functions
@@ -51,6 +51,7 @@ export { matchFilePartner } from "./matching/matchFilePartner";
 
 // Export file-transaction matching functions
 export { matchFileTransactions } from "./matching/matchFileTransactions";
+export { findTransactionMatchesForFile } from "./matching/findTransactionMatches";
 export { matchFilesForPartner } from "./matching/matchFilesForPartner";
 
 // Export orphaned file processing (fallback for stuck files)
@@ -68,6 +69,7 @@ export {
 export { scheduledGmailSync } from "./gmail/scheduledGmailSync";
 export { onGmailConnected } from "./gmail/onGmailConnected";
 export { onTransactionsImported } from "./gmail/onTransactionsImported";
+export { searchGmailCallable } from "./gmail/searchGmailCallable";
 
 // Export precision search functions
 export {
@@ -75,6 +77,8 @@ export {
   onPrecisionSearchQueueCreated,
 } from "./precision-search/precisionSearchQueue";
 export { onGmailSyncComplete } from "./precision-search/onGmailSyncComplete";
+export { generateSearchQueriesCallable } from "./precision-search/generateSearchQueriesCallable";
+export { scoreAttachmentMatchCallable } from "./precision-search/scoreAttachmentMatchCallable";
 
 // Export inbound email functions
 export { receiveInboundEmail, testInboundEmail } from "./email-inbound/receiveEmail";
@@ -88,3 +92,17 @@ export {
 } from "./auth/setAdminClaim";
 export { validateRegistration, markInviteUsed } from "./auth/validateRegistration";
 export { migrateUserData, checkMigrationStatus } from "./auth/migrateUserData";
+
+// Export MFA functions
+export {
+  generateBackupCodes,
+  verifyBackupCode,
+  getMfaStatus,
+  adminResetMfa,
+  generatePasskeyRegistrationOptions,
+  verifyPasskeyRegistration,
+  generatePasskeyAuthOptions,
+  verifyPasskeyAuth,
+  deletePasskey,
+  updateTotpStatus,
+} from "./auth/mfaFunctions";

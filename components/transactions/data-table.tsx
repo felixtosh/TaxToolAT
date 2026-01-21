@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { forwardRef } from "react";
+import { forwardRef, ReactNode } from "react";
 import { ColumnDef, SortingState } from "@tanstack/react-table";
 import { Transaction } from "@/types/transaction";
 import {
@@ -14,6 +14,8 @@ interface DataTableProps<TData> {
   data: TData[];
   onRowClick?: (row: TData) => void;
   selectedRowId?: string | null;
+  /** Custom empty state component */
+  emptyState?: ReactNode;
 }
 
 export type { DataTableHandle };
@@ -32,7 +34,7 @@ const DEFAULT_TRANSACTION_COLUMN_SIZES: Record<string, number> = {
 const DEFAULT_SORTING: SortingState = [{ id: "date", desc: true }];
 
 function DataTableInner<TData extends { id: string }>(
-  { columns, data, onRowClick, selectedRowId }: DataTableProps<TData>,
+  { columns, data, onRowClick, selectedRowId, emptyState }: DataTableProps<TData>,
   ref: React.ForwardedRef<DataTableHandle>
 ) {
   // Type guard to check if row is a transaction
@@ -67,6 +69,7 @@ function DataTableInner<TData extends { id: string }>(
       initialSorting={DEFAULT_SORTING}
       getRowClassName={getRowClassName}
       getRowDataAttributes={getRowDataAttributes}
+      emptyState={emptyState}
       emptyMessage="No transactions found."
     />
   );

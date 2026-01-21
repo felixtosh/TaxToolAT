@@ -577,6 +577,33 @@ export async function assignPartnerToTransaction(
       // Don't throw - pattern learning is non-critical
     });
   }
+
+  // Trigger batch matching for this partner (non-blocking)
+  // This will try to match other unmatched files/transactions for the same partner
+  // Note: Pattern learning also chains to this, but we call it explicitly for "auto" matches
+  // and to ensure it runs even if pattern learning fails
+  triggerPartnerBatchMatching(finalPartnerId).catch((error) => {
+    console.error("Failed to trigger partner batch matching:", error);
+  });
+}
+
+/**
+ * Trigger batch matching for all unmatched files and transactions for a partner.
+ * Runs asynchronously - does not block the caller.
+ */
+async function triggerPartnerBatchMatching(partnerId: string): Promise<void> {
+  const matchFn = httpsCallable<
+    { partnerId: string },
+    { processed: number; autoMatched: number; suggested: number }
+  >(functions, "matchFilesForPartner");
+
+  const result = await matchFn({ partnerId });
+
+  if (result.data.autoMatched > 0 || result.data.suggested > 0) {
+    console.log(
+      `[Partner Batch Match] Partner ${partnerId}: ${result.data.autoMatched} auto-matched, ${result.data.suggested} suggested`
+    );
+  }
 }
 
 /**

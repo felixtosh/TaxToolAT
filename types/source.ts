@@ -62,7 +62,10 @@ export interface TransactionSource {
 /**
  * Configuration for API-based transaction connectors
  */
-export type ApiConnectorConfig = GoCardlessConnectorConfig | GenericConnectorConfig;
+export type ApiConnectorConfig =
+  | GoCardlessConnectorConfig
+  | TrueLayerConnectorConfig
+  | GenericConnectorConfig;
 
 /**
  * GoCardless-specific connector configuration
@@ -88,10 +91,35 @@ export interface GoCardlessConnectorConfig {
 }
 
 /**
+ * TrueLayer-specific connector configuration
+ */
+export interface TrueLayerConnectorConfig {
+  provider: "truelayer";
+  /** TrueLayer account ID */
+  accountId: string;
+  /** Institution identifier */
+  institutionId: string;
+  institutionName: string;
+  institutionLogo?: string;
+  /** Access token (should be encrypted in production) */
+  accessToken: string;
+  /** Refresh token for obtaining new access tokens */
+  refreshToken: string;
+  /** When the access token expires */
+  tokenExpiresAt: Timestamp;
+  /** When the overall connection expires (90 days PSD2 limit) */
+  expiresAt: Timestamp;
+  /** Last successful sync */
+  lastSyncAt?: Timestamp;
+  /** Last sync error if any */
+  lastSyncError?: string;
+}
+
+/**
  * Generic connector configuration for future providers
  */
 export interface GenericConnectorConfig {
-  /** Provider identifier: "plaid" | "nordigen" | "custom" */
+  /** Provider identifier: "plaid" | "custom" etc. */
   provider: string;
 
   /** Encrypted credentials or tokens */

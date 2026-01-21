@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
+import { usePrecisionSearchContext } from "./use-precision-search-context";
 
 export type SearchStrategy = "partner_files" | "amount_files" | "email_attachment" | "email_invoice";
 
@@ -38,6 +40,15 @@ export function usePrecisionSearch({ transactionId, onComplete }: UsePrecisionSe
     queueId: null,
   });
 
+  // Get context to share searching state across components (optional - works without provider)
+  let setSearchingInContext: ((id: string, searching: boolean) => void) | null = null;
+  try {
+    const ctx = usePrecisionSearchContext();
+    setSearchingInContext = ctx.setSearching;
+  } catch {
+    // Context not available, that's fine
+  }
+
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
@@ -53,7 +64,7 @@ export function usePrecisionSearch({ transactionId, onComplete }: UsePrecisionSe
   // Poll for status
   const pollStatus = useCallback(async (queueId: string) => {
     try {
-      const response = await fetch(`/api/precision-search/status?queueId=${queueId}`);
+      const response = await fetchWithAuth(`/api/precision-search/status?queueId=${queueId}`);
       if (!response.ok) {
         throw new Error("Failed to get status");
       }
@@ -110,9 +121,8 @@ export function usePrecisionSearch({ transactionId, onComplete }: UsePrecisionSe
     });
 
     try {
-      const response = await fetch("/api/precision-search/trigger", {
+      const response = await fetchWithAuth("/api/precision-search/trigger", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           scope: "single_transaction",
           transactionId,
@@ -145,12 +155,33 @@ export function usePrecisionSearch({ transactionId, onComplete }: UsePrecisionSe
     }
   }, [transactionId, stopPolling, pollStatus]);
 
+  // Reset state and stop polling when transactionId changes
+  useEffect(() => {
+    // Reset to initial state when transaction changes
+    setStatus({
+      isSearching: false,
+      currentStrategy: null,
+      progress: 0,
+      error: null,
+      queueId: null,
+    });
+    stopPolling();
+    // Clear context for previous transaction
+    setSearchingInContext?.(transactionId, false);
+  }, [transactionId, stopPolling, setSearchingInContext]);
+
+  // Sync isSearching state with context (for table column to show loading)
+  useEffect(() => {
+    setSearchingInContext?.(transactionId, status.isSearching);
+  }, [transactionId, status.isSearching, setSearchingInContext]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopPolling();
+      setSearchingInContext?.(transactionId, false);
     };
-  }, [stopPolling]);
+  }, [stopPolling, transactionId, setSearchingInContext]);
 
   return {
     ...status,

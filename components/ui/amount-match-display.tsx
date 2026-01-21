@@ -27,6 +27,8 @@ interface AmountMatchDisplayProps {
   secondaryAmounts: AmountInfo[];
   /** Date for currency conversion (e.g., invoice date) */
   conversionDate?: Date;
+  /** Target currency for displaying difference (defaults to primaryCurrency) */
+  targetCurrency?: string;
   /** Whether any connected files are still being extracted */
   isExtracting?: boolean;
   /** Additional class names */
@@ -44,16 +46,26 @@ export function AmountMatchDisplay({
   primaryCurrency,
   secondaryAmounts,
   conversionDate,
+  targetCurrency,
   isExtracting,
   className,
 }: AmountMatchDisplayProps) {
   const Icon = FileText;
 
+  // Determine the currency to display the difference in
+  // For file lists (countType="tx"), prefer transaction currency (from secondary amounts)
+  // For transaction lists (countType="file"), use transaction currency (primary)
+  const displayCurrency = targetCurrency ||
+    (countType === "tx" && secondaryAmounts.length > 0 ? secondaryAmounts[0].currency : primaryCurrency);
+
   // Get unique secondary currencies
   const secondaryCurrencies = [...new Set(secondaryAmounts.map(a => a.currency))];
 
-  // Check for currency mismatch
+  // Check for currency mismatch (between primary and any secondary)
   const hasCurrencyMismatch = secondaryCurrencies.some(c => c !== primaryCurrency);
+
+  // Check if display currency differs from primary (need to convert primary)
+  const needsPrimaryConversion = displayCurrency !== primaryCurrency;
 
   // Icon with optional count badge
   const IconWithBadge = (
@@ -82,20 +94,41 @@ export function AmountMatchDisplay({
     );
   }
 
-  // Convert all secondary amounts to primary currency and sum them
+  // Convert primary amount to display currency if needed
+  let primaryInDisplayCurrency = primaryAmount != null ? Math.abs(primaryAmount) : null;
+  let primaryConversionFailed = false;
+  let primaryWasConverted = false;
+
+  if (needsPrimaryConversion && primaryAmount != null && conversionDate) {
+    const conversion = convertCurrency(
+      Math.abs(primaryAmount),
+      primaryCurrency,
+      displayCurrency,
+      conversionDate
+    );
+    if (conversion) {
+      primaryInDisplayCurrency = conversion.amount;
+      primaryWasConverted = true;
+    } else {
+      primaryConversionFailed = true;
+    }
+  }
+
+  // Convert all secondary amounts to display currency and sum them
   let convertedTotal = 0;
   let conversionRate: number | null = null;
   let conversionFailed = false;
   let wasConverted = false;
 
   for (const secondary of secondaryAmounts) {
-    if (secondary.currency === primaryCurrency) {
+    if (secondary.currency === displayCurrency) {
       convertedTotal += Math.abs(secondary.amount);
     } else if (conversionDate) {
+      // Use transaction/payment date for currency conversion
       const conversion = convertCurrency(
         Math.abs(secondary.amount),
         secondary.currency,
-        primaryCurrency,
+        displayCurrency,
         conversionDate
       );
       if (conversion) {
@@ -110,16 +143,17 @@ export function AmountMatchDisplay({
     }
   }
 
-  // Calculate open amount in primary currency
-  const primaryAbsolute = primaryAmount != null ? Math.abs(primaryAmount) : null;
-  const openAmount = primaryAbsolute != null && !conversionFailed
-    ? primaryAbsolute - convertedTotal
+  // Calculate open amount in display currency
+  const openAmount = primaryInDisplayCurrency != null && !conversionFailed && !primaryConversionFailed
+    ? primaryInDisplayCurrency - convertedTotal
     : null;
   const isMatched = openAmount !== null && Math.abs(openAmount) < 100; // Within 1 EUR/USD tolerance
+  const anyConversion = wasConverted || primaryWasConverted;
 
-  // For same currency case
+  // For same currency case (no conversions needed)
   const secondaryTotal = secondaryAmounts.reduce((sum, a) => sum + Math.abs(a.amount), 0);
-  const normalOpenAmount = !hasCurrencyMismatch && primaryAbsolute != null
+  const primaryAbsolute = primaryAmount != null ? Math.abs(primaryAmount) : null;
+  const normalOpenAmount = !hasCurrencyMismatch && !needsPrimaryConversion && primaryAbsolute != null
     ? primaryAbsolute - secondaryTotal
     : null;
   const normalIsMatched = normalOpenAmount !== null && normalOpenAmount === 0;
@@ -131,21 +165,21 @@ export function AmountMatchDisplay({
   let rightColor: string;
   let showCheck = false;
 
-  if (hasCurrencyMismatch) {
-    if (!conversionFailed && openAmount !== null) {
-      const prefix = wasConverted ? "~" : "";
+  if (hasCurrencyMismatch || needsPrimaryConversion) {
+    if (!conversionFailed && !primaryConversionFailed && openAmount !== null) {
+      const prefix = anyConversion ? "~" : "";
       if (isMatched) {
         rightText = "";
-        rightColor = "text-green-600";
+        rightColor = "text-amount-positive";
         showCheck = true;
       } else if (openAmount < 0) {
         // Files > Transaction (too much)
-        rightText = `${prefix}+${formatCurrency(Math.abs(openAmount), primaryCurrency)}`;
+        rightText = `${prefix}+${formatCurrency(Math.abs(openAmount), displayCurrency)}`;
         rightColor = "text-amber-600";
       } else {
         // Files < Transaction (underpaid)
-        rightText = `${prefix}-${formatCurrency(Math.abs(openAmount), primaryCurrency)}`;
-        rightColor = "text-red-600";
+        rightText = `${prefix}-${formatCurrency(Math.abs(openAmount), displayCurrency)}`;
+        rightColor = "text-amount-negative";
       }
     } else {
       // Fallback when conversion fails
@@ -157,16 +191,16 @@ export function AmountMatchDisplay({
     if (normalOpenAmount !== null && primaryAmount != null) {
       if (normalIsMatched) {
         rightText = "";
-        rightColor = "text-green-600";
+        rightColor = "text-amount-positive";
         showCheck = true;
       } else if (normalOpenAmount < 0) {
         // Files > Transaction (too much)
-        rightText = `+${formatCurrency(Math.abs(normalOpenAmount), primaryCurrency)}`;
+        rightText = `+${formatCurrency(Math.abs(normalOpenAmount), displayCurrency)}`;
         rightColor = "text-amber-600";
       } else {
         // Files < Transaction (underpaid)
-        rightText = `-${formatCurrency(Math.abs(normalOpenAmount), primaryCurrency)}`;
-        rightColor = "text-red-600";
+        rightText = `-${formatCurrency(Math.abs(normalOpenAmount), displayCurrency)}`;
+        rightColor = "text-amount-negative";
       }
     } else {
       rightText = "";
@@ -192,10 +226,14 @@ export function AmountMatchDisplay({
   );
 
   // Wrap in tooltip for currency mismatch cases
-  if (hasCurrencyMismatch && primaryAmount != null) {
+  if ((hasCurrencyMismatch || needsPrimaryConversion) && primaryAmount != null) {
     const secondaryFormatted = secondaryAmounts.length === 1
       ? formatCurrency(Math.abs(secondaryAmounts[0].amount), secondaryAmounts[0].currency)
       : `${secondaryAmounts.length} items`;
+
+    // Determine which currency needs conversion info in tooltip
+    const showPrimaryConversion = primaryWasConverted && primaryInDisplayCurrency != null;
+    const showSecondaryConversion = wasConverted;
 
     return (
       <Tooltip>
@@ -210,15 +248,18 @@ export function AmountMatchDisplay({
           <p className="text-xs text-muted-foreground">
             {countType === "file" ? "Files" : "Transactions"}: {secondaryFormatted}
           </p>
-          {!conversionFailed && conversionRate !== null && (
-            <>
-              <p className="text-xs text-muted-foreground mt-1">
-                Converted: ~{formatCurrency(convertedTotal, primaryCurrency)}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Rate: 1 {secondaryCurrencies[0]} = {conversionRate.toFixed(4)} {primaryCurrency}
-              </p>
-            </>
+          {(showPrimaryConversion || showSecondaryConversion) && !conversionFailed && !primaryConversionFailed && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Converted to {displayCurrency}: ~{formatCurrency(
+                showPrimaryConversion ? primaryInDisplayCurrency! : convertedTotal,
+                displayCurrency
+              )}
+            </p>
+          )}
+          {conversionRate !== null && (
+            <p className="text-xs text-muted-foreground">
+              Rate: 1 {secondaryCurrencies[0]} = {conversionRate.toFixed(4)} {displayCurrency}
+            </p>
           )}
         </TooltipContent>
       </Tooltip>

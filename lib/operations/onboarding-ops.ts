@@ -43,7 +43,7 @@ export async function initializeOnboarding(
 
   const initialState: OnboardingState = {
     isComplete: false,
-    currentStep: "add_bank_account",
+    currentStep: "set_identity",
     completedSteps: {},
     startedAt: now,
     completedAt: null,
@@ -101,11 +101,63 @@ export async function completeOnboardingStep(
   if (isLastStep) {
     updates.isComplete = true;
     updates.completedAt = now;
+    // Only reset hasSeenCompletion if this is the first time completing
+    // (user hasn't already dismissed the completion dialog)
+    const current_hasSeenCompletion = current.hasSeenCompletion;
+    if (current_hasSeenCompletion !== true) {
+      updates.hasSeenCompletion = false;
+    }
   } else {
     updates.currentStep = nextStep;
   }
 
   await updateDoc(docRef, updates);
+}
+
+/**
+ * Uncomplete a step (when its conditions are no longer met)
+ * This resets the step and all subsequent steps
+ */
+export async function uncompleteOnboardingStep(
+  ctx: OperationsContext,
+  step: OnboardingStep
+): Promise<void> {
+  const docRef = doc(
+    ctx.db,
+    "users",
+    ctx.userId,
+    SETTINGS_COLLECTION,
+    ONBOARDING_DOC
+  );
+
+  // Get current state
+  const current = await getOnboardingState(ctx);
+  if (!current) return;
+
+  // Don't uncomplete if already not completed
+  if (!current.completedSteps[step]) return;
+
+  // Get step index to determine which subsequent steps to also uncomplete
+  const stepIndex = getStepIndex(step);
+
+  // Build new completedSteps object, removing this step and all subsequent steps
+  const newCompletedSteps: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(current.completedSteps)) {
+    const keyIndex = getStepIndex(key as OnboardingStep);
+    if (keyIndex < stepIndex) {
+      newCompletedSteps[key] = value;
+    }
+  }
+
+  // Update state
+  await setDoc(docRef, {
+    ...current,
+    isComplete: false,
+    currentStep: step,
+    completedSteps: newCompletedSteps,
+    completedAt: null,
+    hasSeenCompletion: current.hasSeenCompletion ?? false,
+  });
 }
 
 /**

@@ -18,12 +18,21 @@ const SOURCES_COLLECTION = "sources";
 const TRANSACTIONS_COLLECTION = "transactions";
 
 /**
- * Check if test data is currently active
+ * Check if test data is currently active for the current user
  */
 export async function isTestDataActive(ctx: OperationsContext): Promise<boolean> {
+  // Don't check if no userId
+  if (!ctx.userId) {
+    return false;
+  }
+
   const docRef = doc(ctx.db, SOURCES_COLLECTION, TEST_SOURCE_ID);
   const docSnap = await getDoc(docRef);
-  return docSnap.exists() && docSnap.data()?.isActive === true;
+
+  // Check if exists, is active, AND belongs to current user
+  return docSnap.exists() &&
+    docSnap.data()?.isActive === true &&
+    docSnap.data()?.userId === ctx.userId;
 }
 
 /**
@@ -33,6 +42,11 @@ export async function activateTestData(ctx: OperationsContext): Promise<{
   sourceId: string;
   transactionCount: number;
 }> {
+  // Validate userId is present
+  if (!ctx.userId) {
+    throw new Error("Cannot activate test data without a valid user ID");
+  }
+
   // Generate test data
   const testSource = generateTestSource();
   const testTransactions = await generateTestTransactions();
@@ -40,14 +54,14 @@ export async function activateTestData(ctx: OperationsContext): Promise<{
   // Use batch write for atomic operation
   const batch = writeBatch(ctx.db);
 
-  // Add the test source with specific ID
+  // Add the test source with specific ID, using actual user's ID
   const sourceRef = doc(ctx.db, SOURCES_COLLECTION, TEST_SOURCE_ID);
-  batch.set(sourceRef, testSource);
+  batch.set(sourceRef, { ...testSource, userId: ctx.userId });
 
-  // Add all transactions
+  // Add all transactions with actual user's ID
   for (const txn of testTransactions) {
     const txnRef = doc(ctx.db, TRANSACTIONS_COLLECTION, txn.id);
-    batch.set(txnRef, txn);
+    batch.set(txnRef, { ...txn, userId: ctx.userId });
   }
 
   await batch.commit();
@@ -64,10 +78,16 @@ export async function activateTestData(ctx: OperationsContext): Promise<{
 export async function deactivateTestData(ctx: OperationsContext): Promise<{
   deletedTransactions: number;
 }> {
-  // Find all transactions for this source
+  // Validate userId is present
+  if (!ctx.userId) {
+    throw new Error("Cannot deactivate test data without a valid user ID");
+  }
+
+  // Find all transactions for this source AND user
   const q = query(
     collection(ctx.db, TRANSACTIONS_COLLECTION),
-    where("sourceId", "==", TEST_SOURCE_ID)
+    where("sourceId", "==", TEST_SOURCE_ID),
+    where("userId", "==", ctx.userId)
   );
   const snapshot = await getDocs(q);
 
@@ -89,9 +109,13 @@ export async function deactivateTestData(ctx: OperationsContext): Promise<{
     }
   }
 
-  // Delete the test source
+  // Delete the test source (only if it belongs to current user)
   const sourceRef = doc(ctx.db, SOURCES_COLLECTION, TEST_SOURCE_ID);
-  batch.delete(sourceRef);
+  const sourceSnap = await getDoc(sourceRef);
+
+  if (sourceSnap.exists() && sourceSnap.data()?.userId === ctx.userId) {
+    batch.delete(sourceRef);
+  }
 
   await batch.commit();
 

@@ -37,6 +37,11 @@ const updateTransactionSchema = z.object({
   isComplete: z.boolean().optional().describe("Mark as complete/incomplete"),
 });
 
+const acceptPartnerSuggestionSchema = z.object({
+  transactionId: z.string().describe("The transaction ID"),
+  suggestionIndex: z.number().optional().describe("Index of the suggestion to accept (0-based). If not provided, accepts the highest-confidence suggestion."),
+});
+
 // NOTE: delete_transaction tool is intentionally NOT provided.
 // Individual transaction deletion is not allowed - transactions must be
 // deleted together with their source to maintain accounting integrity.
@@ -79,6 +84,18 @@ export const transactionToolDefinitions: Tool[] = [
         transactionId: { type: "string", description: "The transaction ID" },
         description: { type: "string", description: "Description for tax purposes" },
         isComplete: { type: "boolean", description: "Mark as complete/incomplete" },
+      },
+      required: ["transactionId"],
+    },
+  },
+  {
+    name: "accept_partner_suggestion",
+    description: "Accept a partner suggestion for a transaction. This assigns the suggested partner to the transaction. Use this when the user wants to confirm an automatically suggested partner match.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        transactionId: { type: "string", description: "The transaction ID" },
+        suggestionIndex: { type: "number", description: "Index of the suggestion to accept (0-based). If not provided, accepts the highest-confidence suggestion." },
       },
       required: ["transactionId"],
     },
@@ -252,6 +269,72 @@ export async function registerTransactionTools(
 
       return {
         content: [{ type: "text", text: `Updated transaction ${transactionId}` }],
+      };
+    }
+
+    case "accept_partner_suggestion": {
+      const { transactionId, suggestionIndex } = acceptPartnerSuggestionSchema.parse(args);
+
+      // Verify ownership and get transaction
+      const docRef = doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId);
+      const snapshot = await getDoc(docRef);
+
+      if (!snapshot.exists() || snapshot.data().userId !== ctx.userId) {
+        return {
+          content: [{ type: "text", text: `Transaction ${transactionId} not found` }],
+        };
+      }
+
+      const txData = snapshot.data();
+      const suggestions = txData.partnerSuggestions as Array<{
+        partnerId: string;
+        partnerType: "user" | "global";
+        confidence: number;
+        source?: string;
+      }> | undefined;
+
+      if (!suggestions || suggestions.length === 0) {
+        return {
+          content: [{ type: "text", text: `No partner suggestions available for this transaction` }],
+        };
+      }
+
+      // Determine which suggestion to accept
+      let selectedSuggestion;
+      if (suggestionIndex !== undefined) {
+        if (suggestionIndex < 0 || suggestionIndex >= suggestions.length) {
+          return {
+            content: [{ type: "text", text: `Invalid suggestion index. Available: 0-${suggestions.length - 1}` }],
+          };
+        }
+        selectedSuggestion = suggestions[suggestionIndex];
+      } else {
+        // Accept highest-confidence suggestion
+        selectedSuggestion = [...suggestions].sort((a, b) => b.confidence - a.confidence)[0];
+      }
+
+      // Apply the suggestion
+      await updateDoc(docRef, {
+        partnerId: selectedSuggestion.partnerId,
+        partnerType: selectedSuggestion.partnerType,
+        partnerMatchConfidence: selectedSuggestion.confidence,
+        partnerMatchedBy: "chat_accepted",
+        partnerMatchSource: selectedSuggestion.source || "suggestion",
+        updatedAt: Timestamp.now(),
+      });
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            success: true,
+            transactionId,
+            partnerId: selectedSuggestion.partnerId,
+            partnerType: selectedSuggestion.partnerType,
+            confidence: selectedSuggestion.confidence,
+            source: selectedSuggestion.source || "suggestion",
+          }, null, 2),
+        }],
       };
     }
 

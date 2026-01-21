@@ -11,17 +11,93 @@ interface Position {
   height: number;
 }
 
+type LabelPositionType = "top" | "bottom" | "left" | "right";
+
 interface HighlightPinProps {
-  /** CSS selector for target element */
+  /** CSS selector for target element(s) - can match multiple elements */
   target: string;
   /** Whether this pin is active (should show) */
   active: boolean;
   /** Label to show next to the highlight */
   label?: string;
-  /** Position of the label relative to target */
-  labelPosition?: "top" | "bottom" | "left" | "right";
+  /** Preferred position of the label relative to target */
+  labelPosition?: LabelPositionType;
   /** Whether to scroll target into view */
   scrollIntoView?: boolean;
+}
+
+interface TargetState {
+  element: Element;
+  position: Position;
+  isVisible: boolean;
+}
+
+// Estimated label dimensions for viewport calculations
+const LABEL_WIDTH_ESTIMATE = 140;
+const LABEL_HEIGHT_ESTIMATE = 36;
+const VIEWPORT_PADDING = 16;
+
+/**
+ * Calculate the best label position that fits within the viewport
+ */
+function getBestLabelPosition(
+  targetRect: Position,
+  preferred: LabelPositionType,
+  padding: number
+): LabelPositionType {
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  // Check available space in each direction
+  const spaceRight = viewportWidth - (targetRect.left + targetRect.width + padding);
+  const spaceLeft = targetRect.left - padding;
+  const spaceBottom = viewportHeight - (targetRect.top + targetRect.height + padding);
+  const spaceTop = targetRect.top - padding;
+
+  // Check if preferred position fits
+  const fitsRight = spaceRight >= LABEL_WIDTH_ESTIMATE + VIEWPORT_PADDING;
+  const fitsLeft = spaceLeft >= LABEL_WIDTH_ESTIMATE + VIEWPORT_PADDING;
+  const fitsBottom = spaceBottom >= LABEL_HEIGHT_ESTIMATE + VIEWPORT_PADDING;
+  const fitsTop = spaceTop >= LABEL_HEIGHT_ESTIMATE + VIEWPORT_PADDING;
+
+  // Try preferred position first
+  if (preferred === "right" && fitsRight) return "right";
+  if (preferred === "left" && fitsLeft) return "left";
+  if (preferred === "bottom" && fitsBottom) return "bottom";
+  if (preferred === "top" && fitsTop) return "top";
+
+  // Fallback order: right -> left -> bottom -> top
+  if (fitsRight) return "right";
+  if (fitsLeft) return "left";
+  if (fitsBottom) return "bottom";
+  if (fitsTop) return "top";
+
+  // If nothing fits well, use left (will be clamped to viewport)
+  return "left";
+}
+
+// Helper to check if an element is obscured
+function isElementObscured(element: Element): boolean {
+  const rect = element.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+
+  const topElement = document.elementFromPoint(centerX, centerY);
+  if (!topElement) return true;
+
+  return !element.contains(topElement) && topElement !== element;
+}
+
+// Helper to check if an element is in viewport
+function isElementInViewport(element: Element): boolean {
+  const rect = element.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  const isHorizontallyVisible = rect.right > 0 && rect.left < viewportWidth;
+  const isVerticallyVisible = rect.bottom > 0 && rect.top < viewportHeight;
+
+  return isHorizontallyVisible && isVerticallyVisible;
 }
 
 export function HighlightPin({
@@ -31,94 +107,148 @@ export function HighlightPin({
   labelPosition = "right",
   scrollIntoView = true,
 }: HighlightPinProps) {
-  const [targetPosition, setTargetPosition] = useState<Position | null>(null);
+  const [targets, setTargets] = useState<TargetState[]>([]);
   const [mounted, setMounted] = useState(false);
   const observerRef = useRef<ResizeObserver | null>(null);
-  const elementRef = useRef<Element | null>(null);
+  const hasScrolledRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
     return () => setMounted(false);
   }, []);
 
-  const updatePosition = useCallback(() => {
-    if (!elementRef.current) return;
+  // Reset scroll flag when target changes
+  useEffect(() => {
+    hasScrolledRef.current = false;
+  }, [target]);
 
-    const rect = elementRef.current.getBoundingClientRect();
-    setTargetPosition({
-      top: rect.top,
-      left: rect.left,
-      width: rect.width,
-      height: rect.height,
+  // Update all target positions and visibility
+  const updateTargets = useCallback(() => {
+    const elements = document.querySelectorAll(target);
+    const newTargets: TargetState[] = [];
+
+    elements.forEach((element) => {
+      const rect = element.getBoundingClientRect();
+      const isInViewport = isElementInViewport(element);
+      const isObscured = isElementObscured(element);
+
+      newTargets.push({
+        element,
+        position: {
+          top: rect.top,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height,
+        },
+        isVisible: isInViewport && !isObscured,
+      });
     });
-  }, []);
+
+    setTargets(newTargets);
+  }, [target]);
 
   useEffect(() => {
     if (!active || !mounted) {
-      setTargetPosition(null);
+      setTargets([]);
       return;
     }
 
-    // Find the target element
-    const element = document.querySelector(target);
-    if (!element) {
-      setTargetPosition(null);
-      return;
+    // Initial update
+    updateTargets();
+
+    // Find first visible element and scroll to it
+    if (scrollIntoView && !hasScrolledRef.current) {
+      const elements = document.querySelectorAll(target);
+      const firstVisible = Array.from(elements).find(
+        (el) => isElementInViewport(el) && !isElementObscured(el)
+      );
+      if (firstVisible) {
+        firstVisible.scrollIntoView({ behavior: "smooth", block: "center" });
+        hasScrolledRef.current = true;
+      } else if (elements.length > 0) {
+        elements[0].scrollIntoView({ behavior: "smooth", block: "center" });
+        hasScrolledRef.current = true;
+      }
     }
-
-    elementRef.current = element;
-
-    // Scroll into view if needed
-    if (scrollIntoView) {
-      element.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-
-    // Initial position update
-    updatePosition();
 
     // Track position changes with ResizeObserver
-    observerRef.current = new ResizeObserver(updatePosition);
-    observerRef.current.observe(element);
+    const elements = document.querySelectorAll(target);
+    observerRef.current = new ResizeObserver(updateTargets);
+    elements.forEach((el) => observerRef.current?.observe(el));
 
-    // Also track scroll and resize
-    window.addEventListener("scroll", updatePosition, true);
-    window.addEventListener("resize", updatePosition);
+    // Periodic visibility check + scroll/resize handlers
+    const checkInterval = setInterval(updateTargets, 200);
+    window.addEventListener("scroll", updateTargets, true);
+    window.addEventListener("resize", updateTargets);
+
+    // Click handler on any target - will be detected as obscured
+    const handleClick = () => {
+      // Force immediate update after click
+      setTimeout(updateTargets, 50);
+    };
+    elements.forEach((el) => el.addEventListener("click", handleClick, true));
 
     return () => {
       if (observerRef.current) {
         observerRef.current.disconnect();
       }
-      window.removeEventListener("scroll", updatePosition, true);
-      window.removeEventListener("resize", updatePosition);
-      elementRef.current = null;
+      clearInterval(checkInterval);
+      window.removeEventListener("scroll", updateTargets, true);
+      window.removeEventListener("resize", updateTargets);
+      elements.forEach((el) => el.removeEventListener("click", handleClick, true));
     };
-  }, [target, active, mounted, scrollIntoView, updatePosition]);
+  }, [target, active, mounted, scrollIntoView, updateTargets]);
 
-  if (!mounted || !targetPosition || !active) return null;
+  // Filter to only visible targets
+  const visibleTargets = targets.filter((t) => t.isVisible);
 
-  // Calculate label position
-  const labelStyle: React.CSSProperties = {};
+  if (!mounted || !active || visibleTargets.length === 0) return null;
+
+  // Calculate combined bounding box for all visible targets
+  const combinedPosition: Position = visibleTargets.reduce(
+    (acc, t) => {
+      const right = Math.max(acc.left + acc.width, t.position.left + t.position.width);
+      const bottom = Math.max(acc.top + acc.height, t.position.top + t.position.height);
+      const left = Math.min(acc.left, t.position.left);
+      const top = Math.min(acc.top, t.position.top);
+      return {
+        top,
+        left,
+        width: right - left,
+        height: bottom - top,
+      };
+    },
+    {
+      top: visibleTargets[0].position.top,
+      left: visibleTargets[0].position.left,
+      width: visibleTargets[0].position.width,
+      height: visibleTargets[0].position.height,
+    }
+  );
+
   const padding = 12;
+  const labelStyle: React.CSSProperties = {};
+  const actualPosition = getBestLabelPosition(combinedPosition, labelPosition, padding);
 
-  switch (labelPosition) {
+  switch (actualPosition) {
     case "top":
-      labelStyle.bottom = targetPosition.height + padding;
+      labelStyle.bottom = combinedPosition.height + padding;
       labelStyle.left = "50%";
       labelStyle.transform = "translateX(-50%)";
       break;
     case "bottom":
-      labelStyle.top = targetPosition.height + padding;
+      labelStyle.top = combinedPosition.height + padding;
       labelStyle.left = "50%";
       labelStyle.transform = "translateX(-50%)";
       break;
     case "left":
-      labelStyle.right = targetPosition.width + padding;
+      labelStyle.right = combinedPosition.width + padding;
       labelStyle.top = "50%";
       labelStyle.transform = "translateY(-50%)";
       break;
     case "right":
     default:
-      labelStyle.left = targetPosition.width + padding;
+      labelStyle.left = combinedPosition.width + padding;
       labelStyle.top = "50%";
       labelStyle.transform = "translateY(-50%)";
       break;
@@ -128,14 +258,14 @@ export function HighlightPin({
     <div
       className="fixed pointer-events-none"
       style={{
-        top: targetPosition.top,
-        left: targetPosition.left,
-        width: targetPosition.width,
-        height: targetPosition.height,
+        top: combinedPosition.top,
+        left: combinedPosition.left,
+        width: combinedPosition.width,
+        height: combinedPosition.height,
         zIndex: 100,
       }}
     >
-      {/* Pulsing ring around target */}
+      {/* Pulsing ring around combined targets */}
       <div
         className={cn(
           "absolute inset-0 rounded-lg",
@@ -147,8 +277,8 @@ export function HighlightPin({
           left: -4,
           right: -4,
           bottom: -4,
-          width: targetPosition.width + 8,
-          height: targetPosition.height + 8,
+          width: combinedPosition.width + 8,
+          height: combinedPosition.height + 8,
         }}
       />
 
@@ -164,8 +294,8 @@ export function HighlightPin({
           left: -8,
           right: -8,
           bottom: -8,
-          width: targetPosition.width + 16,
-          height: targetPosition.height + 16,
+          width: combinedPosition.width + 16,
+          height: combinedPosition.height + 16,
           animationDuration: "1.5s",
         }}
       />

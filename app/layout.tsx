@@ -6,7 +6,7 @@ import { AuthProvider } from "@/components/auth";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "TaxStudio - Tax Management Tool",
+  title: "FiBuKI - Tax Management Tool",
   description: "Manage your transactions and receipts for tax purposes",
 };
 

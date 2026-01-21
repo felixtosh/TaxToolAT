@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, startTransition } from "react";
 import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import {
@@ -25,6 +25,7 @@ import {
   unmarkFileAsNotInvoice,
   connectFileToTransaction,
   disconnectFileFromTransaction,
+  unrejectFileFromTransaction,
   getFilesForTransaction,
   getTransactionsForFile,
   acceptTransactionSuggestion,
@@ -37,7 +38,8 @@ const FILES_COLLECTION = "files";
 
 export function useFiles(filters?: FileFilters) {
   const { userId } = useAuth();
-  const [files, setFiles] = useState<TaxFile[]>([]);
+  // Store raw (unfiltered) files from Firestore
+  const [rawFiles, setRawFiles] = useState<TaxFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -49,10 +51,10 @@ export function useFiles(filters?: FileFilters) {
     [userId]
   );
 
-  // Realtime listener for files
+  // Realtime listener for files - only depends on userId, not filters
   useEffect(() => {
     if (!userId) {
-      setFiles([]);
+      setRawFiles([]);
       setLoading(false);
       return;
     }
@@ -68,47 +70,16 @@ export function useFiles(filters?: FileFilters) {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        let data = snapshot.docs.map((doc) => ({
+        const data = snapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         })) as TaxFile[];
 
-        // Filter out soft-deleted files by default
-        if (!filters?.includeDeleted) {
-          data = data.filter((f) => !f.deletedAt);
-        }
-
-        // Apply client-side filters
-        if (filters?.search) {
-          const searchLower = filters.search.toLowerCase();
-          data = data.filter(
-            (f) =>
-              f.fileName.toLowerCase().includes(searchLower) ||
-              (f.extractedPartner?.toLowerCase() || "").includes(searchLower)
-          );
-        }
-
-        if (filters?.hasConnections !== undefined) {
-          data = data.filter((f) =>
-            filters.hasConnections
-              ? f.transactionIds.length > 0
-              : f.transactionIds.length === 0
-          );
-        }
-
-        if (filters?.extractionComplete !== undefined) {
-          data = data.filter((f) => f.extractionComplete === filters.extractionComplete);
-        }
-
-        // Filter by isNotInvoice status
-        if (filters?.isNotInvoice !== undefined) {
-          data = data.filter((f) =>
-            filters.isNotInvoice ? f.isNotInvoice === true : f.isNotInvoice !== true
-          );
-        }
-
-        setFiles(data);
-        setLoading(false);
+        // Use startTransition to batch updates and prevent flicker
+        startTransition(() => {
+          setRawFiles(data);
+          setLoading(false);
+        });
       },
       (err) => {
         console.error("Error fetching files:", err);
@@ -118,7 +89,81 @@ export function useFiles(filters?: FileFilters) {
     );
 
     return () => unsubscribe();
-  }, [userId, filters?.search, filters?.hasConnections, filters?.extractionComplete, filters?.includeDeleted, filters?.isNotInvoice]);
+  }, [userId]);
+
+  // Apply filters client-side via useMemo - no loading state change
+  const files = useMemo(() => {
+    let data = rawFiles;
+
+    // Filter out soft-deleted files by default
+    if (!filters?.includeDeleted) {
+      data = data.filter((f) => !f.deletedAt);
+    }
+
+    // Apply client-side filters
+    if (filters?.search) {
+      const searchLower = filters.search.toLowerCase();
+      data = data.filter(
+        (f) =>
+          f.fileName.toLowerCase().includes(searchLower) ||
+          (f.extractedPartner?.toLowerCase() || "").includes(searchLower)
+      );
+    }
+
+    if (filters?.hasConnections !== undefined) {
+      data = data.filter((f) =>
+        filters.hasConnections
+          ? f.transactionIds.length > 0
+          : f.transactionIds.length === 0
+      );
+    }
+
+    if (filters?.extractionComplete !== undefined) {
+      data = data.filter((f) => f.extractionComplete === filters.extractionComplete);
+    }
+
+    // Filter by isNotInvoice status
+    if (filters?.isNotInvoice !== undefined) {
+      data = data.filter((f) =>
+        filters.isNotInvoice ? f.isNotInvoice === true : f.isNotInvoice !== true
+      );
+    }
+
+    // Filter by extracted date range
+    if (filters?.extractedDateFrom || filters?.extractedDateTo) {
+      data = data.filter((f) => {
+        if (!f.extractedDate) return false;
+        const fileDate = f.extractedDate.toDate();
+        if (filters.extractedDateFrom && fileDate < filters.extractedDateFrom) return false;
+        if (filters.extractedDateTo) {
+          // Add 1 day to include the end date fully
+          const endDate = new Date(filters.extractedDateTo);
+          endDate.setDate(endDate.getDate() + 1);
+          if (fileDate >= endDate) return false;
+        }
+        return true;
+      });
+    }
+
+    // Filter by partner IDs
+    if (filters?.partnerIds && filters.partnerIds.length > 0) {
+      const partnerIdSet = new Set(filters.partnerIds);
+      data = data.filter((f) => f.partnerId && partnerIdSet.has(f.partnerId));
+    }
+
+    // Filter by amount type (income/expense based on invoiceDirection)
+    if (filters?.amountType && filters.amountType !== "all") {
+      data = data.filter((f) => {
+        if (!f.invoiceDirection) return false;
+        // incoming = expense (we receive invoice), outgoing = income (we send invoice)
+        if (filters.amountType === "expense") return f.invoiceDirection === "incoming";
+        if (filters.amountType === "income") return f.invoiceDirection === "outgoing";
+        return true;
+      });
+    }
+
+    return data;
+  }, [rawFiles, filters?.search, filters?.hasConnections, filters?.extractionComplete, filters?.includeDeleted, filters?.isNotInvoice, filters?.extractedDateFrom, filters?.extractedDateTo, filters?.partnerIds, filters?.amountType]);
 
   const create = useCallback(
     async (data: FileCreateData): Promise<string> => {
@@ -174,10 +219,16 @@ export function useFiles(filters?: FileFilters) {
 
   const getFileById = useCallback(
     (fileId: string): TaxFile | undefined => {
-      return files.find((f) => f.id === fileId);
+      // Search all files, not just filtered ones
+      return rawFiles.find((f) => f.id === fileId);
     },
-    [files]
+    [rawFiles]
   );
+
+  // Total count of files (excluding soft-deleted) for empty state logic
+  const allFilesCount = useMemo(() => {
+    return rawFiles.filter((f) => !f.deletedAt).length;
+  }, [rawFiles]);
 
   const connectToTransaction = useCallback(
     async (
@@ -226,6 +277,7 @@ export function useFiles(filters?: FileFilters) {
 
   return {
     files,
+    allFilesCount,
     loading,
     error,
     create,
@@ -280,13 +332,19 @@ export function useTransactionFiles(transactionId: string | null) {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as TaxFile[];
+        const data = snapshot.docs
+          .map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }) as TaxFile)
+          // Filter out deleted files (soft-deleted files still have transactionIds)
+          .filter((file) => !file.deletedAt);
 
-        setFiles(data);
-        setLoading(false);
+        // Use startTransition to batch updates and prevent flicker
+        startTransition(() => {
+          setFiles(data);
+          setLoading(false);
+        });
       },
       (err) => {
         console.error("Error fetching transaction files:", err);
@@ -314,9 +372,17 @@ export function useTransactionFiles(transactionId: string | null) {
   );
 
   const disconnectFile = useCallback(
+    async (fileId: string, reject: boolean = false): Promise<void> => {
+      if (!transactionId) throw new Error("No transaction selected");
+      await disconnectFileFromTransaction(ctx, fileId, transactionId, reject);
+    },
+    [ctx, transactionId]
+  );
+
+  const unrejectFile = useCallback(
     async (fileId: string): Promise<void> => {
       if (!transactionId) throw new Error("No transaction selected");
-      await disconnectFileFromTransaction(ctx, fileId, transactionId);
+      await unrejectFileFromTransaction(ctx, fileId, transactionId);
     },
     [ctx, transactionId]
   );
@@ -327,5 +393,6 @@ export function useTransactionFiles(transactionId: string | null) {
     error,
     connectFile,
     disconnectFile,
+    unrejectFile,
   };
 }

@@ -294,7 +294,7 @@ export function ListItem({
         <span
           className={cn(
             "text-sm font-medium tabular-nums",
-            isNegative ? "text-red-600" : "text-green-600"
+            isNegative ? "text-amount-negative" : "text-amount-positive"
           )}
         >
           {isNegative ? "-" : "+"}

@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { collection, query, where, getDocs, addDoc, orderBy, limit } from "firebase/firestore";
-import { Timestamp } from "firebase/firestore";
-import { getServerDb } from "@/lib/firebase/config-server";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import {
-  getEmailIntegration,
-  getSyncDateRanges,
-  hasPendingSync,
-  cleanupStaleQueueItems,
-} from "@/lib/operations";
 
-const db = getServerDb();
+const db = getAdminDb();
+const INTEGRATIONS_COLLECTION = "emailIntegrations";
+const SYNC_QUEUE_COLLECTION = "gmailSyncQueue";
+const TRANSACTIONS_COLLECTION = "transactions";
 
 /**
  * POST /api/gmail/sync
@@ -33,11 +29,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId };
-
     // Verify integration exists and belongs to user
-    const integration = await getEmailIntegration(ctx, integrationId);
-    if (!integration) {
+    const integrationRef = db.collection(INTEGRATIONS_COLLECTION).doc(integrationId);
+    const integrationSnap = await integrationRef.get();
+
+    if (!integrationSnap.exists) {
+      return NextResponse.json(
+        { error: "Integration not found" },
+        { status: 404 }
+      );
+    }
+
+    const integration = integrationSnap.data()!;
+    if (integration.userId !== userId) {
       return NextResponse.json(
         { error: "Integration not found" },
         { status: 404 }
@@ -55,7 +59,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Only block if initial sync is actively in progress (started but not complete)
-    // Allow if initialSyncComplete is undefined (legacy integrations) or true
     if (integration.initialSyncComplete === false && integration.initialSyncStartedAt) {
       return NextResponse.json(
         {
@@ -81,15 +84,41 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Clean up any stale queue items first
-    const cleanedUp = await cleanupStaleQueueItems(ctx, integrationId);
+    // Clean up any stale queue items first (processing for > 30 minutes)
+    const staleThreshold = new Date(Date.now() - 30 * 60 * 1000);
+    const staleQuery = await db
+      .collection(SYNC_QUEUE_COLLECTION)
+      .where("integrationId", "==", integrationId)
+      .where("status", "==", "processing")
+      .get();
+
+    let cleanedUp = 0;
+    for (const doc of staleQuery.docs) {
+      const data = doc.data();
+      const startedAt = data.startedAt?.toDate() || data.createdAt?.toDate();
+      if (startedAt && startedAt < staleThreshold) {
+        await doc.ref.update({
+          status: "failed",
+          error: "Sync timed out",
+          updatedAt: Timestamp.now(),
+        });
+        cleanedUp++;
+      }
+    }
+
     if (cleanedUp > 0) {
       console.log(`[Gmail Sync] Cleaned up ${cleanedUp} stale queue item(s)`);
     }
 
     // Check if there's already a pending sync (non-stale)
-    const hasPending = await hasPendingSync(ctx, integrationId);
-    if (hasPending) {
+    const pendingQuery = await db
+      .collection(SYNC_QUEUE_COLLECTION)
+      .where("integrationId", "==", integrationId)
+      .where("status", "in", ["pending", "processing"])
+      .limit(1)
+      .get();
+
+    if (!pendingQuery.empty) {
       return NextResponse.json(
         {
           error: "A sync is already in progress",
@@ -99,8 +128,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get date ranges that need syncing (gaps between transaction range and synced range)
-    const gapsToSync = await getSyncDateRanges(ctx, integrationId);
+    // Get date range from transactions
+    const gapsToSync = await getSyncDateRanges(userId, integrationId, integration);
 
     if (gapsToSync.length === 0) {
       // No gaps - already fully synced for current transaction range
@@ -116,7 +145,7 @@ export async function POST(request: NextRequest) {
     const queueIds: string[] = [];
 
     for (const gap of gapsToSync) {
-      const queueRef = await addDoc(collection(db, "gmailSyncQueue"), {
+      const queueRef = await db.collection(SYNC_QUEUE_COLLECTION).add({
         userId,
         integrationId,
         type: "manual",
@@ -170,11 +199,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const ctx = { db, userId };
-
     // Verify integration exists and belongs to user
-    const integration = await getEmailIntegration(ctx, integrationId);
-    if (!integration) {
+    const integrationRef = db.collection(INTEGRATIONS_COLLECTION).doc(integrationId);
+    const integrationSnap = await integrationRef.get();
+
+    if (!integrationSnap.exists) {
+      return NextResponse.json(
+        { error: "Integration not found" },
+        { status: 404 }
+      );
+    }
+
+    const integration = integrationSnap.data()!;
+    if (integration.userId !== userId) {
       return NextResponse.json(
         { error: "Integration not found" },
         { status: 404 }
@@ -182,28 +219,28 @@ export async function GET(request: NextRequest) {
     }
 
     // Get active sync queue items
-    const activeQuery = query(
-      collection(db, "gmailSyncQueue"),
-      where("integrationId", "==", integrationId),
-      where("status", "in", ["pending", "processing"]),
-      orderBy("createdAt", "desc"),
-      limit(1)
-    );
-    const activeSnapshot = await getDocs(activeQuery);
+    const activeSnapshot = await db
+      .collection(SYNC_QUEUE_COLLECTION)
+      .where("integrationId", "==", integrationId)
+      .where("status", "in", ["pending", "processing"])
+      .orderBy("createdAt", "desc")
+      .limit(1)
+      .get();
+
     const activeSyncs = activeSnapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
 
     // Get most recent completed sync
-    const completedQuery = query(
-      collection(db, "gmailSyncQueue"),
-      where("integrationId", "==", integrationId),
-      where("status", "in", ["completed", "failed"]),
-      orderBy("createdAt", "desc"),
-      limit(1)
-    );
-    const completedSnapshot = await getDocs(completedQuery);
+    const completedSnapshot = await db
+      .collection(SYNC_QUEUE_COLLECTION)
+      .where("integrationId", "==", integrationId)
+      .where("status", "in", ["completed", "failed"])
+      .orderBy("createdAt", "desc")
+      .limit(1)
+      .get();
+
     const recentCompleted = completedSnapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
@@ -230,4 +267,71 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/**
+ * Get date ranges that need syncing
+ */
+async function getSyncDateRanges(
+  userId: string,
+  integrationId: string,
+  integration: FirebaseFirestore.DocumentData
+): Promise<{ from: Date; to: Date }[]> {
+  // Get transaction date range
+  const transactionsQuery = await db
+    .collection(TRANSACTIONS_COLLECTION)
+    .where("userId", "==", userId)
+    .orderBy("date", "asc")
+    .limit(1)
+    .get();
+
+  if (transactionsQuery.empty) {
+    // No transactions - sync last 90 days
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 90);
+    return [{ from, to }];
+  }
+
+  const oldestTransaction = transactionsQuery.docs[0].data();
+  const oldestDate = oldestTransaction.date.toDate();
+
+  // Get most recent transaction
+  const recentQuery = await db
+    .collection(TRANSACTIONS_COLLECTION)
+    .where("userId", "==", userId)
+    .orderBy("date", "desc")
+    .limit(1)
+    .get();
+
+  const newestTransaction = recentQuery.docs[0]?.data();
+  const newestDate = newestTransaction?.date.toDate() || new Date();
+
+  // Add buffer days
+  const from = new Date(oldestDate);
+  from.setDate(from.getDate() - 7);
+  const to = new Date(newestDate);
+  to.setDate(to.getDate() + 7);
+
+  // Check what's already synced
+  const syncedFrom = integration.syncedDateFrom?.toDate();
+  const syncedTo = integration.syncedDateTo?.toDate();
+
+  if (!syncedFrom || !syncedTo) {
+    // Nothing synced yet
+    return [{ from, to }];
+  }
+
+  // Find gaps
+  const gaps: { from: Date; to: Date }[] = [];
+
+  if (from < syncedFrom) {
+    gaps.push({ from, to: new Date(syncedFrom.getTime() - 1) });
+  }
+
+  if (to > syncedTo) {
+    gaps.push({ from: new Date(syncedTo.getTime() + 1), to });
+  }
+
+  return gaps;
 }

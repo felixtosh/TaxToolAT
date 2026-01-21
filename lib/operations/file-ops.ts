@@ -519,6 +519,8 @@ export async function retryFileExtraction(
  * Re-extract all files connected to a partner.
  * Used when a partner is marked as "this is my company" to recalculate counterparties.
  * Returns the number of files queued for re-extraction.
+ *
+ * Files are processed in parallel batches for better performance.
  */
 export async function reextractFilesForPartner(
   ctx: OperationsContext,
@@ -532,23 +534,36 @@ export async function reextractFilesForPartner(
   );
 
   const snapshot = await getDocs(q);
-  const fileIds: string[] = [];
+  const allFileIds = snapshot.docs.map((doc) => doc.id);
 
-  // Queue re-extraction for each file
+  if (allFileIds.length === 0) {
+    return { queuedCount: 0, fileIds: [] };
+  }
+
+  // Queue re-extraction in parallel batches for better performance
   const { getFunctions, httpsCallable } = await import("firebase/functions");
   const functions = getFunctions(undefined, "europe-west1");
   const retryFn = httpsCallable(functions, "retryFileExtraction");
 
-  for (const fileDoc of snapshot.docs) {
-    try {
-      await retryFn({ fileId: fileDoc.id, force: true });
-      fileIds.push(fileDoc.id);
-    } catch (error) {
-      console.error(`Failed to queue re-extraction for file ${fileDoc.id}:`, error);
+  const BATCH_SIZE = 5; // Process 5 files in parallel at a time
+  const successfulIds: string[] = [];
+
+  for (let i = 0; i < allFileIds.length; i += BATCH_SIZE) {
+    const batch = allFileIds.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map((fileId) => retryFn({ fileId, force: true }).then(() => fileId))
+    );
+
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        successfulIds.push(result.value);
+      } else {
+        console.error(`Failed to queue re-extraction:`, result.reason);
+      }
     }
   }
 
-  return { queuedCount: fileIds.length, fileIds };
+  return { queuedCount: successfulIds.length, fileIds: successfulIds };
 }
 
 /**
@@ -568,9 +583,11 @@ export async function softDeleteFile(
   const connectionsResult = await deleteFileConnections(ctx, fileId);
 
   // 2. Soft delete the file document (keep for deduplication)
+  // Clear transactionIds to prevent showing in transaction file lists
   const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
   await updateDoc(docRef, {
     deletedAt: Timestamp.now(),
+    transactionIds: [],
     updatedAt: Timestamp.now(),
   });
 
@@ -927,11 +944,13 @@ export async function connectFileToTransaction(
 
 /**
  * Disconnect a file from a transaction
+ * @param rejectFile If true, adds the file to transaction's rejectedFileIds to prevent auto-reconnection
  */
 export async function disconnectFileFromTransaction(
   ctx: OperationsContext,
   fileId: string,
-  transactionId: string
+  transactionId: string,
+  rejectFile: boolean = false
 ): Promise<void> {
   // Verify file exists and belongs to user
   const fileDoc = await getDoc(doc(ctx.db, FILES_COLLECTION, fileId));
@@ -1023,9 +1042,38 @@ export async function disconnectFileFromTransaction(
     transactionUpdate.isComplete = false;
   }
 
+  // If rejecting, add to rejectedFileIds to prevent auto-reconnection
+  if (rejectFile) {
+    transactionUpdate.rejectedFileIds = arrayUnion(fileId);
+  }
+
   batch.update(transactionRef, transactionUpdate);
 
   await batch.commit();
+}
+
+/**
+ * Remove a file from the transaction's rejected list, allowing it to be auto-matched again
+ */
+export async function unrejectFileFromTransaction(
+  ctx: OperationsContext,
+  fileId: string,
+  transactionId: string
+): Promise<void> {
+  // Verify transaction exists and belongs to user
+  const transactionDoc = await getDoc(doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId));
+  if (!transactionDoc.exists()) {
+    throw new Error(`Transaction ${transactionId} not found`);
+  }
+  const txData = transactionDoc.data();
+  if (txData.userId !== ctx.userId) {
+    throw new Error(`Transaction ${transactionId} access denied`);
+  }
+
+  await updateDoc(doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId), {
+    rejectedFileIds: arrayRemove(fileId),
+    updatedAt: Timestamp.now(),
+  });
 }
 
 /**
@@ -1110,41 +1158,90 @@ export async function getTransactionsForFile(
 
 /**
  * Delete all connections for a file (internal use)
+ * Handles both fileConnections documents AND legacy connections where
+ * transactions have fileIds but no fileConnections document.
  */
 async function deleteFileConnections(
   ctx: OperationsContext,
   fileId: string
 ): Promise<{ deleted: number }> {
-  const connections = await getFileConnections(ctx, fileId);
+  const now = Timestamp.now();
+  let deleted = 0;
 
-  if (connections.length === 0) {
-    return { deleted: 0 };
+  // 1. Delete fileConnections documents and track which transactions were updated
+  const connections = await getFileConnections(ctx, fileId);
+  const updatedTransactionIds = new Set<string>();
+
+  if (connections.length > 0) {
+    const BATCH_SIZE = 500;
+
+    for (let i = 0; i < connections.length; i += BATCH_SIZE) {
+      const chunk = connections.slice(i, i + BATCH_SIZE);
+
+      // Delete connection documents
+      const deleteBatch = writeBatch(ctx.db);
+      for (const conn of chunk) {
+        deleteBatch.delete(doc(ctx.db, FILE_CONNECTIONS_COLLECTION, conn.id));
+        deleted++;
+      }
+      await deleteBatch.commit();
+
+      // Update transactions
+      for (const conn of chunk) {
+        const transactionRef = doc(ctx.db, TRANSACTIONS_COLLECTION, conn.transactionId);
+        const transactionSnap = await getDoc(transactionRef);
+        if (transactionSnap.exists()) {
+          const txData = transactionSnap.data();
+          const currentFileIds = (txData.fileIds || []) as string[];
+          const remainingFileIds = currentFileIds.filter((id: string) => id !== fileId);
+
+          // Recalculate isComplete: needs files OR noReceiptCategoryId
+          const hasFiles = remainingFileIds.length > 0;
+          const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
+          const isComplete = hasFiles || hasNoReceiptCategory;
+
+          await updateDoc(transactionRef, {
+            fileIds: arrayRemove(fileId),
+            isComplete,
+            updatedAt: now,
+          });
+          updatedTransactionIds.add(conn.transactionId);
+        }
+      }
+    }
   }
 
-  const BATCH_SIZE = 500;
-  let deleted = 0;
-  const now = Timestamp.now();
+  // 2. Handle legacy connections: check file's transactionIds array
+  // and remove fileId from any transactions not already updated
+  const fileDoc = await getDoc(doc(ctx.db, FILES_COLLECTION, fileId));
+  if (fileDoc.exists()) {
+    const fileData = fileDoc.data();
+    const transactionIds = (fileData.transactionIds || []) as string[];
 
-  for (let i = 0; i < connections.length; i += BATCH_SIZE) {
-    const chunk = connections.slice(i, i + BATCH_SIZE);
+    for (const transactionId of transactionIds) {
+      // Skip if already updated via fileConnections
+      if (updatedTransactionIds.has(transactionId)) {
+        continue;
+      }
 
-    // First, delete all connection documents (these always exist)
-    const deleteBatch = writeBatch(ctx.db);
-    for (const conn of chunk) {
-      deleteBatch.delete(doc(ctx.db, FILE_CONNECTIONS_COLLECTION, conn.id));
-      deleted++;
-    }
-    await deleteBatch.commit();
-
-    // Then, update transactions that still exist (skip orphaned references)
-    for (const conn of chunk) {
-      const transactionRef = doc(ctx.db, TRANSACTIONS_COLLECTION, conn.transactionId);
+      const transactionRef = doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId);
       const transactionSnap = await getDoc(transactionRef);
-      if (transactionSnap.exists()) {
+      if (transactionSnap.exists() && transactionSnap.data().userId === ctx.userId) {
+        const txData = transactionSnap.data();
+        const currentFileIds = (txData.fileIds || []) as string[];
+        const remainingFileIds = currentFileIds.filter((id: string) => id !== fileId);
+
+        // Recalculate isComplete: needs files OR noReceiptCategoryId
+        const hasFiles = remainingFileIds.length > 0;
+        const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
+        const isComplete = hasFiles || hasNoReceiptCategory;
+
         await updateDoc(transactionRef, {
           fileIds: arrayRemove(fileId),
+          isComplete,
           updatedAt: now,
         });
+        deleted++;
       }
     }
   }
@@ -1205,6 +1302,33 @@ export async function assignPartnerToFile(
   } catch (error) {
     console.error("Failed to clear manual file removal on reassign:", error);
     // Non-critical - don't throw
+  }
+
+  // Trigger batch matching for this partner (non-blocking)
+  // This will try to match other unmatched files/transactions for the same partner
+  if (partnerType === "user") {
+    triggerPartnerBatchMatching(partnerId).catch((error) => {
+      console.error("Failed to trigger partner batch matching:", error);
+    });
+  }
+}
+
+/**
+ * Trigger batch matching for all unmatched files and transactions for a partner.
+ * Runs asynchronously - does not block the caller.
+ */
+async function triggerPartnerBatchMatching(partnerId: string): Promise<void> {
+  const { getFunctions, httpsCallable } = await import("firebase/functions");
+  const functions = getFunctions(undefined, "europe-west1");
+  const matchFn = httpsCallable(functions, "matchFilesForPartner");
+
+  const result = await matchFn({ partnerId });
+  const data = result.data as { processed: number; autoMatched: number; suggested: number };
+
+  if (data.autoMatched > 0 || data.suggested > 0) {
+    console.log(
+      `[Partner Batch Match] Partner ${partnerId}: ${data.autoMatched} auto-matched, ${data.suggested} suggested`
+    );
   }
 }
 

@@ -37,7 +37,7 @@ export function TransactionHistory({ transactionId, onRollback, expandedByDefaul
       setIsLoading(true);
       setError(null);
       try {
-        const ctx = { db, userId };
+        const ctx = { db, userId: userId ?? "" };
         const entries = await getTransactionHistory(ctx, transactionId);
         setHistory(entries);
       } catch (err) {
@@ -54,10 +54,10 @@ export function TransactionHistory({ transactionId, onRollback, expandedByDefaul
   const handleRollback = async (historyId: string) => {
     setIsRollingBack(historyId);
     try {
-      const ctx = { db, userId };
+      const ctx = { db, userId: userId ?? "" };
       await rollbackTransaction(ctx, transactionId, historyId, {
         type: "user",
-        userId,
+        userId: userId ?? "",
       });
 
       // Reload history after rollback

@@ -61,13 +61,19 @@ export interface Transaction {
   fileIds?: string[];
 
   /**
+   * Array of file IDs that were manually rejected/removed by the user.
+   * Prevents automation from re-connecting these files to this transaction.
+   */
+  rejectedFileIds?: string[];
+
+  /**
    * Which automation strategy connected the most recent file to this transaction.
    * Used for tracking and debugging precision search results.
    * Set by precision search when files are auto-connected.
    */
   fileAutomationSource?: import("./precision-search").SearchStrategy | null;
 
-  /** Whether transaction has file + description */
+  /** Whether transaction has documentation (file OR no-receipt category) */
   isComplete: boolean;
 
   // === Metadata ===

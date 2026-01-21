@@ -7,17 +7,22 @@ import {
   ChevronRight,
   Tag,
   X,
-  Plus,
   Sparkles,
   Check,
   Search,
   History,
   Info,
+  AlertTriangle,
+  UserCheck,
+  RotateCcw,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Transaction } from "@/types/transaction";
 import { TaxFile } from "@/types/file";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConnectButton } from "@/components/ui/connect-button";
 import {
   Tooltip,
   TooltipContent,
@@ -27,6 +32,7 @@ import {
 import { NoReceiptCategoryPopover } from "./no-receipt-category-popover";
 import { ReceiptLostDialog } from "./receipt-lost-dialog";
 import { useTransactionFiles, useFiles } from "@/hooks/use-files";
+import { convertCurrency } from "@/lib/currency";
 import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
 import { usePrecisionSearch } from "@/hooks/use-precision-search";
 import {
@@ -80,6 +86,79 @@ interface TransactionFilesSectionProps {
   isConnectFileOpen?: boolean;
 }
 
+interface DifferenceLineProps {
+  transactionAmount: number;
+  transactionCurrency: string;
+  transactionDate: Date;
+  files: TaxFile[];
+}
+
+function DifferenceLine({ transactionAmount, transactionCurrency, transactionDate, files }: DifferenceLineProps) {
+  // Calculate sum of file amounts (only files with extracted amounts), converting to transaction currency
+  const filesWithAmounts = files.filter((f) => f.extractedAmount != null);
+  const isExtracting = files.some((f) => !f.extractionComplete && !f.isNotInvoice);
+
+  // Convert all file amounts to transaction currency using payment date
+  let filesSum = 0;
+  let conversionFailed = false;
+  for (const file of filesWithAmounts) {
+    if (file.extractedCurrency === transactionCurrency) {
+      filesSum += file.extractedAmount!;
+    } else {
+      const conversion = convertCurrency(
+        file.extractedAmount!,
+        file.extractedCurrency || "EUR",
+        transactionCurrency,
+        transactionDate
+      );
+      if (conversion) {
+        filesSum += conversion.amount;
+      } else {
+        conversionFailed = true;
+      }
+    }
+  }
+
+  const hasAllAmounts = filesWithAmounts.length === files.length && !conversionFailed;
+
+  // Transaction amount is negative for expenses, positive for income
+  // File amounts are always positive (invoice amounts)
+  const absTransactionAmount = Math.abs(transactionAmount);
+  const difference = absTransactionAmount - filesSum;
+  const isMatched = Math.abs(difference) < 100; // Allow 1 EUR/USD tolerance
+
+  // Don't show if extracting or no amounts yet
+  if (isExtracting || filesWithAmounts.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex items-center justify-between p-2 -mx-2 border-t">
+      <span className="text-sm text-muted-foreground">Difference</span>
+      {/* Right side with spacing to align with FileRow amounts (gap-2 + button + gap-2 + chevron) */}
+      <div className="flex items-center gap-2 shrink-0">
+        {!hasAllAmounts ? (
+          <span className="text-muted-foreground text-xs">Missing amounts</span>
+        ) : isMatched ? (
+          <span className="tabular-nums font-medium text-amount-positive flex items-center gap-1 text-sm">
+            {formatAmount(0, transactionCurrency)} <Check className="h-3.5 w-3.5" />
+          </span>
+        ) : (
+          <span className={cn(
+            "tabular-nums font-medium flex items-center gap-1 text-sm",
+            difference > 0 ? "text-amount-negative" : "text-amber-600"
+          )}>
+            {difference > 0 ? "-" : "+"}{formatAmount(Math.abs(difference), transactionCurrency)}
+            <AlertTriangle className="h-3.5 w-3.5" />
+          </span>
+        )}
+        {/* Spacer to match FileRow's disconnect button + chevron width */}
+        <div className="w-[52px]" />
+      </div>
+    </div>
+  );
+}
+
 function formatAmount(
   amount: number | null | undefined,
   currency: string | null | undefined
@@ -93,12 +172,34 @@ function formatAmount(
 
 interface FileRowProps {
   file: TaxFile;
+  transactionCurrency: string;
+  transactionDate: Date;
   onDisconnect: () => void;
   disconnecting: boolean;
 }
 
-function FileRow({ file, onDisconnect, disconnecting }: FileRowProps) {
+function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, disconnecting }: FileRowProps) {
   const isExtracting = !file.extractionComplete && !file.isNotInvoice;
+
+  // Check if file currency differs from transaction currency
+  const hasCurrencyMismatch =
+    file.extractedAmount != null &&
+    file.extractedCurrency &&
+    file.extractedCurrency !== transactionCurrency;
+
+  // Convert to transaction currency using payment date
+  let convertedAmount: number | null = null;
+  if (hasCurrencyMismatch) {
+    const conversion = convertCurrency(
+      file.extractedAmount!,
+      file.extractedCurrency!,
+      transactionCurrency,
+      transactionDate
+    );
+    if (conversion) {
+      convertedAmount = conversion.amount;
+    }
+  }
 
   return (
     <Link
@@ -118,7 +219,16 @@ function FileRow({ file, onDisconnect, disconnecting }: FileRowProps) {
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         ) : file.extractedAmount != null && (
           <span className="text-sm font-medium tabular-nums text-foreground">
-            {formatAmount(file.extractedAmount, file.extractedCurrency)}
+            {hasCurrencyMismatch && convertedAmount != null ? (
+              <>
+                ~{formatAmount(convertedAmount, transactionCurrency)}
+                <span className="text-muted-foreground text-xs ml-1">
+                  ({formatAmount(file.extractedAmount, file.extractedCurrency)})
+                </span>
+              </>
+            ) : (
+              formatAmount(file.extractedAmount, file.extractedCurrency)
+            )}
           </span>
         )}
         <button
@@ -239,13 +349,15 @@ export function TransactionFilesSection({
   const [runningStepId, setRunningStepId] = useState<string | null>(null);
   const [lastRunOutcome, setLastRunOutcome] = useState<LastRunOutcome | null>(null);
   const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set());
+  const [showRejectedFiles, setShowRejectedFiles] = useState(false);
+  const [unrejecting, setUnrejecting] = useState<string | null>(null);
 
   // Get integration statuses for the automation dialog
   const { integrationStatuses } = useAutomations();
 
-  const { files, loading: filesLoading, connectFile, disconnectFile } =
+  const { files, loading: filesLoading, connectFile, disconnectFile, unrejectFile } =
     useTransactionFiles(transaction.id);
-  const { files: allFiles, loading: allFilesLoading } = useFiles();
+  const { files: allFiles, loading: allFilesLoading, getFileById } = useFiles();
   const {
     categories,
     loading: categoriesLoading,
@@ -284,6 +396,7 @@ export function TransactionFilesSection({
     setLastRunOutcome(null);
     setRunningStepId(null);
     setDismissedSuggestions(new Set());
+    setShowRejectedFiles(false);
   }, [transaction.id]);
 
   // Check if transaction has a no-receipt category assigned
@@ -313,12 +426,17 @@ export function TransactionFilesSection({
       return [];
     }
     const connectedFileIds = new Set(files.map(f => f.id));
+    const rejectedIds = new Set(transaction.rejectedFileIds || []);
     return allFiles
       .filter(file => {
-        // Skip already connected files
+        // Skip already connected files (to this transaction)
         if (connectedFileIds.has(file.id)) return false;
+        // Skip files already connected to ANY transaction (avoid suggesting files that are assigned elsewhere)
+        if (file.transactionIds && file.transactionIds.length > 0) return false;
         // Skip dismissed suggestions
         if (dismissedSuggestions.has(file.id)) return false;
+        // Skip rejected files (user manually removed them from this transaction)
+        if (rejectedIds.has(file.id)) return false;
         // Check if file has this transaction in suggestions
         return file.transactionSuggestions?.some(
           s => s.transactionId === transaction.id
@@ -338,6 +456,18 @@ export function TransactionFilesSection({
       .slice(0, 3);
   }, [allFiles, allFilesLoading, files, hasFiles, hasCategory, transaction.id, dismissedSuggestions]);
 
+  // Get rejected files info
+  const rejectedFiles = useMemo(() => {
+    const rejectedIds = transaction.rejectedFileIds || [];
+    if (rejectedIds.length === 0 || allFilesLoading) return [];
+
+    return rejectedIds
+      .map(id => getFileById(id))
+      .filter((f): f is TaxFile => f !== undefined);
+  }, [transaction.rejectedFileIds, allFilesLoading, getFileById]);
+
+  const rejectedCount = transaction.rejectedFileIds?.length || 0;
+
   const handleConnectFile = async (fileId: string) => {
     await connectFile(fileId);
     // If connecting a file, remove any no-receipt category
@@ -353,11 +483,44 @@ export function TransactionFilesSection({
   const handleDisconnectFile = async (fileId: string) => {
     setDisconnecting(fileId);
     try {
-      await disconnectFile(fileId);
+      // Pass reject=true to add to rejectedFileIds, preventing auto-reconnection
+      await disconnectFile(fileId, true);
     } catch (error) {
       console.error("Failed to disconnect file:", error);
     } finally {
       setDisconnecting(null);
+    }
+  };
+
+  const handleUnrejectFile = async (fileId: string) => {
+    setUnrejecting(fileId);
+    try {
+      await unrejectFile(fileId);
+      // Close the rejections panel if no more rejections
+      if (rejectedCount <= 1) {
+        setShowRejectedFiles(false);
+      }
+    } catch (error) {
+      console.error("Failed to unreject file:", error);
+    } finally {
+      setUnrejecting(null);
+    }
+  };
+
+  const handleReconnectRejectedFile = async (fileId: string) => {
+    setUnrejecting(fileId);
+    try {
+      // First unreject, then connect
+      await unrejectFile(fileId);
+      await connectFile(fileId);
+      // Close the panel after reconnecting
+      if (rejectedCount <= 1) {
+        setShowRejectedFiles(false);
+      }
+    } catch (error) {
+      console.error("Failed to reconnect file:", error);
+    } finally {
+      setUnrejecting(null);
     }
   };
 
@@ -412,7 +575,6 @@ export function TransactionFilesSection({
   }, [triggerPrecisionSearch]);
 
   const loading = filesLoading || categoriesLoading;
-  const connectButtonVariant = isConnectFileOpen ? "secondary" : "outline";
 
   return (
     <TooltipProvider>
@@ -489,45 +651,186 @@ export function TransactionFilesSection({
             </FieldRow>
           ) : hasFiles ? (
             <>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Receipt</span>
-                <Button
-                  variant={connectButtonVariant}
-                  size="sm"
-                  onClick={onOpenConnectFile}
-                  className="h-7 px-3"
-                  disabled={hasCategory || !onOpenConnectFile}
-                  aria-pressed={isConnectFileOpen}
-                >
-                  <Plus className="h-3 w-3 mr-1" />
-                  Add
-                </Button>
-              </div>
+              <span className="text-sm text-muted-foreground">Receipt</span>
               <div className="space-y-0.5">
                 {files.map((file) => (
                   <FileRow
                     key={file.id}
                     file={file}
+                    transactionCurrency={transaction.currency}
+                    transactionDate={transaction.date.toDate()}
                     onDisconnect={() => handleDisconnectFile(file.id)}
                     disconnecting={disconnecting === file.id}
                   />
                 ))}
+                {/* Add button after files */}
+                <div className="pt-1 flex items-center gap-2">
+                  <ConnectButton
+                    onClick={onOpenConnectFile}
+                    isOpen={isConnectFileOpen}
+                    label="Add"
+                    disabled={hasCategory || !onOpenConnectFile}
+                  />
+                  {rejectedCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowRejectedFiles(!showRejectedFiles)}
+                      className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                    >
+                      ({rejectedCount} rejected)
+                      {showRejectedFiles ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
+                  )}
+                </div>
+                {/* Difference line - at bottom, aligned with file amounts */}
+                <DifferenceLine
+                  transactionAmount={transaction.amount}
+                  transactionCurrency={transaction.currency}
+                  transactionDate={transaction.date.toDate()}
+                  files={files}
+                />
+                {/* Rejected files list */}
+                {showRejectedFiles && rejectedFiles.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-dashed space-y-1">
+                    <span className="text-xs text-muted-foreground">Rejected files</span>
+                    {rejectedFiles.map((file) => (
+                      <div
+                        key={file.id}
+                        className="flex items-center justify-between gap-2 p-2 -mx-2 rounded bg-muted/30"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm truncate text-muted-foreground">{file.fileName}</p>
+                          <p className="text-xs text-muted-foreground/70">
+                            {file.extractedDate
+                              ? format(file.extractedDate.toDate(), "MMM d, yyyy")
+                              : format(file.uploadedAt.toDate(), "MMM d, yyyy")}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                onClick={() => handleUnrejectFile(file.id)}
+                                disabled={unrejecting === file.id}
+                                className="p-1 rounded hover:bg-muted transition-colors"
+                                title="Allow auto-matching again"
+                              >
+                                {unrejecting === file.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                ) : (
+                                  <X className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                                )}
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>Remove from rejected</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                onClick={() => handleReconnectRejectedFile(file.id)}
+                                disabled={unrejecting === file.id}
+                                className="p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+                                title="Reconnect file"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5 text-muted-foreground hover:text-green-600" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>Reconnect file</TooltipContent>
+                          </Tooltip>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           ) : (
-            <FieldRow label="Receipt">
-              <Button
-                variant={connectButtonVariant}
-                size="sm"
-                onClick={onOpenConnectFile}
-                className="h-7 px-3"
-                disabled={hasCategory || !onOpenConnectFile}
-                aria-pressed={isConnectFileOpen}
-              >
-                <Plus className="h-3 w-3 mr-1" />
-                Connect
-              </Button>
-            </FieldRow>
+            <>
+              <FieldRow label="Receipt">
+                <div className="flex items-center gap-2">
+                  <ConnectButton
+                    onClick={onOpenConnectFile}
+                    isOpen={isConnectFileOpen}
+                    disabled={hasCategory || !onOpenConnectFile}
+                  />
+                  {rejectedCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowRejectedFiles(!showRejectedFiles)}
+                      className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                    >
+                      ({rejectedCount} rejected)
+                      {showRejectedFiles ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
+                  )}
+                </div>
+              </FieldRow>
+              {/* Rejected files list when no files connected */}
+              {showRejectedFiles && rejectedFiles.length > 0 && (
+                <div className="mt-1 pt-2 border-t border-dashed space-y-1">
+                  <span className="text-xs text-muted-foreground">Rejected files</span>
+                  {rejectedFiles.map((file) => (
+                    <div
+                      key={file.id}
+                      className="flex items-center justify-between gap-2 p-2 -mx-2 rounded bg-muted/30"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm truncate text-muted-foreground">{file.fileName}</p>
+                        <p className="text-xs text-muted-foreground/70">
+                          {file.extractedDate
+                            ? format(file.extractedDate.toDate(), "MMM d, yyyy")
+                            : format(file.uploadedAt.toDate(), "MMM d, yyyy")}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => handleUnrejectFile(file.id)}
+                              disabled={unrejecting === file.id}
+                              className="p-1 rounded hover:bg-muted transition-colors"
+                              title="Allow auto-matching again"
+                            >
+                              {unrejecting === file.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                              ) : (
+                                <X className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                              )}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>Remove from rejected</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => handleReconnectRejectedFile(file.id)}
+                              disabled={unrejecting === file.id}
+                              className="p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+                              title="Reconnect file"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5 text-muted-foreground hover:text-green-600" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>Reconnect file</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -570,6 +873,16 @@ export function TransactionFilesSection({
                   ({transaction.receiptLostEntry.reason})
                 </span>
               )}
+              {/* Show manual checkmark or confidence percentage */}
+              {transaction.noReceiptCategoryMatchedBy === "manual" ? (
+                <span className="inline-flex items-center text-green-600 flex-shrink-0">
+                  <UserCheck className="h-3 w-3" />
+                </span>
+              ) : transaction.noReceiptCategoryConfidence ? (
+                <span className="text-xs text-muted-foreground flex-shrink-0">
+                  {transaction.noReceiptCategoryConfidence}%
+                </span>
+              ) : null}
               <button
                 type="button"
                 onClick={(e) => {
@@ -608,7 +921,7 @@ export function TransactionFilesSection({
                   >
                     <Sparkles className="h-3.5 w-3.5 flex-shrink-0" />
                     <span className="truncate max-w-[120px]">{category.name}</span>
-                    <span className="text-xs opacity-75">{suggestion.confidence}%</span>
+                    <span className="text-xs opacity-75">{Math.round(suggestion.confidence)}%</span>
                   </button>
                 );
               })}

@@ -13,6 +13,7 @@ import {
   Loader2,
   ExternalLink,
   Info,
+  Search,
 } from "lucide-react";
 import Link from "next/link";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
@@ -36,8 +37,6 @@ import {
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
-import { FileTransactionSuggestions } from "./file-transaction-suggestions";
-import { ConnectTransactionDialog } from "./connect-transaction-dialog";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
@@ -51,6 +50,7 @@ import {
   retryFileExtraction,
   updateFileDirection,
   updateFileExtractedFields,
+  refreshTransactionMatches,
   EditableExtractedFields,
 } from "@/lib/operations";
 import { InvoiceDirection } from "@/types/user-data";
@@ -97,6 +97,10 @@ interface FileDetailPanelProps {
   viewerOpen?: boolean;
   /** Called when user clicks an extracted field to highlight it in the viewer */
   onHighlightField?: (text: string) => void;
+  /** Called when user wants to open connect transaction overlay */
+  onOpenConnectTransaction?: () => void;
+  /** Whether connect transaction overlay is open (for button state) */
+  isConnectTransactionOpen?: boolean;
 }
 
 export function FileDetailPanel({
@@ -117,17 +121,19 @@ export function FileDetailPanel({
   onOpenViewer,
   viewerOpen = false,
   onHighlightField,
+  onOpenConnectTransaction,
+  isConnectTransactionOpen = false,
 }: FileDetailPanelProps) {
   const router = useRouter();
   const { userId } = useAuth();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
-  const [isConnectTransactionOpen, setIsConnectTransactionOpen] = useState(false);
   const [isRetryingExtraction, setIsRetryingExtraction] = useState(false);
   const [isUpdatingExtractedFields, setIsUpdatingExtractedFields] = useState(false);
+  const [isRematchingTransactions, setIsRematchingTransactions] = useState(false);
 
   const ctx: OperationsContext = useMemo(
-    () => ({ db, userId }),
+    () => ({ db, userId: userId ?? "" }),
     [userId]
   );
 
@@ -334,6 +340,17 @@ export function FileDetailPanel({
     }
   }, [ctx, file.id]);
 
+  const handleTriggerTransactionRematch = useCallback(async () => {
+    setIsRematchingTransactions(true);
+    try {
+      await refreshTransactionMatches(ctx, file.id);
+    } catch (error) {
+      console.error("Failed to refresh transaction matches:", error);
+    } finally {
+      setIsRematchingTransactions(false);
+    }
+  }, [ctx, file.id]);
+
   return (
     <>
       <div className="h-full flex flex-col">
@@ -493,13 +510,44 @@ export function FileDetailPanel({
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium">Partner</h3>
-                {/* Debug info button */}
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-6 w-6">
-                      <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                    </Button>
-                  </PopoverTrigger>
+                <div className="flex items-center gap-1">
+                  {/* Search button to trigger partner re-matching */}
+                  {!assignedPartner && file.extractionComplete && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          disabled={isRetryingExtraction}
+                        >
+                          {isRetryingExtraction ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Search className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-60 text-xs p-3" align="end">
+                        <p className="font-medium mb-1">Partner Matching</p>
+                        <p className="text-muted-foreground">
+                          Partner suggestions are computed automatically based on extracted data (IBAN, VAT ID, name).
+                        </p>
+                        {suggestions.length === 0 && (
+                          <p className="text-muted-foreground mt-2">
+                            No matches found. Try re-extracting the file if data is missing.
+                          </p>
+                        )}
+                      </PopoverContent>
+                    </Popover>
+                  )}
+                  {/* Debug info button */}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-6 w-6">
+                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                      </Button>
+                    </PopoverTrigger>
                   <PopoverContent className="w-80 text-xs" align="end">
                     <div className="space-y-2">
                       <p className="font-medium">Partner Match Debug</p>
@@ -539,6 +587,7 @@ export function FileDetailPanel({
                     </div>
                   </PopoverContent>
                 </Popover>
+                </div>
               </div>
 
               <FieldRow label="Connect" labelWidth="w-28">
@@ -587,24 +636,18 @@ export function FileDetailPanel({
 
             <Separator />
 
-            {/* Connected Transactions */}
+            {/* Connected Transactions + Suggestions */}
             <FileConnectionsList
               file={file}
               onDisconnect={handleDisconnect}
-              onConnectClick={() => setIsConnectTransactionOpen(true)}
+              onConnectClick={onOpenConnectTransaction}
+              isConnectOpen={isConnectTransactionOpen}
+              suggestions={file.transactionSuggestions}
+              onAcceptSuggestion={handleAcceptTransactionSuggestion}
+              onDismissSuggestion={handleDismissTransactionSuggestion}
+              onTriggerRematch={handleTriggerTransactionRematch}
+              isRematching={isRematchingTransactions}
             />
-
-            {/* Transaction Suggestions */}
-            {file.transactionSuggestions && file.transactionSuggestions.length > 0 && (
-              <>
-                <Separator />
-                <FileTransactionSuggestions
-                  file={file}
-                  onAccept={handleAcceptTransactionSuggestion}
-                  onDismiss={handleDismissTransactionSuggestion}
-                />
-              </>
-            )}
           </div>
         </ScrollArea>
 
@@ -663,25 +706,6 @@ export function FileDetailPanel({
           ibans: file.extractedIban ? [file.extractedIban] : undefined,
           address: file.extractedAddress ? { street: file.extractedAddress, country: "" } : undefined,
         }}
-      />
-
-      {/* Connect Transaction Dialog */}
-      <ConnectTransactionDialog
-        open={isConnectTransactionOpen}
-        onClose={() => setIsConnectTransactionOpen(false)}
-        onSelect={handleConnectTransactions}
-        connectedTransactionIds={file.transactionIds}
-        fileInfo={{
-          fileName: file.fileName,
-          extractedDate: file.extractedDate?.toDate() || null,
-          extractedAmount: file.extractedAmount,
-          extractedCurrency: file.extractedCurrency,
-          extractedPartner: file.extractedPartner,
-          extractedIban: file.extractedIban,
-          extractedText: file.extractedText,
-          partnerId: file.partnerId,
-        }}
-        suggestions={file.transactionSuggestions}
       />
     </>
   );

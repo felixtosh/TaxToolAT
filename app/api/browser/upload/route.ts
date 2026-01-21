@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { addDoc, collection, Timestamp } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { createHash } from "crypto";
-import { getServerDb, getServerStorage } from "@/lib/firebase/config-server";
+import { Timestamp } from "firebase-admin/firestore";
+import { createHash, randomUUID } from "crypto";
+import { getAdminDb, getAdminBucket, getFirebaseStorageDownloadUrl } from "@/lib/firebase/admin";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
-const db = getServerDb();
-const storage = getServerStorage();
+const db = getAdminDb();
 const FILES_COLLECTION = "files";
 
 function sanitizeFilename(name: string): string {
@@ -58,18 +56,29 @@ export async function POST(request: NextRequest) {
 
     const timestamp = Date.now();
     const storagePath = `files/${userId}/${timestamp}_${sanitizedFilename}`;
-    const storageRef = ref(storage, storagePath);
 
-    await uploadBytes(storageRef, buffer, {
-      contentType: mimeType,
-      customMetadata: {
-        originalName,
-        sourceUrl,
-        sourceRunId,
+    // Upload to Firebase Storage using Admin SDK
+    const bucket = getAdminBucket();
+    const storageFile = bucket.file(storagePath);
+
+    // Generate a download token (same as client SDK's getDownloadURL)
+    const downloadToken = randomUUID();
+
+    await storageFile.save(buffer, {
+      metadata: {
+        contentType: mimeType,
+        contentDisposition: "inline",
+        metadata: {
+          originalName,
+          sourceUrl,
+          sourceRunId,
+          firebaseStorageDownloadTokens: downloadToken,
+        },
       },
     });
 
-    const downloadUrl = await getDownloadURL(storageRef);
+    // Construct Firebase Storage download URL (permanent, like client SDK's getDownloadURL)
+    const downloadUrl = getFirebaseStorageDownloadUrl(bucket.name, storagePath, downloadToken);
     const contentHash = createHash("sha256").update(buffer).digest("hex");
 
     const now = Timestamp.now();
@@ -94,7 +103,7 @@ export async function POST(request: NextRequest) {
       sourceResultType: "browser_invoice" as const,
     };
 
-    const docRef = await addDoc(collection(db, FILES_COLLECTION), fileDoc);
+    const docRef = await db.collection(FILES_COLLECTION).add(fileDoc);
 
     return NextResponse.json({
       ok: true,

@@ -1,13 +1,13 @@
 /**
  * Server-side authentication helpers
  *
- * In development mode, falls back to mock user for testing.
+ * Extracts user ID from Firebase Auth tokens.
  * In production, would verify Firebase ID tokens (requires firebase-admin setup).
  */
 
 /**
- * Get user ID from request, with fallback for development
- * In development with emulators, allows requests without auth for testing
+ * Get user ID from request Authorization header
+ * Requires a valid Firebase Auth token
  */
 export async function getServerUserIdWithFallback(
   request: Request
@@ -21,24 +21,16 @@ export async function getServerUserIdWithFallback(
     // The token is a JWT - we can decode (not verify) to get the uid
     const token = authHeader.substring(7);
     try {
-      const payload = decodeJwtPayload(token);
+      const payload = decodeJwtPayload(token) as { user_id?: string; sub?: string } | null;
       if (payload?.user_id || payload?.sub) {
-        return payload.user_id || payload.sub;
+        return payload.user_id || payload.sub || "";
       }
     } catch (e) {
       console.warn("[Auth] Failed to decode token:", e);
     }
   }
 
-  // In development, allow fallback to mock user for API testing
-  if (process.env.NODE_ENV === "development") {
-    console.warn(
-      "[Auth] No valid Authorization header - using mock user for development"
-    );
-    return "dev-user-123";
-  }
-
-  throw new Error("Unauthorized: Missing Authorization header");
+  throw new Error("Unauthorized: Missing or invalid Authorization header");
 }
 
 /**

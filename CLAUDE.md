@@ -1,7 +1,7 @@
 # Claude Code Instructions
 
 ## Project Overview
-TaxStudio - A tax/accounting tool for managing bank transactions, receipts, and categorization.
+FiBuKI - A tax/accounting tool for managing bank transactions, receipts, and categorization.
 
 ## Architecture: Operations Layer Pattern
 

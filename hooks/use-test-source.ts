@@ -27,6 +27,13 @@ export function useTestSource() {
 
   // Check if test source exists on mount
   useEffect(() => {
+    // Don't check until userId is available
+    if (!userId) {
+      setIsActive(false);
+      setIsLoading(false);
+      return;
+    }
+
     const checkTestSource = async () => {
       try {
         const active = await isTestDataActive(ctx);
@@ -40,7 +47,7 @@ export function useTestSource() {
     };
 
     checkTestSource();
-  }, [ctx]);
+  }, [ctx, userId]);
 
   const activate = useCallback(async () => {
     setIsLoading(true);

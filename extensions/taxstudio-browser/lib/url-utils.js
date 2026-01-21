@@ -1,5 +1,5 @@
 /**
- * URL utility functions for TaxStudio browser extension
+ * URL utility functions for FiBuKI browser extension
  * Extracted for testability
  */
 

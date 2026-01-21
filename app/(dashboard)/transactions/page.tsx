@@ -7,6 +7,7 @@ import { httpsCallable } from "firebase/functions";
 import { TransactionTable } from "@/components/transactions/transaction-table";
 import { TransactionDetailPanel } from "@/components/transactions/transaction-detail-panel";
 import { ConnectFileOverlay } from "@/components/files/connect-file-overlay";
+import { TransactionSelectionGuide } from "@/components/onboarding";
 import { useTransactions } from "@/hooks/use-transactions";
 import { useSources } from "@/hooks/use-sources";
 import { usePartners } from "@/hooks/use-partners";
@@ -401,6 +402,9 @@ function TransactionsContent() {
         </div>
       </div>
 
+      {/* Onboarding guide - show when no transaction selected */}
+      {!selectedTransaction && <TransactionSelectionGuide />}
+
       {/* Right sidebar - fixed position, z-50 to stay above overlays */}
       {selectedTransaction && (
         <div
@@ -447,10 +451,14 @@ function TransactionsContent() {
   );
 }
 
+import { PrecisionSearchProvider } from "@/hooks/use-precision-search-context";
+
 export default function TransactionsPage() {
   return (
-    <Suspense fallback={<TransactionTableFallback />}>
-      <TransactionsContent />
-    </Suspense>
+    <PrecisionSearchProvider>
+      <Suspense fallback={<TransactionTableFallback />}>
+        <TransactionsContent />
+      </Suspense>
+    </PrecisionSearchProvider>
   );
 }

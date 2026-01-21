@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { forwardRef } from "react";
+import { forwardRef, ReactNode } from "react";
 import { ColumnDef, SortingState } from "@tanstack/react-table";
 import { TaxFile } from "@/types/file";
 import {
@@ -18,6 +18,8 @@ interface FilesDataTableProps {
   enableMultiSelect?: boolean;
   selectedRowIds?: Set<string>;
   onSelectionChange?: (selectedIds: Set<string>) => void;
+  /** Custom empty state component */
+  emptyState?: ReactNode;
 }
 
 export interface FilesDataTableHandle {
@@ -48,6 +50,7 @@ function FilesDataTableInner(
     enableMultiSelect,
     selectedRowIds,
     onSelectionChange,
+    emptyState,
   }: FilesDataTableProps,
   ref: React.ForwardedRef<FilesDataTableHandle>
 ) {
@@ -94,6 +97,7 @@ function FilesDataTableInner(
       initialSorting={DEFAULT_SORTING}
       getRowClassName={getRowClassName}
       getRowDataAttributes={getRowDataAttributes}
+      emptyState={emptyState}
       emptyMessage="No files found."
       enableMultiSelect={enableMultiSelect}
       selectedRowIds={selectedRowIds}

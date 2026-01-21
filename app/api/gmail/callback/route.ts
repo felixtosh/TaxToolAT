@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, setDoc, updateDoc, Timestamp } from "firebase/firestore";
-import { getServerDb } from "@/lib/firebase/config-server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import {
-  createEmailIntegration,
-  getEmailIntegrationByEmail,
-  getDisconnectedIntegrationByEmail,
-  reconnectEmailIntegration,
-  restoreFilesForIntegration,
-  addOwnEmail,
-} from "@/lib/operations";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { Timestamp, FieldValue } from "firebase-admin/firestore";
 
-const db = getServerDb();
+const db = getAdminDb();
 const TOKENS_COLLECTION = "emailTokens";
+const INTEGRATIONS_COLLECTION = "emailIntegrations";
+const USERS_COLLECTION = "users";
+const FILES_COLLECTION = "files";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 
@@ -113,18 +107,24 @@ export async function GET(request: NextRequest) {
 
     // Calculate token expiry
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
-    // Note: OAuth callback doesn't have auth header - get userId from cookie set during auth start
-    // Fall back to dev user only in development mode
+
+    // Get userId from cookie set during auth start
     const cookieUserId = request.cookies.get("gmail_oauth_user_id")?.value;
-    const userId = cookieUserId || (process.env.NODE_ENV === "development" ? "dev-user-123" : "");
+    const userId = cookieUserId || "";
     if (!userId) {
       return redirectWithParams(request, "/integrations", { error: "no_user_id" });
     }
-    const ctx = { db, userId };
 
-    // Check if email is already connected (active)
-    const existing = await getEmailIntegrationByEmail(ctx, userInfo.email);
-    if (existing) {
+    // Check if email is already connected (active) using Admin SDK
+    const existingQuery = await db
+      .collection(INTEGRATIONS_COLLECTION)
+      .where("userId", "==", userId)
+      .where("email", "==", userInfo.email.toLowerCase())
+      .where("isActive", "==", true)
+      .get();
+
+    if (!existingQuery.empty) {
+      const existing = existingQuery.docs[0];
       // Update existing integration with new tokens
       await storeTokens(
         existing.id,
@@ -135,7 +135,7 @@ export async function GET(request: NextRequest) {
       );
 
       // Update token expiry on integration
-      await updateDoc(doc(db, "emailIntegrations", existing.id), {
+      await db.collection(INTEGRATIONS_COLLECTION).doc(existing.id).update({
         tokenExpiresAt: Timestamp.fromDate(expiresAt),
         needsReauth: false,
         updatedAt: Timestamp.now(),
@@ -145,8 +145,22 @@ export async function GET(request: NextRequest) {
     }
 
     // Check for disconnected integration (reconnection)
-    const disconnected = await getDisconnectedIntegrationByEmail(ctx, userInfo.email);
-    if (disconnected) {
+    const disconnectedQuery = await db
+      .collection(INTEGRATIONS_COLLECTION)
+      .where("userId", "==", userId)
+      .where("email", "==", userInfo.email.toLowerCase())
+      .where("isActive", "==", false)
+      .get();
+
+    if (!disconnectedQuery.empty) {
+      // Get the most recently disconnected one
+      const sorted = disconnectedQuery.docs.sort((a, b) => {
+        const aTime = a.data().disconnectedAt?.toMillis() || 0;
+        const bTime = b.data().disconnectedAt?.toMillis() || 0;
+        return bTime - aTime;
+      });
+      const disconnected = sorted[0];
+
       await storeTokens(
         disconnected.id,
         tokens.access_token,
@@ -155,31 +169,62 @@ export async function GET(request: NextRequest) {
         userId
       );
 
-      await reconnectEmailIntegration(ctx, disconnected.id, expiresAt);
-      const restoreResult = await restoreFilesForIntegration(ctx, disconnected.id);
-      console.log(`[Reconnect] Restored ${restoreResult.restored} files for ${userInfo.email}`);
+      // Reconnect the integration
+      await db.collection(INTEGRATIONS_COLLECTION).doc(disconnected.id).update({
+        isActive: true,
+        disconnectedAt: null,
+        needsReauth: false,
+        lastError: null,
+        tokenExpiresAt: Timestamp.fromDate(expiresAt),
+        updatedAt: Timestamp.now(),
+      });
 
-      if (userInfo.email) {
-        await addOwnEmail(ctx, userInfo.email);
+      // Restore files for this integration
+      const filesToRestore = await db
+        .collection(FILES_COLLECTION)
+        .where("userId", "==", userId)
+        .where("integrationId", "==", disconnected.id)
+        .where("isDeleted", "==", true)
+        .get();
+
+      let restored = 0;
+      for (const fileDoc of filesToRestore.docs) {
+        await fileDoc.ref.update({
+          isDeleted: false,
+          deletedAt: null,
+          updatedAt: Timestamp.now(),
+        });
+        restored++;
       }
+
+      console.log(`[Reconnect] Restored ${restored} files for ${userInfo.email}`);
+
+      // Add email to user's own emails
+      await addOwnEmail(userId, userInfo.email);
 
       return redirectWithParams(request, "/integrations", { success: "reconnected" });
     }
 
     // Create new integration
-    const integrationId = await createEmailIntegration(ctx, {
+    const now = Timestamp.now();
+    const newIntegrationRef = await db.collection(INTEGRATIONS_COLLECTION).add({
+      userId,
       provider: "gmail",
-      email: userInfo.email,
-      displayName: userInfo.name,
+      email: userInfo.email.toLowerCase(),
+      displayName: userInfo.name || null,
       accountId: userInfo.id,
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token || "",
-      expiresAt,
+      tokenExpiresAt: Timestamp.fromDate(expiresAt),
+      lastAccessedAt: null,
+      isActive: true,
+      needsReauth: false,
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
     });
 
     // Store tokens securely
     await storeTokens(
-      integrationId,
+      newIntegrationRef.id,
       tokens.access_token,
       tokens.refresh_token || "",
       expiresAt,
@@ -187,9 +232,7 @@ export async function GET(request: NextRequest) {
     );
 
     // Add email to user's own emails
-    if (userInfo.email) {
-      await addOwnEmail(ctx, userInfo.email);
-    }
+    await addOwnEmail(userId, userInfo.email);
 
     console.log(`[Gmail OAuth] Created integration for ${userInfo.email} with refresh token: ${tokens.refresh_token ? "yes" : "no"}`);
 
@@ -211,8 +254,7 @@ async function storeTokens(
   expiresAt: Date,
   userId: string
 ): Promise<void> {
-  const tokenDoc = doc(db, TOKENS_COLLECTION, integrationId);
-  await setDoc(tokenDoc, {
+  await db.collection(TOKENS_COLLECTION).doc(integrationId).set({
     integrationId,
     userId,
     provider: "gmail",
@@ -221,6 +263,27 @@ async function storeTokens(
     expiresAt: Timestamp.fromDate(expiresAt),
     updatedAt: Timestamp.now(),
   });
+}
+
+/**
+ * Add email to user's own emails list
+ */
+async function addOwnEmail(userId: string, email: string): Promise<void> {
+  const userRef = db.collection(USERS_COLLECTION).doc(userId);
+  const userDoc = await userRef.get();
+
+  if (userDoc.exists) {
+    await userRef.update({
+      ownEmails: FieldValue.arrayUnion(email.toLowerCase()),
+      updatedAt: Timestamp.now(),
+    });
+  } else {
+    await userRef.set({
+      ownEmails: [email.toLowerCase()],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+  }
 }
 
 function getSafeReturnTo(request: NextRequest): string | null {
@@ -243,5 +306,6 @@ function redirectWithParams(
   const response = NextResponse.redirect(url);
   response.cookies.delete("gmail_oauth_state");
   response.cookies.delete("gmail_oauth_return_to");
+  response.cookies.delete("gmail_oauth_user_id");
   return response;
 }

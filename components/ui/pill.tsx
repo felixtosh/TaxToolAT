@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import { X, UserCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface PillProps {
@@ -8,6 +8,8 @@ interface PillProps {
   icon?: React.ElementType;
   variant?: "default" | "suggestion";
   confidence?: number;
+  /** How the item was matched - shows checkmark instead of confidence when manual */
+  matchedBy?: "manual" | "auto" | "suggestion" | null;
   onRemove?: () => void;
   onClick?: () => void;
   disabled?: boolean;
@@ -19,6 +21,7 @@ export function Pill({
   icon: Icon,
   variant = "default",
   confidence,
+  matchedBy,
   onRemove,
   onClick,
   disabled,
@@ -67,16 +70,20 @@ export function Pill({
         />
       )}
       <span className="truncate">{label}</span>
-      {confidence !== undefined && (
+      {matchedBy === "manual" ? (
+        <span className="inline-flex items-center gap-0.5 text-xs flex-shrink-0 ml-auto text-green-600">
+          <UserCheck className="h-3 w-3" />
+        </span>
+      ) : confidence ? (
         <span
           className={cn(
             "text-xs flex-shrink-0 ml-auto",
             isSuggestion ? "text-info-foreground/70" : "text-muted-foreground"
           )}
         >
-          {confidence}%
+          {Math.round(confidence)}%
         </span>
-      )}
+      ) : null}
       {onRemove && (
         <button
           type="button"

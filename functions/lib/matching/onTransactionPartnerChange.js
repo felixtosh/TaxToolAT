@@ -55,6 +55,7 @@ exports.onTransactionPartnerChange = (0, firestore_1.onDocumentUpdated)({
                 matchedPartnerIds: data.matchedPartnerIds || [],
                 learnedPatterns: data.learnedPatterns || [],
                 manualRemovals: removals,
+                transactionCount: data.transactionCount || 0,
                 isActive: data.isActive,
             };
         });

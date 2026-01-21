@@ -65,7 +65,7 @@ export interface TransactionSuggestion {
 }
 
 /**
- * A file (PDF/image) uploaded to TaxStudio.
+ * A file (PDF/image) uploaded to FiBuKI.
  * Files are standalone entities that can be connected to multiple transactions.
  * Collection: /files/{id}
  */
@@ -100,7 +100,7 @@ export interface TaxFile {
 
   // === Source Tracking ===
 
-  /** How the file was added to TaxStudio (defaults to "upload" for legacy files) */
+  /** How the file was added to FiBuKI (defaults to "upload" for legacy files) */
   sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body";
 
   /** Search pattern/query that produced this file (when known) */
@@ -417,6 +417,12 @@ export interface FileFilters {
 
   /** Show only "not invoice" files */
   isNotInvoice?: boolean;
+
+  /** Filter by assigned partner IDs */
+  partnerIds?: string[];
+
+  /** Filter by invoice direction (income = outgoing, expense = incoming) */
+  amountType?: "all" | "income" | "expense";
 }
 
 /**

@@ -17,10 +17,12 @@ import { TransactionSuggestion, TaxFile } from "@/types/file";
 import { useTransactions } from "@/hooks/use-transactions";
 import { cn } from "@/lib/utils";
 import {
-  getTransactionMatchSourceLabel,
+  getMatchSourceLabel,
+  TRANSACTION_MATCH_CONFIG,
+} from "@/types/transaction-matching";
+import {
   scoreTransactionMatch,
   toTransactionSuggestion,
-  TRANSACTION_MATCH_CONFIG,
 } from "@/lib/matching/transaction-matcher";
 import { Timestamp } from "firebase/firestore";
 
@@ -313,7 +315,7 @@ export function FilesTab({
                                 <p className="font-medium mb-1">Suggested match</p>
                                 <p className="text-muted-foreground">
                                   {suggestion.matchSources
-                                    .map((s) => getTransactionMatchSourceLabel(s))
+                                    .map((s) => getMatchSourceLabel(s))
                                     .join(", ")}
                                 </p>
                               </TooltipContent>

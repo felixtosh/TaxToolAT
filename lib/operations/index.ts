@@ -34,8 +34,33 @@ export * from "./file-ops";
 // File-Transaction Matching operations
 export * from "./file-transaction-matching-ops";
 
-// GoCardless operations
-export * from "./gocardless-ops";
+// GoCardless operations (legacy - use banking-ops for new code)
+export {
+  // Institution lookups
+  listInstitutions,
+  getInstitution as getGoCardlessInstitution, // Renamed to avoid conflict with banking-ops
+  // Requisition management
+  createRequisition,
+  getRequisition,
+  getRequisitionByGoCardlessId,
+  listRequisitions,
+  refreshRequisitionStatus,
+  deleteRequisition,
+  getRequisitionAccounts,
+  // Source management
+  createSourceFromGoCardless,
+  linkGoCardlessToExistingSource,
+  // Sync (exported with both names for compatibility)
+  syncTransactions,
+  checkReauthRequired,
+  getSyncStatus,
+  createSyncJob,
+  updateSyncJob,
+  listSourcesToSync,
+} from "./gocardless-ops";
+
+// Banking operations (multi-provider: GoCardless, TrueLayer, etc.)
+export * from "./banking-ops";
 
 // No-Receipt Category operations
 export * from "./category-ops";
@@ -69,3 +94,6 @@ export * from "./invite-ops";
 
 // Onboarding operations (for new user onboarding flow)
 export * from "./onboarding-ops";
+
+// MFA operations (for multi-factor authentication)
+export * from "./mfa-ops";

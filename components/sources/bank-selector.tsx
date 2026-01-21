@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Building2, Search, Loader2, ArrowLeft } from "lucide-react";
-import { useInstitutions, filterInstitutions, Institution } from "@/hooks/use-institutions";
+import { useInstitutions, filterInstitutions, Institution, BankingProvider } from "@/hooks/use-institutions";
 
 // Common European countries for bank connections
 // Note: TrueLayer uses "uk" not "GB" for United Kingdom
@@ -51,6 +51,8 @@ interface BankSelectorProps {
   onBankSelect: (institution: Institution) => void;
   onBack?: () => void;
   isLoading?: boolean;
+  /** Which provider to use. Defaults to "all" */
+  provider?: BankingProvider;
 }
 
 export function BankSelector({
@@ -59,10 +61,12 @@ export function BankSelector({
   onBankSelect,
   onBack,
   isLoading = false,
+  provider = "all",
 }: BankSelectorProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const { institutions, loading, error } = useInstitutions({
     countryCode: selectedCountry,
+    provider,
   });
 
   const filteredInstitutions = useMemo(
@@ -196,11 +200,36 @@ function BankCard({ institution, onClick, disabled }: BankCardProps) {
         </div>
       )}
       <div className="flex-1 min-w-0">
-        <p className="font-medium truncate">{institution.name}</p>
+        <div className="flex items-center gap-2">
+          <p className="font-medium truncate">{institution.name}</p>
+          {institution.providerId && (
+            <ProviderBadge providerId={institution.providerId} />
+          )}
+        </div>
         <p className="text-xs text-muted-foreground">
           Up to {institution.transaction_total_days} days of history
         </p>
       </div>
     </button>
+  );
+}
+
+function ProviderBadge({ providerId }: { providerId: string }) {
+  const providerInfo: Record<string, { name: string; color: string }> = {
+    gocardless: { name: "GC", color: "bg-emerald-100 text-emerald-700" },
+    truelayer: { name: "TL", color: "bg-blue-100 text-blue-700" },
+    plaid: { name: "PL", color: "bg-purple-100 text-purple-700" },
+  };
+
+  const info = providerInfo[providerId];
+  if (!info) return null;
+
+  return (
+    <span
+      className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${info.color}`}
+      title={`via ${providerId === "gocardless" ? "GoCardless" : providerId === "truelayer" ? "TrueLayer" : "Plaid"}`}
+    >
+      {info.name}
+    </span>
   );
 }
