@@ -75,6 +75,22 @@ export const updateTransactionCallable = createCallable<
       }
     }
 
+    // Automatically manage isComplete based on noReceiptCategoryId changes
+    // Green row = file attached OR no-receipt category assigned
+    if (data.noReceiptCategoryId !== undefined) {
+      const currentFileIds = transactionData?.fileIds || [];
+      const hasFiles = currentFileIds.length > 0;
+
+      if (data.noReceiptCategoryId) {
+        // Category being assigned -> mark complete
+        updateData.isComplete = true;
+      } else if (!hasFiles) {
+        // Category being removed AND no files -> mark incomplete
+        updateData.isComplete = false;
+      }
+      // If category removed but has files, keep isComplete=true (don't change)
+    }
+
     // Always update timestamp
     updateData.updatedAt = FieldValue.serverTimestamp();
 

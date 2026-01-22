@@ -94,7 +94,26 @@ export const bulkUpdateTransactionsCallable = createCallable<
             continue;
           }
 
-          batch.update(transactionRef, updateData);
+          // Build per-transaction update (may need to adjust isComplete)
+          const txUpdateData = { ...updateData };
+
+          // Automatically manage isComplete based on noReceiptCategoryId changes
+          // Green row = file attached OR no-receipt category assigned
+          if (data.noReceiptCategoryId !== undefined) {
+            const currentFileIds = transactionData?.fileIds || [];
+            const hasFiles = currentFileIds.length > 0;
+
+            if (data.noReceiptCategoryId) {
+              // Category being assigned -> mark complete
+              txUpdateData.isComplete = true;
+            } else if (!hasFiles) {
+              // Category being removed AND no files -> mark incomplete
+              txUpdateData.isComplete = false;
+            }
+            // If category removed but has files, keep isComplete unchanged
+          }
+
+          batch.update(transactionRef, txUpdateData);
           validIds.push(id);
         } catch (err) {
           result.failed++;
