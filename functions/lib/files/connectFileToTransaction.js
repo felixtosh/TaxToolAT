@@ -85,16 +85,57 @@ exports.connectFileToTransactionCallable = (0, createCallable_1.createCallable)(
     }
     batch.set(connectionRef, connectionData);
     // 2. Update file's transactionIds array
-    batch.update(fileRef, {
+    const fileUpdate = {
         transactionIds: firestore_1.FieldValue.arrayUnion(transactionId),
         updatedAt: now,
-    });
+    };
     // 3. Update transaction's fileIds array and mark as complete
-    batch.update(transactionRef, {
+    const transactionUpdate = {
         fileIds: firestore_1.FieldValue.arrayUnion(fileId),
         isComplete: true,
         updatedAt: now,
-    });
+    };
+    // 4. Partner sync logic - higher confidence wins
+    // Files typically have better confidence since they extract partner names exactly from invoices
+    const filePartnerId = fileData.partnerId;
+    const filePartnerConfidence = fileData.partnerMatchConfidence ?? 0;
+    const transactionPartnerId = transactionData.partnerId;
+    const transactionPartnerConfidence = transactionData.partnerMatchConfidence ?? 0;
+    if (filePartnerId && !transactionPartnerId) {
+        // File has partner, transaction doesn't -> sync to transaction
+        transactionUpdate.partnerId = filePartnerId;
+        transactionUpdate.partnerType = fileData.partnerType ?? "user";
+        transactionUpdate.partnerMatchConfidence = filePartnerConfidence;
+        transactionUpdate.partnerMatchedBy = "auto"; // Synced from file
+        console.log(`[connectFileToTransaction] Synced partner ${filePartnerId} from file to transaction`);
+    }
+    else if (transactionPartnerId && !filePartnerId) {
+        // Transaction has partner, file doesn't -> sync to file
+        fileUpdate.partnerId = transactionPartnerId;
+        fileUpdate.partnerType = transactionData.partnerType ?? "user";
+        fileUpdate.partnerMatchConfidence = transactionPartnerConfidence;
+        console.log(`[connectFileToTransaction] Synced partner ${transactionPartnerId} from transaction to file`);
+    }
+    else if (filePartnerId && transactionPartnerId && filePartnerId !== transactionPartnerId) {
+        // Both have different partners -> higher confidence wins
+        // Files typically have exact extracted names, so they often win
+        if (filePartnerConfidence > transactionPartnerConfidence) {
+            transactionUpdate.partnerId = filePartnerId;
+            transactionUpdate.partnerType = fileData.partnerType ?? "user";
+            transactionUpdate.partnerMatchConfidence = filePartnerConfidence;
+            transactionUpdate.partnerMatchedBy = "auto"; // Override with higher confidence
+            console.log(`[connectFileToTransaction] File partner ${filePartnerId} (${filePartnerConfidence}%) wins over transaction partner ${transactionPartnerId} (${transactionPartnerConfidence}%)`);
+        }
+        else if (transactionPartnerConfidence > filePartnerConfidence) {
+            fileUpdate.partnerId = transactionPartnerId;
+            fileUpdate.partnerType = transactionData.partnerType ?? "user";
+            fileUpdate.partnerMatchConfidence = transactionPartnerConfidence;
+            console.log(`[connectFileToTransaction] Transaction partner ${transactionPartnerId} (${transactionPartnerConfidence}%) wins over file partner ${filePartnerId} (${filePartnerConfidence}%)`);
+        }
+        // If equal confidence, keep both unchanged
+    }
+    batch.update(fileRef, fileUpdate);
+    batch.update(transactionRef, transactionUpdate);
     await batch.commit();
     console.log(`[connectFileToTransaction] Connected file ${fileId} to transaction ${transactionId}`);
     return {
