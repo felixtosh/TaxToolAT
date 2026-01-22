@@ -25,6 +25,8 @@ interface ScoreAttachmentRequest {
     fileExtractedAmount?: number | null;
     fileExtractedDate?: string | null; // ISO string
     fileExtractedPartner?: string | null;
+    // Explicit partner ID assigned to the file
+    filePartnerId?: string | null;
   }>;
   transaction: {
     amount?: number | null;
@@ -32,6 +34,8 @@ interface ScoreAttachmentRequest {
     name?: string | null;
     reference?: string | null;
     partner?: string | null;
+    // Explicit partner ID assigned to the transaction
+    partnerId?: string | null;
   };
   partner?: {
     name?: string | null;
@@ -103,6 +107,9 @@ export const scoreAttachmentMatchCallable = onCall<
         partnerName: partner?.name,
         partnerEmailDomains: partner?.emailDomains,
         partnerFileSourcePatterns: partner?.fileSourcePatterns,
+        // Explicit partner IDs for connected partner matching
+        filePartnerId: att.filePartnerId,
+        transactionPartnerId: transaction?.partnerId,
       };
 
       const result = scoreAttachmentMatch(input);

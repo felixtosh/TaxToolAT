@@ -49,6 +49,9 @@ exports.scoreAttachmentMatchCallable = (0, https_1.onCall)({
             partnerName: partner?.name,
             partnerEmailDomains: partner?.emailDomains,
             partnerFileSourcePatterns: partner?.fileSourcePatterns,
+            // Explicit partner IDs for connected partner matching
+            filePartnerId: att.filePartnerId,
+            transactionPartnerId: transaction?.partnerId,
         };
         const result = (0, scoreAttachmentMatch_1.scoreAttachmentMatch)(input);
         return {

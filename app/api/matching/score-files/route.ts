@@ -110,6 +110,7 @@ export async function POST(request: NextRequest) {
           fileExtractedAmount: att.fileExtractedAmount,
           fileExtractedDate: att.fileExtractedDate,
           fileExtractedPartner: att.fileExtractedPartner,
+          filePartnerId: att.filePartnerId,
         })),
         transaction: {
           amount: transaction.amount,
@@ -117,6 +118,7 @@ export async function POST(request: NextRequest) {
           name: transaction.name,
           reference: transaction.reference,
           partner: transaction.partner,
+          partnerId: transaction.partnerId,
         },
         partner: partner ? {
           name: partner.name,

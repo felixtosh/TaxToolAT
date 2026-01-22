@@ -143,8 +143,25 @@ function scoreAttachmentMatch(input) {
             reasons.push(`Amount mismatch: ${(diff * 100).toFixed(0)}% diff`);
         }
     }
+    // === EXPLICIT PARTNER ID MATCH (strongest partner signal) ===
+    // When both file and transaction have explicit partnerId, this is definitive
+    let partnerIdMismatch = false;
+    if (input.filePartnerId && input.transactionPartnerId) {
+        if (input.filePartnerId === input.transactionPartnerId) {
+            // Same partner ID → strong boost (+25%)
+            score += 0.25;
+            reasons.push("Same partner (ID match)");
+        }
+        else {
+            // Different partner IDs → significant penalty
+            // This is a strong negative signal - different partners rarely belong together
+            partnerIdMismatch = true;
+            reasons.push("Different partners (ID mismatch)");
+        }
+    }
     // === FILE EXTRACTED PARTNER MATCH ===
-    if (fileExtractedPartner && (partnerName || transactionPartner)) {
+    // Only apply if we didn't already have an explicit partner ID match
+    if (!input.filePartnerId && !input.transactionPartnerId && fileExtractedPartner && (partnerName || transactionPartner)) {
         const filePartnerLower = fileExtractedPartner.toLowerCase();
         const targetPartners = [partnerName, transactionPartner]
             .filter(Boolean)
@@ -265,6 +282,11 @@ function scoreAttachmentMatch(input) {
     // Apply amount mismatch penalty (reduce score by 60% when amounts are way off)
     if (amountMismatch) {
         score = score * 0.4;
+    }
+    // Apply partner ID mismatch penalty (reduce score by 70% when partners don't match)
+    // This is a strong signal - files from partner A rarely belong to transactions with partner B
+    if (partnerIdMismatch) {
+        score = score * 0.3;
     }
     // Cap at 95%
     if (score > 0.95)
