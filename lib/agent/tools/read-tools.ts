@@ -413,7 +413,7 @@ export const listFilesTool = tool(
       // Get extracted date if available
       const extractedDate = data.extractedDate?.toDate?.() || data.uploadedAt?.toDate?.();
       // Get extracted amount (in cents)
-      const extractedAmount = data.extractedGrossAmount || data.extractedNetAmount || null;
+      const extractedAmount = data.extractedAmount || null;
 
       return {
         id: doc.id,
