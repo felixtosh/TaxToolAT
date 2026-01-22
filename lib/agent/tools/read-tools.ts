@@ -389,10 +389,11 @@ export const listFilesTool = tool(
       return { error: "User ID not provided" };
     }
 
+    // Note: Can't filter deletedAt at query level since Firestore won't match
+    // documents where the field doesn't exist. Filter client-side instead.
     let query = db
       .collection("files")
       .where("userId", "==", userId)
-      .where("deletedAt", "==", null)
       .orderBy("uploadedAt", "desc");
 
     // Apply partnerId filter at query level if provided
@@ -404,7 +405,10 @@ export const listFilesTool = tool(
     const fetchLimit = search || startDate || endDate || minAmount !== undefined || maxAmount !== undefined ? 500 : limit;
     const snapshot = await query.limit(fetchLimit).get();
 
-    const files = snapshot.docs.map((doc) => {
+    // Filter out soft-deleted files first
+    const activeDocs = snapshot.docs.filter((doc) => !doc.data().deletedAt);
+
+    const files = activeDocs.map((doc) => {
       const data = doc.data();
       // Get extracted date if available
       const extractedDate = data.extractedDate?.toDate?.() || data.uploadedAt?.toDate?.();
