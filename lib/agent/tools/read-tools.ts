@@ -412,8 +412,12 @@ export const listFilesTool = tool(
       const data = doc.data();
       // Get extracted date if available
       const extractedDate = data.extractedDate?.toDate?.() || data.uploadedAt?.toDate?.();
-      // Get extracted amount (in cents)
-      const extractedAmount = data.extractedAmount || null;
+      // Get extracted amount (in cents) - apply sign based on invoiceDirection
+      // incoming = expense = negative, outgoing = income = positive
+      const rawAmount = data.extractedAmount || null;
+      const signedAmount = rawAmount != null
+        ? (data.invoiceDirection === "incoming" ? -rawAmount : rawAmount)
+        : null;
 
       return {
         id: doc.id,
@@ -421,12 +425,12 @@ export const listFilesTool = tool(
         fileType: data.fileType,
         date: extractedDate?.toISOString() || null,
         dateFormatted: extractedDate?.toLocaleDateString("de-DE") || "—",
-        amount: extractedAmount,
-        amountFormatted: extractedAmount
+        amount: signedAmount,
+        amountFormatted: signedAmount != null
           ? new Intl.NumberFormat("de-DE", {
               style: "currency",
               currency: data.extractedCurrency || "EUR",
-            }).format(extractedAmount / 100)
+            }).format(signedAmount / 100)
           : null,
         partnerId: data.partnerId || null,
         partnerName: data.extractedPartner || null,
