@@ -13,9 +13,13 @@
  * Limitation:
  * - Cannot classify image-only PDFs (no extractable text)
  * - May miss scanned documents without OCR
+ *
+ * PDF Parsing: Uses pdf-parse v2 (https://github.com/mehmet-kozan/pdf-parse)
+ * - v2 API: `new PDFParse({ data: buffer })` then `parser.getText({ first: N })`
+ * - This is the server-side PDF text extraction library used across the project
  */
 
-import pdfParse from "pdf-parse";
+import { PDFParse } from "pdf-parse";
 
 // Classification result
 export interface TextClassificationResult {
@@ -128,15 +132,14 @@ function hasMatch(text: string, patterns: RegExp[]): boolean {
 }
 
 /**
- * Extract text from a PDF buffer using pdf-parse
+ * Extract text from a PDF buffer using pdf-parse v2
  * Returns null if text extraction fails or yields no text
  */
 async function extractTextFromPdf(buffer: Buffer): Promise<string | null> {
   try {
-    const data = await pdfParse(buffer, {
-      max: 3, // First 3 pages only for speed
-    });
-    const text = data.text?.trim();
+    const parser = new PDFParse({ data: buffer });
+    const result = await parser.getText({ first: 3 }); // First 3 pages only for speed
+    const text = result.text?.trim();
     return text && text.length > 50 ? text : null;
   } catch (error) {
     console.log("[TextClassifier] PDF text extraction failed:", error);

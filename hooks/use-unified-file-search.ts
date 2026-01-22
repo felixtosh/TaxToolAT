@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
-import { differenceInDays, subDays, addDays } from "date-fns";
+import { useState, useCallback, useMemo, useRef } from "react";
+import { subDays, addDays } from "date-fns";
 import { TaxFile } from "@/types/file";
 import { EmailMessage, EmailAttachment } from "@/types/email-integration";
 import { isPdfOrImageAttachment } from "@/lib/email-providers/interface";
-import { UserPartner, FileSourcePattern } from "@/types/partner";
+import { UserPartner } from "@/types/partner";
 import { useFiles } from "./use-files";
 import { useEmailIntegrations } from "./use-email-integrations";
 import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
+import { useAuth } from "@/components/auth";
 
 /**
  * Transaction info for smart search/ranking
@@ -90,99 +91,6 @@ export interface UseUnifiedFileSearchResult {
 }
 
 /**
- * Score a search result based on how well it matches the transaction
- */
-function scoreResult(
-  result: Omit<UnifiedSearchResult, "score" | "matchReasons">,
-  transaction: TransactionInfo,
-  partner?: UserPartner | null
-): { score: number; matchReasons: string[] } {
-  let score = 0;
-  const matchReasons: string[] = [];
-
-  // Amount match (0-40)
-  if (result.amount && transaction.amount) {
-    const resultAmount = Math.abs(result.amount);
-    const txAmount = Math.abs(transaction.amount);
-    const diff = Math.abs(resultAmount - txAmount) / txAmount;
-
-    if (diff === 0) {
-      score += 40;
-      matchReasons.push("Exact amount");
-    } else if (diff <= 0.01) {
-      score += 38;
-      matchReasons.push("Amount ±1%");
-    } else if (diff <= 0.05) {
-      score += 30;
-      matchReasons.push("Amount ±5%");
-    } else if (diff <= 0.10) {
-      score += 20;
-      matchReasons.push("Amount ±10%");
-    }
-  }
-
-  // Date proximity (0-25)
-  if (result.date && transaction.date) {
-    const daysDiff = Math.abs(differenceInDays(result.date, transaction.date));
-
-    if (daysDiff === 0) {
-      score += 25;
-      matchReasons.push("Same day");
-    } else if (daysDiff <= 3) {
-      score += 22;
-      matchReasons.push("Within 3 days");
-    } else if (daysDiff <= 7) {
-      score += 15;
-      matchReasons.push("Within 7 days");
-    } else if (daysDiff <= 14) {
-      score += 8;
-      matchReasons.push("Within 14 days");
-    } else if (daysDiff <= 30) {
-      score += 3;
-      matchReasons.push("Within 30 days");
-    }
-  }
-
-  // Partner match (0-20)
-  if (partner && result.partner) {
-    const partnerLower = partner.name.toLowerCase();
-    const resultPartnerLower = result.partner.toLowerCase();
-
-    if (
-      resultPartnerLower.includes(partnerLower) ||
-      partnerLower.includes(resultPartnerLower) ||
-      partner.aliases.some(
-        (a) =>
-          a.toLowerCase().includes(resultPartnerLower) ||
-          resultPartnerLower.includes(a.toLowerCase())
-      )
-    ) {
-      score += 20;
-      matchReasons.push("Partner match");
-    }
-  }
-
-  // Source preference (0-10)
-  if (partner?.fileSourcePatterns?.length) {
-    const hasPreference = partner.fileSourcePatterns.some(
-      (p) => p.sourceType === result.type
-    );
-    if (hasPreference) {
-      score += 10;
-      matchReasons.push("Preferred source");
-    }
-  }
-
-  // Likely receipt (0-5)
-  if (result.isLikelyReceipt) {
-    score += 5;
-    matchReasons.push("Likely receipt");
-  }
-
-  return { score, matchReasons };
-}
-
-/**
  * Convert a TaxFile to UnifiedSearchResult
  */
 function fileToResult(file: TaxFile): Omit<UnifiedSearchResult, "score" | "matchReasons"> {
@@ -260,12 +168,16 @@ export function useUnifiedFileSearch(
   const { localOnly, dateFrom, dateTo } = options || {};
   const { files, loading: filesLoading } = useFiles();
   const { integrations, loading: integrationsLoading, hasGmailIntegration } = useEmailIntegrations();
+  const { user } = useAuth();
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [gmailResults, setGmailResults] = useState<EmailMessage[]>([]);
+  const [scoredResults, setScoredResults] = useState<UnifiedSearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+
+  // Track the latest search to prevent race conditions
+  const searchIdRef = useRef(0);
 
   const gmailIntegrations = useMemo(
     () => integrations.filter((i) => i.provider === "gmail" && i.isActive),
@@ -324,158 +236,291 @@ export function useUnifiedFileSearch(
     return matchedFields;
   }, []);
 
-  // Filter local files by search query and date range, returning with matched fields
-  const filteredLocalFilesWithMatches = useMemo(() => {
-    if (!hasSearched) return [];
 
-    // Filter to unconnected files only, exclude "not invoice" files
-    let filtered = files.filter((f) =>
-      f.transactionIds.length === 0 && !f.isNotInvoice
-    );
+  /**
+   * Score results using the server-side scoring API for consistency
+   */
+  const scoreResultsWithApi = useCallback(
+    async (
+      localFiles: Array<{ file: TaxFile; matchedFields: string[] }>,
+      gmailMessages: EmailMessage[],
+      currentSearchId: number
+    ): Promise<UnifiedSearchResult[]> => {
+      // Build list of items to score
+      const itemsToScore: Array<{
+        baseResult: Omit<UnifiedSearchResult, "score" | "matchReasons">;
+        matchedFields?: string[];
+        apiInput: {
+          key: string;
+          filename: string;
+          mimeType: string;
+          emailSubject?: string | null;
+          emailFrom?: string | null;
+          emailSnippet?: string | null;
+          emailDate?: string | null;
+          integrationId?: string | null;
+          fileExtractedAmount?: number | null;
+          fileExtractedDate?: string | null;
+          fileExtractedPartner?: string | null;
+          filePartnerId?: string | null;
+        };
+      }> = [];
 
-    // Filter by date range ONLY if explicitly set by user
-    if (dateFrom || dateTo) {
-      filtered = filtered.filter((f) => {
-        if (!f.extractedDate) return true;
-        const fileDate = f.extractedDate.toDate();
-        if (dateFrom && fileDate < dateFrom) return false;
-        if (dateTo && fileDate > dateTo) return false;
-        return true;
-      });
-    }
+      // Add local files
+      for (const { file, matchedFields } of localFiles) {
+        const baseResult = fileToResult(file);
+        itemsToScore.push({
+          baseResult,
+          matchedFields,
+          apiInput: {
+            key: baseResult.id,
+            filename: file.fileName,
+            mimeType: file.fileType,
+            fileExtractedAmount: file.extractedAmount ?? null,
+            fileExtractedDate: file.extractedDate?.toDate().toISOString() ?? null,
+            fileExtractedPartner: file.extractedPartner ?? null,
+            filePartnerId: file.partnerId ?? null,
+            // Include Gmail metadata if the file came from Gmail
+            emailSubject: file.gmailSubject ?? null,
+            emailFrom: file.gmailSenderEmail ?? null,
+          },
+        });
+      }
 
-    // Only include PDFs and images
-    filtered = filtered.filter(
-      (f) =>
-        f.fileType === "application/pdf" ||
-        f.fileType.startsWith("image/")
-    );
+      // Add Gmail attachments (unless localOnly)
+      if (!localOnly) {
+        for (const message of gmailMessages) {
+          for (const attachment of message.attachments) {
+            // Only include PDFs and images
+            if (!isPdfOrImageAttachment(attachment.mimeType, attachment.filename)) {
+              continue;
+            }
 
-    // Filter by search query and track matched fields
-    if (searchQuery) {
-      const queryLower = searchQuery.toLowerCase();
-      return filtered
-        .map((f) => ({ file: f, matchedFields: searchFile(f, queryLower) }))
-        .filter((item) => item.matchedFields.length > 0);
-    }
-
-    // No search query - return all with empty matched fields
-    return filtered.map((f) => ({ file: f, matchedFields: [] as string[] }));
-  }, [files, searchQuery, hasSearched, dateFrom, dateTo, searchFile]);
-
-  // Combine and score results
-  const results = useMemo(() => {
-    if (!hasSearched) return [];
-
-    const allResults: UnifiedSearchResult[] = [];
-
-    // Add local files with matched fields
-    for (const { file, matchedFields } of filteredLocalFilesWithMatches) {
-      const baseResult = fileToResult(file);
-      const { score, matchReasons } = scoreResult(baseResult, transactionInfo, partner);
-      allResults.push({ ...baseResult, score, matchReasons, matchedFields });
-    }
-
-    // Add Gmail attachments (unless localOnly)
-    if (!localOnly) {
-      for (const message of gmailResults) {
-        for (const attachment of message.attachments) {
-          // Only include PDFs and images
-          if (!isPdfOrImageAttachment(attachment.mimeType, attachment.filename)) {
-            continue;
+            const baseResult = attachmentToResult(attachment, message, message.integrationId);
+            itemsToScore.push({
+              baseResult,
+              apiInput: {
+                key: baseResult.id,
+                filename: attachment.filename,
+                mimeType: attachment.mimeType,
+                emailSubject: message.subject ?? null,
+                emailFrom: message.from ?? null,
+                emailSnippet: message.snippet ?? null,
+                emailDate: message.date?.toISOString() ?? null,
+                integrationId: message.integrationId ?? null,
+              },
+            });
           }
-
-          const baseResult = attachmentToResult(attachment, message, message.integrationId);
-          const { score, matchReasons } = scoreResult(baseResult, transactionInfo, partner);
-          allResults.push({ ...baseResult, score, matchReasons });
         }
       }
-    }
 
-    // Sort by score descending
-    return allResults.sort((a, b) => b.score - a.score);
-  }, [filteredLocalFilesWithMatches, gmailResults, transactionInfo, partner, hasSearched, localOnly]);
+      if (itemsToScore.length === 0) {
+        return [];
+      }
+
+      try {
+        // Get auth token for the API call
+        const token = user ? await user.getIdToken() : null;
+
+        const response = await fetch("/api/matching/score-files", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            attachments: itemsToScore.map((item) => item.apiInput),
+            transaction: {
+              amount: transactionInfo.amount,
+              date: transactionInfo.date?.toISOString() ?? null,
+              name: transactionInfo.partner ?? null,
+              partner: transactionInfo.partner ?? null,
+              partnerId: transactionInfo.partnerId ?? null,
+            },
+            partner: partner
+              ? {
+                  name: partner.name,
+                  emailDomains: partner.emailDomains ?? null,
+                  fileSourcePatterns: partner.fileSourcePatterns ?? null,
+                }
+              : null,
+          }),
+        });
+
+        // Check if this search is still current (prevent race conditions)
+        if (currentSearchId !== searchIdRef.current) {
+          return [];
+        }
+
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+
+        const result = await response.json();
+        const scoreMap = new Map<string, { score: number; reasons: string[] }>();
+        for (const scored of result.scores) {
+          scoreMap.set(scored.key, { score: scored.score, reasons: scored.reasons });
+        }
+
+        // Combine base results with scores
+        const allResults: UnifiedSearchResult[] = [];
+        for (const item of itemsToScore) {
+          const scoreData = scoreMap.get(item.baseResult.id) || { score: 0, reasons: [] };
+          allResults.push({
+            ...item.baseResult,
+            score: scoreData.score,
+            matchReasons: scoreData.reasons,
+            matchedFields: item.matchedFields,
+          });
+        }
+
+        // Sort by score descending
+        return allResults.sort((a, b) => b.score - a.score);
+      } catch (err) {
+        console.error("[useUnifiedFileSearch] Scoring API error:", err);
+        // Return results with score 0 on error (don't break the UI)
+        return itemsToScore.map((item) => ({
+          ...item.baseResult,
+          score: 0,
+          matchReasons: [],
+          matchedFields: item.matchedFields,
+        }));
+      }
+    },
+    [user, transactionInfo, partner, localOnly]
+  );
 
   // Search function
   const search = useCallback(
     async (query: string) => {
+      // Increment search ID to track this search
+      const currentSearchId = ++searchIdRef.current;
+
       setSearchQuery(query);
       setHasSearched(true);
       setError(null);
-
-      // Local files are filtered reactively via useMemo
-      // Gmail needs an API call
-      if (localOnly || !hasGmailIntegration || gmailIntegrations.length === 0) {
-        return;
-      }
-
       setSearchLoading(true);
 
       try {
-        // Calculate date range
-        const dateFrom = transactionInfo.date
-          ? subDays(transactionInfo.date, 30)
-          : undefined;
-        const dateTo = transactionInfo.date
-          ? addDays(transactionInfo.date, 7)
-          : undefined;
-
-        // Search all Gmail accounts in parallel
-        const allMessages = await Promise.all(
-          gmailIntegrations.map(async (integration) => {
-            try {
-              const response = await fetchWithAuth("/api/gmail/search", {
-                method: "POST",
-                body: JSON.stringify({
-                  integrationId: integration.id,
-                  query: query || undefined,
-                  dateFrom: dateFrom?.toISOString(),
-                  dateTo: dateTo?.toISOString(),
-                  hasAttachments: true,
-                  limit: 20,
-                }),
-              });
-
-              if (!response.ok) {
-                console.warn(`Gmail search failed for ${integration.email}`);
-                return [];
-              }
-
-              const data = await response.json();
-              return (data.messages || []).map(
-                (msg: EmailMessage & { date: string }) => ({
-                  ...msg,
-                  date: new Date(msg.date),
-                  integrationId: integration.id,
-                })
-              );
-            } catch (err) {
-              console.warn(`Gmail search error for ${integration.email}:`, err);
-              return [];
-            }
-          })
+        // Get filtered local files
+        let filteredFiles = files.filter((f) =>
+          f.transactionIds.length === 0 && !f.isNotInvoice
         );
 
-        setGmailResults(allMessages.flat());
+        // Filter by date range ONLY if explicitly set by user
+        if (dateFrom || dateTo) {
+          filteredFiles = filteredFiles.filter((f) => {
+            if (!f.extractedDate) return true;
+            const fileDate = f.extractedDate.toDate();
+            if (dateFrom && fileDate < dateFrom) return false;
+            if (dateTo && fileDate > dateTo) return false;
+            return true;
+          });
+        }
+
+        // Only include PDFs and images
+        filteredFiles = filteredFiles.filter(
+          (f) =>
+            f.fileType === "application/pdf" ||
+            f.fileType.startsWith("image/")
+        );
+
+        // Filter by search query and track matched fields
+        let localFilesWithMatches: Array<{ file: TaxFile; matchedFields: string[] }>;
+        if (query) {
+          const queryLower = query.toLowerCase();
+          localFilesWithMatches = filteredFiles
+            .map((f) => ({ file: f, matchedFields: searchFile(f, queryLower) }))
+            .filter((item) => item.matchedFields.length > 0);
+        } else {
+          localFilesWithMatches = filteredFiles.map((f) => ({ file: f, matchedFields: [] as string[] }));
+        }
+
+        // Search Gmail if enabled
+        let gmailMessages: EmailMessage[] = [];
+        if (!localOnly && hasGmailIntegration && gmailIntegrations.length > 0) {
+          // Calculate date range for Gmail search
+          const gmailDateFrom = transactionInfo.date
+            ? subDays(transactionInfo.date, 30)
+            : undefined;
+          const gmailDateTo = transactionInfo.date
+            ? addDays(transactionInfo.date, 7)
+            : undefined;
+
+          // Search all Gmail accounts in parallel
+          const allMessages = await Promise.all(
+            gmailIntegrations.map(async (integration) => {
+              try {
+                const response = await fetchWithAuth("/api/gmail/search", {
+                  method: "POST",
+                  body: JSON.stringify({
+                    integrationId: integration.id,
+                    query: query || undefined,
+                    dateFrom: gmailDateFrom?.toISOString(),
+                    dateTo: gmailDateTo?.toISOString(),
+                    hasAttachments: true,
+                    limit: 20,
+                  }),
+                });
+
+                if (!response.ok) {
+                  console.warn(`Gmail search failed for ${integration.email}`);
+                  return [];
+                }
+
+                const data = await response.json();
+                return (data.messages || []).map(
+                  (msg: EmailMessage & { date: string }) => ({
+                    ...msg,
+                    date: new Date(msg.date),
+                    integrationId: integration.id,
+                  })
+                );
+              } catch (err) {
+                console.warn(`Gmail search error for ${integration.email}:`, err);
+                return [];
+              }
+            })
+          );
+
+          gmailMessages = allMessages.flat();
+        }
+
+        // Check if this search is still current
+        if (currentSearchId !== searchIdRef.current) {
+          return;
+        }
+
+        // Score all results using the server-side API
+        const results = await scoreResultsWithApi(localFilesWithMatches, gmailMessages, currentSearchId);
+
+        // Check again after scoring
+        if (currentSearchId !== searchIdRef.current) {
+          return;
+        }
+
+        setScoredResults(results);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Search failed");
       } finally {
-        setSearchLoading(false);
+        if (currentSearchId === searchIdRef.current) {
+          setSearchLoading(false);
+        }
       }
     },
-    [gmailIntegrations, hasGmailIntegration, transactionInfo.date, localOnly]
+    [files, gmailIntegrations, hasGmailIntegration, transactionInfo.date, localOnly, dateFrom, dateTo, searchFile, scoreResultsWithApi]
   );
 
   // Clear results
   const clear = useCallback(() => {
     setSearchQuery("");
-    setGmailResults([]);
+    setScoredResults([]);
     setHasSearched(false);
     setError(null);
   }, []);
 
   return {
-    results,
+    results: scoredResults,
     loading: filesLoading || integrationsLoading || searchLoading,
     error,
     search,

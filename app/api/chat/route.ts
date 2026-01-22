@@ -1,63 +1,38 @@
-import { anthropic } from "@ai-sdk/anthropic";
-import { streamText, tool, stepCountIs } from "ai";
-import { z } from "zod/v4";
-import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
-import { SYSTEM_PROMPT } from "@/lib/chat/system-prompt";
-import { requiresConfirmation } from "@/lib/chat/confirmation-config";
-import { logAIUsageToFirestore } from "@/lib/ai/usage-logger";
+/**
+ * Chat API Route - Full LangGraph Implementation
+ *
+ * Uses LangGraph for agent orchestration with:
+ * - @ai-sdk/langchain adapter for streaming
+ * - LangFuse tracing
+ * - Vercel AI SDK compatible response format
+ */
+
+import { createUIMessageStreamResponse } from "ai";
+import { toUIMessageStream } from "@ai-sdk/langchain";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { buildAgentGraph } from "@/lib/agent/graph";
+import { createLangfuseHandler, flushLangfuse } from "@/lib/agent/langfuse";
 import {
-  listSources,
-  getSourceById,
-  createSource,
-  updateSource,
-  deleteSource,
-  listTransactions,
-  getTransaction,
-  getTransactionHistory,
-  updateTransactionWithHistory,
-  rollbackTransaction,
-  OperationsContext,
-} from "@/lib/operations";
+  HumanMessage,
+  AIMessage,
+  AIMessageChunk,
+  SystemMessage,
+  ToolMessage,
+  BaseMessage,
+} from "@langchain/core/messages";
+import { SYSTEM_PROMPT } from "@/lib/chat/system-prompt";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { Timestamp } from "firebase-admin/firestore";
 
-// Initialize Firebase for server-side
-const firebaseConfig = {
-  apiKey: "AIzaSyDhxXMbHgaD1z9n0bkuVaSRmmiCrbNL-l4",
-  authDomain: "taxstudio-f12fb.firebaseapp.com",
-  projectId: "taxstudio-f12fb",
-  storageBucket: "taxstudio-f12fb.firebasestorage.app",
-  messagingSenderId: "534848611676",
-  appId: "1:534848611676:web:8a3d1ede57c65b7e884d99",
-};
-
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-const db = getFirestore(app);
-
-// Connect to Firestore emulator in development
-let emulatorConnected = false;
-if (process.env.NODE_ENV === "development" && !emulatorConnected) {
-  try {
-    connectFirestoreEmulator(db, "localhost", 8080);
-    emulatorConnected = true;
-    console.log("[Chat API] Connected to Firestore emulator");
-  } catch (e) {
-    // Already connected
-  }
-}
-
-// User ID will be set per request
-let currentUserId: string = "";
-
-function createContext(): OperationsContext {
-  return { db, userId: currentUserId };
-}
+const db = getAdminDb();
 
 export const maxDuration = 60;
 
-// Convert UI messages to model messages format
-// IMPORTANT: Must preserve tool calls and results for multi-turn conversations
-interface UIMessage {
+// ============================================================================
+// Message Conversion
+// ============================================================================
+
+interface UIMessageInput {
   id: string;
   role: "user" | "assistant" | "system";
   content?: string;
@@ -67,360 +42,278 @@ interface UIMessage {
     toolCallId?: string;
     toolName?: string;
     args?: Record<string, unknown>;
+    input?: Record<string, unknown>;
     result?: unknown;
+    output?: unknown;
     [key: string]: unknown;
   }>;
 }
 
-type ContentPart =
-  | { type: "text"; text: string }
-  | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> };
-
-type ToolResultPart = { type: "tool-result"; toolCallId: string; result: unknown };
-
-type ConvertedMessage =
-  | { role: "user" | "system"; content: string }
-  | { role: "assistant"; content: ContentPart[] }
-  | { role: "tool"; content: ToolResultPart[] };
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function convertMessages(uiMessages: UIMessage[]): any[] {
-  const result: ConvertedMessage[] = [];
+/**
+ * Convert UI messages to LangChain message format
+ */
+function convertToLangChainMessages(uiMessages: UIMessageInput[]): BaseMessage[] {
+  const result: BaseMessage[] = [];
 
   for (const msg of uiMessages) {
-    // User messages: just extract text content
     if (msg.role === "user") {
-      const content = msg.content ||
-        msg.parts?.filter((p) => p.type === "text" && p.text).map((p) => p.text).join("") ||
+      const content =
+        msg.content ||
+        msg.parts
+          ?.filter((p) => p.type === "text" && p.text)
+          .map((p) => p.text)
+          .join("") ||
         "";
       if (content.trim()) {
-        result.push({ role: "user", content });
+        result.push(new HumanMessage(content));
       }
       continue;
     }
 
-    // Assistant messages: need to handle both text and tool calls
-    if (msg.role === "assistant" && msg.parts) {
-      const contentParts: ContentPart[] = [];
-      const toolResults: ToolResultPart[] = [];
+    if (msg.role === "assistant") {
+      let textContent = "";
+      const toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+      const toolResults: Array<{ toolCallId: string; result: unknown }> = [];
 
-      for (const part of msg.parts) {
-        if (part.type === "text" && part.text) {
-          contentParts.push({ type: "text", text: part.text });
-        } else if (part.type.startsWith("tool-")) {
-          // Tool part format: type is "tool-{toolName}"
-          const toolName = part.type.replace("tool-", "");
-          const toolCallId = part.toolCallId as string;
-          const args = (part.args || part.input || {}) as Record<string, unknown>;
-          const toolResult = part.result ?? part.output;
+      if (msg.parts) {
+        for (const part of msg.parts) {
+          if (part.type === "text" && part.text) {
+            textContent += part.text;
+          } else if (part.type.startsWith("tool-")) {
+            const toolName = part.type.replace("tool-", "");
+            const toolCallId = part.toolCallId as string;
+            const args = (part.args || part.input || {}) as Record<string, unknown>;
+            const toolResult = part.result ?? part.output;
 
-          // Add tool call to assistant message
-          contentParts.push({
-            type: "tool-call",
-            toolCallId,
-            toolName,
-            args,
-          });
+            toolCalls.push({ id: toolCallId, name: toolName, args });
 
-          // If there's a result, collect it for a tool message
-          if (toolResult !== undefined) {
-            toolResults.push({
-              type: "tool-result",
-              toolCallId,
-              result: toolResult,
-            });
+            if (toolResult !== undefined) {
+              toolResults.push({ toolCallId, result: toolResult });
+            }
           }
         }
+      } else if (msg.content) {
+        textContent = msg.content;
       }
 
-      // Add assistant message if it has any content
-      if (contentParts.length > 0) {
-        result.push({ role: "assistant", content: contentParts });
+      if (textContent || toolCalls.length > 0) {
+        result.push(
+          new AIMessage({
+            content: textContent,
+            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+          })
+        );
       }
 
-      // Add tool results as a separate message
-      if (toolResults.length > 0) {
-        result.push({ role: "tool", content: toolResults });
+      for (const tr of toolResults) {
+        result.push(
+          new ToolMessage({
+            tool_call_id: tr.toolCallId,
+            content: typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result),
+          })
+        );
       }
       continue;
     }
 
-    // Fallback: simple text content
-    if (typeof msg.content === "string" && msg.content.trim()) {
-      if (msg.role === "system") {
-        result.push({ role: "system", content: msg.content });
-      } else if (msg.role === "assistant") {
-        result.push({ role: "assistant", content: [{ type: "text", text: msg.content }] });
-      }
+    if (msg.role === "system" && msg.content) {
+      result.push(new SystemMessage(msg.content));
     }
   }
 
   return result;
 }
 
+// ============================================================================
+// AI Usage Logging
+// ============================================================================
+
+async function logAIUsage(
+  userId: string,
+  params: {
+    function: string;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+  }
+): Promise<void> {
+  const cost = (params.inputTokens * 3 + params.outputTokens * 15) / 1_000_000;
+
+  try {
+    await db.collection("aiUsage").add({
+      userId,
+      function: params.function,
+      model: params.model,
+      inputTokens: params.inputTokens,
+      outputTokens: params.outputTokens,
+      estimatedCost: cost,
+      createdAt: Timestamp.now(),
+      metadata: null,
+    });
+
+    console.log(`[AI Usage] ${params.function}`, {
+      model: params.model,
+      inputTokens: params.inputTokens,
+      outputTokens: params.outputTokens,
+      estimatedCost: `$${cost.toFixed(4)}`,
+    });
+  } catch (error) {
+    console.error("[AI Usage] Failed to log usage:", error);
+  }
+}
+
+// ============================================================================
+// API Handler
+// ============================================================================
+
 export async function POST(req: Request) {
-  currentUserId = await getServerUserIdWithFallback(req);
+  const authHeader = req.headers.get("Authorization") || "";
+  const userId = await getServerUserIdWithFallback(req);
   const { messages: rawMessages } = await req.json();
-  const messages = convertMessages(rawMessages);
-  const ctx = createContext();
 
-  console.log("[Chat API] Starting streamText with", messages.length, "messages");
+  console.log("[Chat API] Starting LangGraph agent with", rawMessages.length, "messages");
 
-  const result = streamText({
-    model: anthropic("claude-sonnet-4-20250514"),
-    system: SYSTEM_PROMPT,
-    messages,
-    stopWhen: stepCountIs(5), // Allow up to 5 steps for multi-tool execution
-    onStepFinish: ({ text, toolCalls, toolResults }) => {
-      console.log("[Step finished]", {
-        hasText: !!text,
-        textLength: text?.length,
-        toolCallsCount: toolCalls?.length,
-        toolResultsCount: toolResults?.length,
-      });
-    },
-    onFinish: async ({ text, finishReason, usage, steps }) => {
-      console.log("[Stream finished]", {
-        finishReason,
-        totalSteps: steps?.length,
-        totalText: text?.length,
-        usage,
-      });
+  // Convert messages to LangChain format
+  const messages = convertToLangChainMessages(rawMessages);
 
-      // Log AI usage to Firestore
-      if (usage && usage.inputTokens !== undefined && usage.outputTokens !== undefined) {
-        await logAIUsageToFirestore(db, currentUserId, {
-          function: "chat",
-          model: "claude-sonnet-4-20250514",
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-        });
-      }
-    },
-    tools: {
-      // ===== READ-ONLY TOOLS (no confirmation) =====
+  // Add system message if not present
+  const hasSystemMessage = messages.some((m) => m instanceof SystemMessage);
+  if (!hasSystemMessage) {
+    messages.unshift(new SystemMessage(SYSTEM_PROMPT));
+  }
 
-      listTransactions: tool({
-        description:
-          "List transactions with optional filters. Returns date, amount, partner, description, etc.",
-        inputSchema: z.object({
-          sourceId: z.string().optional().describe("Filter by bank account ID"),
-          dateFrom: z.string().optional().describe("Start date (ISO format)"),
-          dateTo: z.string().optional().describe("End date (ISO format)"),
-          search: z.string().optional().describe("Search in name, description, partner"),
-          limit: z.number().max(50).optional().describe("Max results (default 20)"),
-        }),
-        execute: async (params) => {
-          console.log("[Tool] listTransactions called with:", params);
-          const transactions = await listTransactions(ctx, {
-            sourceId: params.sourceId,
-            dateFrom: params.dateFrom ? new Date(params.dateFrom) : undefined,
-            dateTo: params.dateTo ? new Date(params.dateTo) : undefined,
-            search: params.search,
-            limit: params.limit ?? 20,
-          });
-          console.log("[Tool] listTransactions found:", transactions.length, "transactions");
-
-          const result = transactions.map((t) => {
-            const dateObj = t.date.toDate();
-            return {
-              id: t.id,
-              date: dateObj.toISOString(),
-              dateFormatted: dateObj.toLocaleDateString("de-DE", {
-                day: "2-digit",
-                month: "2-digit",
-                year: "numeric"
-              }),
-              amount: t.amount,
-              amountFormatted: `${(t.amount / 100).toFixed(2).replace(".", ",")} ${t.currency}`,
-              name: t.name,
-              description: t.description,
-            partner: t.partner,
-            isComplete: t.isComplete,
-            hasFiles: (t.fileIds?.length || 0) > 0,
-            };
-          });
-          console.log("[Tool] listTransactions returning:", JSON.stringify(result, null, 2));
-          return result;
-        },
-      }),
-
-      getTransaction: tool({
-        description: "Get full details of a single transaction by ID",
-        inputSchema: z.object({
-          transactionId: z.string().describe("The transaction ID"),
-        }),
-        execute: async ({ transactionId }) => {
-          const t = await getTransaction(ctx, transactionId);
-          if (!t) return { error: "Transaction not found" };
-
-          return {
-            id: t.id,
-            date: t.date.toDate().toISOString(),
-            amount: t.amount,
-            amountFormatted: `${(t.amount / 100).toFixed(2)} ${t.currency}`,
-            name: t.name,
-            description: t.description,
-            partner: t.partner,
-            reference: t.reference,
-            partnerIban: t.partnerIban,
-            isComplete: t.isComplete,
-            fileIds: t.fileIds || [],
-            sourceId: t.sourceId,
-          };
-        },
-      }),
-
-      listSources: tool({
-        description: "List all bank accounts/sources",
-        inputSchema: z.object({
-          includeInactive: z.boolean().optional().describe("Include inactive sources"),
-        }),
-        execute: async () => {
-          const sources = await listSources(ctx);
-          return sources.map((s) => ({
-            id: s.id,
-            name: s.name,
-            accountKind: s.accountKind,
-            iban: s.iban,
-            cardBrand: s.cardBrand,
-            cardLast4: s.cardLast4,
-            currency: s.currency,
-          }));
-        },
-      }),
-
-      getSource: tool({
-        description: "Get details of a single bank account by ID",
-        inputSchema: z.object({
-          sourceId: z.string().describe("The source/bank account ID"),
-        }),
-        execute: async ({ sourceId }) => {
-          const s = await getSourceById(ctx, sourceId);
-          if (!s) return { error: "Source not found" };
-
-          return {
-            id: s.id,
-            name: s.name,
-            accountKind: s.accountKind,
-            iban: s.iban,
-            cardBrand: s.cardBrand,
-            cardLast4: s.cardLast4,
-            currency: s.currency,
-          };
-        },
-      }),
-
-      getTransactionHistory: tool({
-        description: "Get the edit history for a transaction (shows previous changes)",
-        inputSchema: z.object({
-          transactionId: z.string().describe("The transaction ID"),
-        }),
-        execute: async ({ transactionId }) => {
-          const history = await getTransactionHistory(ctx, transactionId);
-          return history.map((h) => ({
-            id: h.id,
-            changedFields: h.changedFields,
-            previousState: h.previousState,
-            changedBy: h.changedBy,
-            changeReason: h.changeReason,
-            createdAt: h.createdAt.toDate().toISOString(),
-          }));
-        },
-      }),
-
-      // ===== UI CONTROL TOOLS (no confirmation, client-side execution) =====
-
-      navigateTo: tool({
-        description: "Navigate to a page in the application",
-        inputSchema: z.object({
-          path: z.enum(["/transactions", "/sources"]).describe("The page path"),
-        }),
-        execute: async ({ path }) => {
-          return { action: "navigate", path };
-        },
-      }),
-
-      openTransactionSheet: tool({
-        description: "Open the detail sheet/sidebar for a specific transaction",
-        inputSchema: z.object({
-          transactionId: z.string().describe("The transaction ID to show"),
-        }),
-        execute: async ({ transactionId }) => {
-          return { action: "openSheet", transactionId };
-        },
-      }),
-
-      scrollToTransaction: tool({
-        description: "Scroll to and highlight a transaction in the list",
-        inputSchema: z.object({
-          transactionId: z.string().describe("The transaction ID to scroll to"),
-        }),
-        execute: async ({ transactionId }) => {
-          return { action: "scrollTo", transactionId };
-        },
-      }),
-
-      // ===== DATA MODIFICATION TOOLS (require confirmation) =====
-
-      updateTransaction: tool({
-        description:
-          "Update a transaction's description or completion status. REQUIRES USER CONFIRMATION.",
-        inputSchema: z.object({
-          transactionId: z.string().describe("The transaction ID to update"),
-          description: z.string().optional().describe("New description for tax purposes"),
-          isComplete: z.boolean().optional().describe("Mark as complete/incomplete"),
-        }),
-        execute: async ({ transactionId, ...updates }) => {
-          await updateTransactionWithHistory(
-            ctx,
-            transactionId,
-            updates,
-            { type: "ai_chat", userId: ctx.userId },
-            "Updated via AI chat"
-          );
-          return { success: true, transactionId };
-        },
-      }),
-
-      createSource: tool({
-        description: "Create a new bank account/source. REQUIRES USER CONFIRMATION.",
-        inputSchema: z.object({
-          name: z.string().describe("Display name for the account"),
-          accountKind: z.enum(["bank_account", "credit_card"]).optional().describe("Type of account (default: bank_account)"),
-          iban: z.string().optional().describe("IBAN of the bank account (required for bank accounts, optional for credit cards)"),
-          currency: z.string().optional().describe("Currency code (default EUR)"),
-        }),
-        execute: async ({ name, accountKind, iban, currency }) => {
-          const sourceId = await createSource(ctx, {
-            name,
-            accountKind: accountKind ?? "bank_account",
-            iban,
-            currency: currency ?? "EUR",
-            type: "csv",
-          });
-          return { success: true, sourceId };
-        },
-      }),
-
-      rollbackTransaction: tool({
-        description:
-          "Rollback a transaction to a previous state from its history. REQUIRES USER CONFIRMATION.",
-        inputSchema: z.object({
-          transactionId: z.string().describe("The transaction ID"),
-          historyId: z.string().describe("The history entry ID to rollback to"),
-        }),
-        execute: async ({ transactionId, historyId }) => {
-          await rollbackTransaction(ctx, transactionId, historyId, {
-            type: "ai_chat",
-            userId: ctx.userId,
-          });
-          return { success: true, transactionId, rolledBackTo: historyId };
-        },
-      }),
+  // Create Langfuse handler for tracing
+  const langfuseHandler = createLangfuseHandler({
+    userId,
+    metadata: {
+      messageCount: messages.length,
     },
   });
 
-  // Use toUIMessageStreamResponse for direct compatibility with useChat from @ai-sdk/react
-  return result.toUIMessageStreamResponse();
+  // Build the graph
+  const graph = buildAgentGraph();
+
+  // Track token usage
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  // Use graph.stream with messages streamMode for best compatibility with toUIMessageStream
+  const graphStream = await graph.stream(
+    {
+      messages,
+      userId,
+      authHeader,
+      pendingConfirmation: null,
+      shouldContinue: true,
+    },
+    {
+      streamMode: ["messages"] as const,
+      callbacks: langfuseHandler ? [langfuseHandler] : undefined,
+    }
+  );
+
+  // Wrap stream to capture token usage while preserving the langgraph format
+  // The graphStream with streamMode: ["messages"] yields tuples: ["messages", [AIMessageChunk, metadata]]
+  // We must yield the FULL tuple for toUIMessageStream to detect it as langgraph format
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function* trackUsage(): AsyncGenerator<any> {
+    for await (const chunk of graphStream) {
+      // Format: ["messages", [AIMessageChunk, metadata]]
+      if (!Array.isArray(chunk) || chunk[0] !== "messages") {
+        // Pass through non-messages chunks
+        yield chunk;
+        continue;
+      }
+
+      const msgData = chunk[1] as [AIMessageChunk, unknown];
+      if (!Array.isArray(msgData)) {
+        yield chunk;
+        continue;
+      }
+
+      const msgChunk = msgData[0];
+      if (msgChunk) {
+        // Extract usage metadata from kwargs (serialized LC format)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const chunkObj = msgChunk as any;
+        const kwargs = chunkObj.kwargs || chunkObj;
+        const usageMeta = kwargs.usage_metadata;
+
+        if (usageMeta) {
+          totalInputTokens += usageMeta.input_tokens || 0;
+          totalOutputTokens += usageMeta.output_tokens || 0;
+          console.log("[Token Usage]", usageMeta);
+        }
+
+        // Log content for debugging (from kwargs for serialized format)
+        const content = kwargs.content;
+        if (Array.isArray(content) && content.length > 0) {
+          const textBlocks = content.filter((c: { type: string }) => c.type === "text");
+          if (textBlocks.length > 0) {
+            const text = textBlocks.map((c: { text: string }) => c.text || "").join("");
+            if (text) {
+              console.log("[Stream] Text:", JSON.stringify(text.slice(0, 50)));
+            }
+          }
+          // Log tool calls
+          const toolBlocks = content.filter((c: { type: string }) => c.type === "tool_use");
+          if (toolBlocks.length > 0) {
+            console.log("[Stream] Tool call:", JSON.stringify(toolBlocks[0]));
+          }
+        }
+
+        // Log tool_call_chunks if present
+        const toolCallChunks = kwargs.tool_call_chunks;
+        if (toolCallChunks && toolCallChunks.length > 0) {
+          console.log("[Stream] Tool chunks:", JSON.stringify(toolCallChunks));
+        }
+      }
+
+      // Yield the FULL chunk (preserves langgraph format for toUIMessageStream)
+      yield chunk;
+    }
+  }
+
+  // Convert to UI message stream using official adapter
+  // By yielding the full ["messages", [chunk, metadata]] format, the adapter
+  // will detect this as langgraph format and properly handle serialized LC objects
+  // Create a wrapper to log what chunks are being sent to the frontend
+  const wrappedStream = new TransformStream({
+    transform(chunk, controller) {
+      // Log the chunk type
+      if (chunk && typeof chunk === "object" && "type" in chunk) {
+        const c = chunk as { type: string; [key: string]: unknown };
+        if (c.type.includes("tool")) {
+          console.log("[UI Chunk] Tool chunk:", JSON.stringify(c).slice(0, 200));
+        }
+      }
+      controller.enqueue(chunk);
+    },
+  });
+
+  const uiStream = toUIMessageStream(trackUsage(), {
+    onText: (text) => {
+      console.log("[UI Stream] onText:", JSON.stringify(text.slice(0, 50)));
+    },
+    onFinal: async () => {
+      console.log("[Stream] Complete, tokens:", { totalInputTokens, totalOutputTokens });
+
+      // Log AI usage
+      if (userId && (totalInputTokens > 0 || totalOutputTokens > 0)) {
+        await logAIUsage(userId, {
+          function: "chat",
+          model: "claude-sonnet-4-20250514",
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+        });
+      }
+
+      // Flush Langfuse
+      await flushLangfuse();
+    },
+  });
+
+  // Pipe through the logging wrapper
+  const loggedStream = uiStream.pipeThrough(wrappedStream);
+  return createUIMessageStreamResponse({ stream: loggedStream });
 }

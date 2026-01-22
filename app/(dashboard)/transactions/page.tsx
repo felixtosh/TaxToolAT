@@ -73,6 +73,12 @@ function TransactionsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Keep searchParams in a ref to avoid callback recreation on every URL change
+  const searchParamsRef = useRef(searchParams);
+  useEffect(() => {
+    searchParamsRef.current = searchParams;
+  }, [searchParams]);
+
   const { transactions, loading, error, updateTransaction } = useTransactions();
   const { sources } = useSources();
   const { partners, createPartner, assignToTransaction, removeFromTransaction } = usePartners();
@@ -123,7 +129,7 @@ function TransactionsContent() {
   // Update search in URL
   const handleSearchChange = useCallback(
     (value: string) => {
-      const params = new URLSearchParams(searchParams.toString());
+      const params = new URLSearchParams(searchParamsRef.current.toString());
       if (value) {
         params.set("search", value);
       } else {
@@ -134,7 +140,7 @@ function TransactionsContent() {
         : "/transactions";
       router.replace(newUrl, { scroll: false });
     },
-    [router, searchParams]
+    [router]
   );
   const panelRef = useRef<HTMLDivElement>(null);
   const currentWidthRef = useRef(panelWidth);
@@ -173,16 +179,16 @@ function TransactionsContent() {
 
   // Open/close connect file overlay via URL param
   const openConnectFileOverlay = useCallback(() => {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams(searchParamsRef.current.toString());
     params.set("connect", "true");
     router.push(`/transactions?${params.toString()}`, { scroll: false });
-  }, [router, searchParams]);
+  }, [router]);
 
   const closeConnectFileOverlay = useCallback(() => {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams(searchParamsRef.current.toString());
     params.delete("connect");
     router.push(`/transactions?${params.toString()}`, { scroll: false });
-  }, [router, searchParams]);
+  }, [router]);
 
   const toggleConnectFileOverlay = useCallback(() => {
     if (isConnectFileOpen) {
@@ -257,26 +263,26 @@ function TransactionsContent() {
   // Select transaction (update URL)
   const handleSelectTransaction = useCallback(
     (transaction: Transaction, options?: { keepConnect?: boolean }) => {
-      const params = new URLSearchParams(searchParams.toString());
+      const params = new URLSearchParams(searchParamsRef.current.toString());
       params.set("id", transaction.id);
       if (!options?.keepConnect) {
         params.delete("connect");
       }
       router.push(`/transactions?${params.toString()}`, { scroll: false });
     },
-    [router, searchParams]
+    [router]
   );
 
   // Close detail panel (remove ID from URL)
   const handleCloseDetail = useCallback(() => {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams(searchParamsRef.current.toString());
     params.delete("id");
     params.delete("connect");
     const newUrl = params.toString()
       ? `/transactions?${params.toString()}`
       : "/transactions";
     router.push(newUrl, { scroll: false });
-  }, [router, searchParams]);
+  }, [router]);
 
   // Update transaction
   const handleTransactionUpdate = useCallback(

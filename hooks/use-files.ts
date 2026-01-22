@@ -3,35 +3,14 @@
 import { useState, useEffect, useCallback, useMemo, startTransition } from "react";
 import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
+import { callFunction } from "@/lib/firebase/callable";
 import {
   TaxFile,
   FileFilters,
   FileCreateData,
   FileExtractionData,
-  TransactionSuggestion,
   TransactionMatchSource,
 } from "@/types/file";
-import {
-  OperationsContext,
-  listFiles,
-  getFile,
-  createFile,
-  updateFile,
-  updateFileExtraction,
-  deleteFile,
-  softDeleteFile,
-  restoreFile,
-  markFileAsNotInvoice,
-  unmarkFileAsNotInvoice,
-  connectFileToTransaction,
-  disconnectFileFromTransaction,
-  unrejectFileFromTransaction,
-  getFilesForTransaction,
-  getTransactionsForFile,
-  acceptTransactionSuggestion,
-  dismissTransactionSuggestion,
-  FileConnectionSourceInfo,
-} from "@/lib/operations";
 import { useAuth } from "@/components/auth";
 
 const FILES_COLLECTION = "files";
@@ -42,14 +21,6 @@ export function useFiles(filters?: FileFilters) {
   const [rawFiles, setRawFiles] = useState<TaxFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-
-  const ctx: OperationsContext = useMemo(
-    () => ({
-      db,
-      userId: userId ?? "",
-    }),
-    [userId]
-  );
 
   // Realtime listener for files - only depends on userId, not filters
   useEffect(() => {
@@ -165,56 +136,74 @@ export function useFiles(filters?: FileFilters) {
     return data;
   }, [rawFiles, filters?.search, filters?.hasConnections, filters?.extractionComplete, filters?.includeDeleted, filters?.isNotInvoice, filters?.extractedDateFrom, filters?.extractedDateTo, filters?.partnerIds, filters?.amountType]);
 
+  // Mutations call Cloud Functions
   const create = useCallback(
     async (data: FileCreateData): Promise<string> => {
-      return createFile(ctx, data);
+      const result = await callFunction<{ data: FileCreateData }, { fileId: string }>(
+        "createFile",
+        { data }
+      );
+      return result.fileId;
     },
-    [ctx]
+    []
   );
 
   const update = useCallback(
     async (fileId: string, data: Partial<Pick<TaxFile, "fileName" | "thumbnailUrl">>): Promise<void> => {
-      await updateFile(ctx, fileId, data);
+      await callFunction("updateFile", { fileId, data });
     },
-    [ctx]
+    []
   );
 
   const updateExtraction = useCallback(
     async (fileId: string, data: FileExtractionData): Promise<void> => {
-      await updateFileExtraction(ctx, fileId, data);
+      // Convert FileExtractionData to updateFile format
+      const updateData: Record<string, unknown> = {};
+      if (data.extractedDate) {
+        updateData.extractedDate = data.extractedDate.toDate().toISOString();
+      }
+      if (data.extractedAmount !== undefined) updateData.extractedAmount = data.extractedAmount;
+      if (data.extractedPartner !== undefined) updateData.extractedPartner = data.extractedPartner;
+      if (data.extractedVatPercent !== undefined) updateData.extractedVatPercent = data.extractedVatPercent;
+      if (data.extractedVatId !== undefined) updateData.extractedVatId = data.extractedVatId;
+      if (data.extractedIban !== undefined) updateData.extractedIban = data.extractedIban;
+      if (data.extractedAddress !== undefined) updateData.extractedAddress = data.extractedAddress;
+
+      await callFunction("updateFile", { fileId, data: updateData });
     },
-    [ctx]
+    []
   );
 
   const remove = useCallback(
     async (fileId: string, soft = false): Promise<{ deletedConnections: number }> => {
-      if (soft) {
-        return softDeleteFile(ctx, fileId);
-      }
-      return deleteFile(ctx, fileId);
+      const result = await callFunction<
+        { fileId: string; hardDelete?: boolean },
+        { deletedConnections: number }
+      >("deleteFile", { fileId, hardDelete: !soft });
+      return { deletedConnections: result.deletedConnections };
     },
-    [ctx]
+    []
   );
 
   const restore = useCallback(
     async (fileId: string): Promise<void> => {
-      return restoreFile(ctx, fileId);
+      await callFunction("restoreFile", { fileId });
     },
-    [ctx]
+    []
   );
 
   const markAsNotInvoice = useCallback(
     async (fileId: string, reason?: string): Promise<void> => {
-      return markFileAsNotInvoice(ctx, fileId, reason);
+      await callFunction("markFileAsNotInvoice", { fileId, reason });
     },
-    [ctx]
+    []
   );
 
   const unmarkAsNotInvoice = useCallback(
     async (fileId: string): Promise<void> => {
-      return unmarkFileAsNotInvoice(ctx, fileId);
+      await callFunction("unmarkFileAsNotInvoice", { fileId });
     },
-    [ctx]
+    []
   );
 
   const getFileById = useCallback(
@@ -237,23 +226,38 @@ export function useFiles(filters?: FileFilters) {
       connectionType: "manual" | "auto_matched" = "manual",
       matchConfidence?: number
     ): Promise<string> => {
-      return connectFileToTransaction(ctx, fileId, transactionId, connectionType, matchConfidence);
+      const result = await callFunction<
+        {
+          fileId: string;
+          transactionId: string;
+          connectionType?: "manual" | "auto_matched";
+          matchConfidence?: number;
+        },
+        { connectionId: string }
+      >("connectFileToTransaction", {
+        fileId,
+        transactionId,
+        connectionType,
+        matchConfidence,
+      });
+      return result.connectionId;
     },
-    [ctx]
+    []
   );
 
   const disconnectFromTransaction = useCallback(
     async (fileId: string, transactionId: string): Promise<void> => {
-      await disconnectFileFromTransaction(ctx, fileId, transactionId);
+      await callFunction("disconnectFileFromTransaction", { fileId, transactionId });
     },
-    [ctx]
+    []
   );
 
   const fetchFilesForTransaction = useCallback(
     async (transactionId: string): Promise<TaxFile[]> => {
-      return getFilesForTransaction(ctx, transactionId);
+      // This is a read operation - use the local cached files
+      return rawFiles.filter((f) => f.transactionIds.includes(transactionId) && !f.deletedAt);
     },
-    [ctx]
+    [rawFiles]
   );
 
   const acceptSuggestion = useCallback(
@@ -263,16 +267,31 @@ export function useFiles(filters?: FileFilters) {
       confidence: number,
       matchSources: TransactionMatchSource[]
     ): Promise<string> => {
-      return acceptTransactionSuggestion(ctx, fileId, transactionId, confidence, matchSources);
+      // Accept suggestion by connecting the file to the transaction
+      const result = await callFunction<
+        {
+          fileId: string;
+          transactionId: string;
+          connectionType: "auto_matched";
+          matchConfidence: number;
+        },
+        { connectionId: string }
+      >("connectFileToTransaction", {
+        fileId,
+        transactionId,
+        connectionType: "auto_matched",
+        matchConfidence: confidence,
+      });
+      return result.connectionId;
     },
-    [ctx]
+    []
   );
 
   const dismissSuggestion = useCallback(
     async (fileId: string, transactionId: string): Promise<void> => {
-      await dismissTransactionSuggestion(ctx, fileId, transactionId);
+      await callFunction("dismissTransactionSuggestion", { fileId, transactionId });
     },
-    [ctx]
+    []
   );
 
   return {
@@ -297,6 +316,28 @@ export function useFiles(filters?: FileFilters) {
 }
 
 /**
+ * Source info for tracking how a file was found when connecting
+ */
+export interface FileConnectionSourceInfo {
+  /** Where the file was found */
+  sourceType: string;
+  /** The search pattern/query used */
+  searchPattern?: string;
+  /** For Gmail: which integration (account) */
+  gmailIntegrationId?: string;
+  /** For Gmail: integration email */
+  gmailIntegrationEmail?: string;
+  /** For Gmail: message ID */
+  gmailMessageId?: string;
+  /** For Gmail: sender email */
+  gmailMessageFrom?: string;
+  /** For Gmail: sender name */
+  gmailMessageFromName?: string;
+  /** Type of result selected during the connection */
+  resultType?: string;
+}
+
+/**
  * Hook to get files for a specific transaction with realtime updates
  */
 export function useTransactionFiles(transactionId: string | null) {
@@ -304,14 +345,6 @@ export function useTransactionFiles(transactionId: string | null) {
   const [files, setFiles] = useState<TaxFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-
-  const ctx: OperationsContext = useMemo(
-    () => ({
-      db,
-      userId: userId ?? "",
-    }),
-    [userId]
-  );
 
   useEffect(() => {
     if (!transactionId || !userId) {
@@ -359,32 +392,43 @@ export function useTransactionFiles(transactionId: string | null) {
   const connectFile = useCallback(
     async (fileId: string, sourceInfo?: FileConnectionSourceInfo): Promise<string> => {
       if (!transactionId) throw new Error("No transaction selected");
-      return connectFileToTransaction(
-        ctx,
+      const result = await callFunction<
+        {
+          fileId: string;
+          transactionId: string;
+          connectionType: "manual";
+          sourceInfo?: FileConnectionSourceInfo;
+        },
+        { connectionId: string }
+      >("connectFileToTransaction", {
         fileId,
         transactionId,
-        "manual",
-        undefined,
-        sourceInfo
-      );
+        connectionType: "manual",
+        sourceInfo,
+      });
+      return result.connectionId;
     },
-    [ctx, transactionId]
+    [transactionId]
   );
 
   const disconnectFile = useCallback(
     async (fileId: string, reject: boolean = false): Promise<void> => {
       if (!transactionId) throw new Error("No transaction selected");
-      await disconnectFileFromTransaction(ctx, fileId, transactionId, reject);
+      await callFunction("disconnectFileFromTransaction", {
+        fileId,
+        transactionId,
+        rejectFile: reject,
+      });
     },
-    [ctx, transactionId]
+    [transactionId]
   );
 
   const unrejectFile = useCallback(
     async (fileId: string): Promise<void> => {
       if (!transactionId) throw new Error("No transaction selected");
-      await unrejectFileFromTransaction(ctx, fileId, transactionId);
+      await callFunction("unrejectFileFromTransaction", { fileId, transactionId });
     },
-    [ctx, transactionId]
+    [transactionId]
   );
 
   return {

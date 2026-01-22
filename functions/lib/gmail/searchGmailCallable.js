@@ -66,7 +66,7 @@ function buildGmailSearchQuery(params) {
     return parts.join(" ");
 }
 function extractHeader(message, name) {
-    const header = message.payload.headers.find((h) => h.name.toLowerCase() === name.toLowerCase());
+    const header = message.payload.headers?.find((h) => h.name.toLowerCase() === name.toLowerCase());
     return header?.value || null;
 }
 function parseFromHeader(from) {
@@ -82,25 +82,36 @@ function parseFromHeader(from) {
     }
     return { email: from, name: null };
 }
+/**
+ * Recursively extract attachments from message payload.
+ * Matches GmailClient logic exactly for consistent results.
+ */
 function extractAttachments(message) {
     const attachments = [];
     function processPart(part) {
+        if (!part)
+            return;
+        // Check if this part is an attachment (has filename AND attachmentId)
         if (part.filename && part.body?.attachmentId) {
+            const mimeType = part.mimeType || "application/octet-stream";
             attachments.push({
                 attachmentId: part.body.attachmentId,
+                messageId: message.id, // Required for downloading attachment later
                 filename: part.filename,
-                mimeType: part.mimeType,
+                mimeType,
                 size: part.body.size || 0,
-                isLikelyReceipt: isLikelyReceiptAttachment(part.filename, part.mimeType),
+                isLikelyReceipt: isLikelyReceiptAttachment(part.filename, mimeType),
             });
         }
+        // Recursively check child parts
         if (part.parts) {
-            part.parts.forEach(processPart);
+            for (const childPart of part.parts) {
+                processPart(childPart);
+            }
         }
     }
-    if (message.payload.parts) {
-        message.payload.parts.forEach(processPart);
-    }
+    // Start from root payload (same as GmailClient)
+    processPart(message.payload);
     return attachments;
 }
 function extractBodyText(message) {

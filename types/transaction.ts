@@ -104,8 +104,8 @@ export interface Transaction {
   /** Match confidence (0-100) */
   partnerMatchConfidence?: number | null;
 
-  /** How the partner was matched: auto (≥95%), manual, or suggestion click */
-  partnerMatchedBy?: "auto" | "manual" | "suggestion" | null;
+  /** How the partner was matched: auto (≥95%), manual, ai (chat agent), or suggestion click */
+  partnerMatchedBy?: "auto" | "manual" | "ai" | "suggestion" | null;
 
   /** Top 3 partner suggestions (stored for UI display) */
   partnerSuggestions?: Array<{
@@ -143,6 +143,20 @@ export interface Transaction {
 
   /** Partner ID when queries were generated (to invalidate on partner change) */
   aiSearchQueriesForPartnerId?: string | null;
+
+  // === Tax/VAT Information (for reporting) ===
+
+  /** VAT rate applied to this transaction (0, 10, 13, 20 for Austria) */
+  vatRate?: number | null;
+
+  /** VAT amount in cents (extracted from invoice or calculated) */
+  vatAmount?: number | null;
+
+  /** Whether this is an EU cross-border transaction (affects VAT treatment) */
+  isEuTransaction?: boolean | null;
+
+  /** Whether reverse charge applies (B2B EU services) */
+  isReverseCharge?: boolean | null;
 
   createdAt: Timestamp;
   updatedAt: Timestamp;

@@ -1,17 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, startTransition } from "react";
+import { useState, useEffect, useCallback, startTransition } from "react";
 import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
+import { callFunction } from "@/lib/firebase/callable";
 import { UserPartner, PartnerFormData } from "@/types/partner";
-import {
-  OperationsContext,
-  createUserPartner,
-  updateUserPartner,
-  deleteUserPartner,
-  assignPartnerToTransaction,
-  removePartnerFromTransaction,
-} from "@/lib/operations";
 import { useAuth } from "@/components/auth";
 
 const PARTNERS_COLLECTION = "partners";
@@ -21,14 +14,6 @@ export function usePartners() {
   const [partners, setPartners] = useState<UserPartner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-
-  const ctx: OperationsContext = useMemo(
-    () => ({
-      db,
-      userId: userId ?? "",
-    }),
-    [userId]
-  );
 
   // Realtime listener for user partners
   useEffect(() => {
@@ -72,25 +57,30 @@ export function usePartners() {
     return () => unsubscribe();
   }, [userId]);
 
+  // Mutations call Cloud Functions
   const createPartner = useCallback(
     async (data: PartnerFormData): Promise<string> => {
-      return createUserPartner(ctx, data);
+      const result = await callFunction<{ data: PartnerFormData }, { partnerId: string }>(
+        "createUserPartner",
+        { data }
+      );
+      return result.partnerId;
     },
-    [ctx]
+    []
   );
 
   const updatePartner = useCallback(
     async (partnerId: string, data: Partial<PartnerFormData>): Promise<void> => {
-      await updateUserPartner(ctx, partnerId, data);
+      await callFunction("updateUserPartner", { partnerId, data });
     },
-    [ctx]
+    []
   );
 
   const deletePartner = useCallback(
     async (partnerId: string): Promise<void> => {
-      await deleteUserPartner(ctx, partnerId);
+      await callFunction("deleteUserPartner", { partnerId });
     },
-    [ctx]
+    []
   );
 
   const getPartnerById = useCallback(
@@ -108,16 +98,22 @@ export function usePartners() {
       matchedBy: "manual" | "suggestion",
       confidence?: number
     ): Promise<void> => {
-      await assignPartnerToTransaction(ctx, transactionId, partnerId, partnerType, matchedBy, confidence);
+      await callFunction("assignPartnerToTransaction", {
+        transactionId,
+        partnerId,
+        partnerType,
+        matchedBy,
+        confidence,
+      });
     },
-    [ctx]
+    []
   );
 
   const removeFromTransaction = useCallback(
     async (transactionId: string): Promise<void> => {
-      await removePartnerFromTransaction(ctx, transactionId);
+      await callFunction("removePartnerFromTransaction", { transactionId });
     },
-    [ctx]
+    []
   );
 
   return {

@@ -55,6 +55,7 @@ const generateQueriesWithGemini_1 = require("./generateQueriesWithGemini");
 const htmlToPdf_1 = require("./htmlToPdf");
 const scoreAttachmentMatch_1 = require("./scoreAttachmentMatch");
 const searchGmailCallable_1 = require("../gmail/searchGmailCallable");
+const shared_utils_1 = require("./shared-utils");
 const db = (0, firestore_2.getFirestore)();
 const storage = (0, storage_1.getStorage)();
 // ============================================================================
@@ -116,106 +117,9 @@ function isLikelyReceiptAttachment(filename, mimeType) {
         (normalizedMime === "application/octet-stream" && filenameLower.endsWith(".pdf"));
 }
 // ============================================================================
-// Email Classification (German + English)
+// Email Classification - imported from ./shared-utils
+// classifyEmail, EmailClassification, MAIL_INVOICE_KEYWORDS, INVOICE_LINK_KEYWORDS
 // ============================================================================
-/**
- * Keywords indicating the email body IS an invoice/receipt (German + English)
- */
-const MAIL_INVOICE_KEYWORDS = [
-    // English
-    "order confirmation",
-    "payment received",
-    "payment confirmation",
-    "your purchase",
-    "order summary",
-    "receipt for your",
-    "thank you for your order",
-    "your order has been",
-    "purchase confirmation",
-    // German
-    "bestellbestätigung",
-    "zahlungsbestätigung",
-    "zahlungseingang",
-    "ihre bestellung",
-    "kaufbestätigung",
-    "vielen dank für ihre bestellung",
-    "ihre zahlung",
-    "buchungsbestätigung",
-];
-/**
- * Keywords indicating the email contains a link to download invoice (German + English)
- */
-const INVOICE_LINK_KEYWORDS = [
-    // English
-    "download your invoice",
-    "view your invoice",
-    "download invoice",
-    "view invoice",
-    "click here to download",
-    "access your invoice",
-    "get your receipt",
-    "download pdf",
-    "download receipt",
-    // German
-    "rechnung herunterladen",
-    "rechnung anzeigen",
-    "rechnung abrufen",
-    "hier klicken",
-    "pdf herunterladen",
-    "beleg herunterladen",
-    "rechnung ansehen",
-    "zum download",
-];
-/**
- * Classify an email based on subject, snippet, and attachments.
- * Used to prioritize which emails to process and how.
- */
-function classifyEmail(subject, snippet, attachments) {
-    const combined = `${subject} ${snippet}`.toLowerCase();
-    const matchedKeywords = [];
-    // Check for PDF attachments
-    const hasPdfAttachment = attachments.some((a) => a.mimeType === "application/pdf" ||
-        (a.mimeType === "application/octet-stream" &&
-            a.filename.toLowerCase().endsWith(".pdf")));
-    // Check for mail invoice keywords (email body IS the invoice)
-    let possibleMailInvoice = false;
-    for (const keyword of MAIL_INVOICE_KEYWORDS) {
-        if (combined.includes(keyword)) {
-            possibleMailInvoice = true;
-            matchedKeywords.push(keyword);
-            break;
-        }
-    }
-    // Check for invoice link keywords
-    let possibleInvoiceLink = false;
-    for (const keyword of INVOICE_LINK_KEYWORDS) {
-        if (combined.includes(keyword)) {
-            possibleInvoiceLink = true;
-            matchedKeywords.push(keyword);
-            break;
-        }
-    }
-    // Calculate confidence
-    let confidence = 0;
-    if (hasPdfAttachment)
-        confidence += 40;
-    if (possibleMailInvoice)
-        confidence += 30;
-    if (possibleInvoiceLink)
-        confidence += 25;
-    confidence = Math.min(confidence, 100);
-    // If has PDF and no other signals, still likely relevant
-    if (hasPdfAttachment && confidence < 50) {
-        confidence = 50;
-    }
-    return {
-        hasPdfAttachment,
-        possibleMailInvoice: possibleMailInvoice && !hasPdfAttachment, // Only if no PDF
-        possibleInvoiceLink,
-        confidence,
-        matchedKeywords,
-    };
-}
 /**
  * Extract ALL attachments from message (same as UI - no MIME type filtering)
  * The scoring logic decides what's relevant later
@@ -996,7 +900,7 @@ async function executeEmailAttachmentStrategy(transaction, userId) {
                             const allAttachments = extractAttachments(message);
                             // Classify email BEFORE processing attachments
                             const subject = extractHeader(message, "Subject") || "";
-                            const classification = classifyEmail(subject, message.snippet || "", allAttachments);
+                            const classification = (0, shared_utils_1.classifyEmail)(subject, message.snippet || "", allAttachments);
                             console.log(`[PrecisionSearch] Email classification for ${messageId}: ` +
                                 `hasPdf=${classification.hasPdfAttachment}, mailInvoice=${classification.possibleMailInvoice}, ` +
                                 `invoiceLink=${classification.possibleInvoiceLink}, confidence=${classification.confidence}%` +
@@ -1319,7 +1223,7 @@ async function executeEmailInvoiceStrategy(transaction, userId) {
                             const subject = extractHeader(message, "Subject") || "";
                             // Pre-classify email to prioritize likely mail invoices
                             const allAttachments = extractAttachments(message);
-                            const classification = classifyEmail(subject, message.snippet || "", allAttachments);
+                            const classification = (0, shared_utils_1.classifyEmail)(subject, message.snippet || "", allAttachments);
                             console.log(`[PrecisionSearch] email_invoice: Classification for ${messageId}: ` +
                                 `hasPdf=${classification.hasPdfAttachment}, mailInvoice=${classification.possibleMailInvoice}, ` +
                                 `invoiceLink=${classification.possibleInvoiceLink}, confidence=${classification.confidence}%`);

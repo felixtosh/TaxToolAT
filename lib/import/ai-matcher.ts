@@ -10,6 +10,7 @@ interface AIMatchingResult {
   }>;
   suggestedDateFormat: string | null;
   suggestedAmountFormat: string | null;
+  suggestedBalanceFormat: string | null;
 }
 
 /**
@@ -38,6 +39,9 @@ export async function matchColumnsWithAI(
       format = data.suggestedDateFormat;
     } else if (mapping?.targetField === "amount" && data.suggestedAmountFormat) {
       format = data.suggestedAmountFormat;
+    } else if (mapping?.targetField === "balance") {
+      // Use balance format if available, otherwise fall back to amount format
+      format = data.suggestedBalanceFormat || data.suggestedAmountFormat || undefined;
     }
 
     return {

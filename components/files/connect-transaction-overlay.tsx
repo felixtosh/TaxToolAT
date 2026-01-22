@@ -280,7 +280,7 @@ export function ConnectTransactionOverlay({
       >
         <div className="flex h-full">
           {/* Left sidebar: Search + Results */}
-          <div className="w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
+          <div className="w-[35%] min-w-[280px] max-w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
             {/* Search section */}
             <div className="p-4 border-b space-y-3">
               <div className="relative flex gap-1.5">

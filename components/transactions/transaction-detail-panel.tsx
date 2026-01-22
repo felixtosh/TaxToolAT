@@ -26,6 +26,7 @@ import {
 import { UserPartner, GlobalPartner, PartnerFormData } from "@/types/partner";
 import { usePrecisionSearch } from "@/hooks/use-precision-search";
 import { useAuth } from "@/components/auth";
+import { useChat } from "@/components/chat/chat-provider";
 
 // Constants for file upload
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -108,13 +109,20 @@ export function TransactionDetailPanel({
   // Edit history expanded state
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
 
-  // Precision search hook
+  // Chat hook for agentic search
+  const { startSearchThread } = useChat();
+
+  // Precision search hook (kept for status tracking)
   const {
     isSearching,
     strategyLabel,
     error: searchError,
-    triggerSearch,
   } = usePrecisionSearch({ transactionId: transaction.id });
+
+  // Agentic search trigger - opens chat with search prompt
+  const triggerSearch = useCallback(() => {
+    startSearchThread(transaction.id);
+  }, [startSearchThread, transaction.id]);
 
   // Operations context for file operations
   const ctx: OperationsContext = useMemo(

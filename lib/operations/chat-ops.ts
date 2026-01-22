@@ -272,6 +272,7 @@ export async function getOrCreateActiveSession(
 
 /**
  * Helper to serialize messages for the AI SDK format
+ * Includes toolInvocations for proper restoration of chat history
  */
 export function serializeMessagesForSDK(
   messages: ChatMessage[]
@@ -280,13 +281,38 @@ export function serializeMessagesForSDK(
   role: "user" | "assistant" | "system";
   content: string;
   createdAt?: Date;
+  toolInvocations?: Array<{
+    toolCallId: string;
+    toolName: string;
+    args: Record<string, unknown>;
+    state: "result";
+    result?: unknown;
+  }>;
 }> {
-  return messages.map((m) => ({
-    id: m.id,
-    role: m.role,
-    content: m.content,
-    createdAt: m.createdAt instanceof Date ? m.createdAt : m.createdAt?.toDate(),
-  }));
+  return messages.map((m) => {
+    const base = {
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      createdAt: m.createdAt instanceof Date ? m.createdAt : m.createdAt?.toDate(),
+    };
+
+    // Include tool invocations if present
+    if (m.toolCalls && m.toolCalls.length > 0) {
+      return {
+        ...base,
+        toolInvocations: m.toolCalls.map((tc) => ({
+          toolCallId: tc.id,
+          toolName: tc.name,
+          args: tc.args,
+          state: "result" as const,
+          result: tc.result ?? m.toolResults?.find((tr) => tr.toolCallId === tc.id)?.result,
+        })),
+      };
+    }
+
+    return base;
+  });
 }
 
 /**

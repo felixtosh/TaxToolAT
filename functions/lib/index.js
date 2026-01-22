@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.migrateUserData = exports.markInviteUsed = exports.validateRegistration = exports.listAdmins = exports.beforeUserCreatedHandler = exports.setAdminClaim = exports.resetInboundDailyLimits = exports.testInboundEmail = exports.receiveInboundEmail = exports.scoreAttachmentMatchCallable = exports.generateSearchQueriesCallable = exports.onGmailSyncComplete = exports.onPrecisionSearchQueueCreated = exports.processPrecisionSearchQueue = exports.searchGmailCallable = exports.onTransactionsImported = exports.onGmailConnected = exports.scheduledGmailSync = exports.onSyncQueueCreated = exports.processGmailSyncQueue = exports.lookupByVatId = exports.lookupCompany = exports.generateFileSearchQuery = exports.processOrphanedFiles = exports.matchFilesForPartner = exports.findTransactionMatchesForFile = exports.matchFileTransactions = exports.matchFilePartner = exports.retryFileExtraction = exports.extractFileDataOnUndelete = exports.extractFileData = exports.sendReauthReminders = exports.triggerGoCardlessSync = exports.scheduledGoCardlessSync = exports.matchColumns = exports.generatePromotionCandidates = exports.applyPatternsToTransactions = exports.triggerLearningNow = exports.processLearningQueue = exports.queuePartnerForLearning = exports.onUserDataUpdate = exports.onTransactionPartnerChange = exports.onCategoryUpdate = exports.onCategoryCreate = exports.matchCategories = exports.searchExternalPartners = exports.learnPartnerPatterns = exports.matchPartners = exports.onPartnerUpdate = exports.onPartnerCreate = void 0;
-exports.updateTotpStatus = exports.deletePasskey = exports.verifyPasskeyAuth = exports.generatePasskeyAuthOptions = exports.verifyPasskeyRegistration = exports.generatePasskeyRegistrationOptions = exports.adminResetMfa = exports.getMfaStatus = exports.verifyBackupCode = exports.generateBackupCodes = exports.checkMigrationStatus = void 0;
+exports.deleteSource = exports.updateSource = exports.createSource = exports.removePartnerFromTransaction = exports.assignPartnerToTransaction = exports.deleteUserPartner = exports.updateUserPartner = exports.createUserPartner = exports.createImportRecord = exports.bulkCreateTransactions = exports.unrejectFileFromTransaction = exports.dismissTransactionSuggestion = exports.disconnectFileFromTransaction = exports.connectFileToTransaction = exports.unmarkFileAsNotInvoice = exports.markFileAsNotInvoice = exports.restoreFile = exports.deleteFile = exports.updateFile = exports.createFile = exports.deleteTransactionsBySource = exports.bulkUpdateTransactions = exports.updateTransaction = exports.updateTotpStatus = exports.deletePasskey = exports.verifyPasskeyAuth = exports.generatePasskeyAuthOptions = exports.verifyPasskeyRegistration = exports.generatePasskeyRegistrationOptions = exports.adminResetMfa = exports.getMfaStatus = exports.verifyBackupCode = exports.generateBackupCodes = exports.checkMigrationStatus = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize Firebase Admin
 (0, app_1.initializeApp)();
@@ -123,4 +123,40 @@ Object.defineProperty(exports, "generatePasskeyAuthOptions", { enumerable: true,
 Object.defineProperty(exports, "verifyPasskeyAuth", { enumerable: true, get: function () { return mfaFunctions_1.verifyPasskeyAuth; } });
 Object.defineProperty(exports, "deletePasskey", { enumerable: true, get: function () { return mfaFunctions_1.deletePasskey; } });
 Object.defineProperty(exports, "updateTotpStatus", { enumerable: true, get: function () { return mfaFunctions_1.updateTotpStatus; } });
+// ============================================================================
+// DATA OPERATIONS - All mutations go through Cloud Functions
+// ============================================================================
+// Transaction operations
+var transactions_1 = require("./transactions");
+Object.defineProperty(exports, "updateTransaction", { enumerable: true, get: function () { return transactions_1.updateTransactionCallable; } });
+Object.defineProperty(exports, "bulkUpdateTransactions", { enumerable: true, get: function () { return transactions_1.bulkUpdateTransactionsCallable; } });
+Object.defineProperty(exports, "deleteTransactionsBySource", { enumerable: true, get: function () { return transactions_1.deleteTransactionsBySourceCallable; } });
+// File operations
+var files_1 = require("./files");
+Object.defineProperty(exports, "createFile", { enumerable: true, get: function () { return files_1.createFileCallable; } });
+Object.defineProperty(exports, "updateFile", { enumerable: true, get: function () { return files_1.updateFileCallable; } });
+Object.defineProperty(exports, "deleteFile", { enumerable: true, get: function () { return files_1.deleteFileCallable; } });
+Object.defineProperty(exports, "restoreFile", { enumerable: true, get: function () { return files_1.restoreFileCallable; } });
+Object.defineProperty(exports, "markFileAsNotInvoice", { enumerable: true, get: function () { return files_1.markFileAsNotInvoiceCallable; } });
+Object.defineProperty(exports, "unmarkFileAsNotInvoice", { enumerable: true, get: function () { return files_1.unmarkFileAsNotInvoiceCallable; } });
+Object.defineProperty(exports, "connectFileToTransaction", { enumerable: true, get: function () { return files_1.connectFileToTransactionCallable; } });
+Object.defineProperty(exports, "disconnectFileFromTransaction", { enumerable: true, get: function () { return files_1.disconnectFileFromTransactionCallable; } });
+Object.defineProperty(exports, "dismissTransactionSuggestion", { enumerable: true, get: function () { return files_1.dismissTransactionSuggestionCallable; } });
+Object.defineProperty(exports, "unrejectFileFromTransaction", { enumerable: true, get: function () { return files_1.unrejectFileFromTransactionCallable; } });
+// Import operations
+var imports_1 = require("./imports");
+Object.defineProperty(exports, "bulkCreateTransactions", { enumerable: true, get: function () { return imports_1.bulkCreateTransactionsCallable; } });
+Object.defineProperty(exports, "createImportRecord", { enumerable: true, get: function () { return imports_1.createImportRecordCallable; } });
+// Partner operations
+var partners_1 = require("./partners");
+Object.defineProperty(exports, "createUserPartner", { enumerable: true, get: function () { return partners_1.createUserPartnerCallable; } });
+Object.defineProperty(exports, "updateUserPartner", { enumerable: true, get: function () { return partners_1.updateUserPartnerCallable; } });
+Object.defineProperty(exports, "deleteUserPartner", { enumerable: true, get: function () { return partners_1.deleteUserPartnerCallable; } });
+Object.defineProperty(exports, "assignPartnerToTransaction", { enumerable: true, get: function () { return partners_1.assignPartnerToTransactionCallable; } });
+Object.defineProperty(exports, "removePartnerFromTransaction", { enumerable: true, get: function () { return partners_1.removePartnerFromTransactionCallable; } });
+// Source operations
+var sources_1 = require("./sources");
+Object.defineProperty(exports, "createSource", { enumerable: true, get: function () { return sources_1.createSourceCallable; } });
+Object.defineProperty(exports, "updateSource", { enumerable: true, get: function () { return sources_1.updateSourceCallable; } });
+Object.defineProperty(exports, "deleteSource", { enumerable: true, get: function () { return sources_1.deleteSourceCallable; } });
 //# sourceMappingURL=index.js.map

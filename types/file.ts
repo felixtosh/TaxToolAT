@@ -297,7 +297,7 @@ export interface TaxFile {
   partnerType?: "user" | "global" | null;
 
   /** How the partner was matched */
-  partnerMatchedBy?: "manual" | "suggestion" | "auto" | null;
+  partnerMatchedBy?: "manual" | "suggestion" | "auto" | "ai" | null;
 
   /** Confidence score for partner match (0-100) */
   partnerMatchConfidence?: number | null;

@@ -27,10 +27,30 @@ describe("createLocalPartnerFromGlobal", () => {
       doc: vi.fn(),
     };
 
+    // Mock transactions collection for replaceGlobalPartnerReferences
+    const transactionsCollection = {
+      where: vi.fn().mockReturnThis(),
+      get: vi.fn().mockResolvedValue({
+        empty: true,
+        docs: [],
+      }),
+    };
+
+    // Mock files collection for replaceGlobalPartnerReferences
+    const filesCollection = {
+      where: vi.fn().mockReturnThis(),
+      get: vi.fn().mockResolvedValue({
+        empty: true,
+        docs: [],
+      }),
+    };
+
     const db = {
       collection: vi.fn((name: string) => {
         if (name === "partners") return partnersCollection;
         if (name === "globalPartners") return globalCollection;
+        if (name === "transactions") return transactionsCollection;
+        if (name === "files") return filesCollection;
         throw new Error(`Unexpected collection: ${name}`);
       }),
     };
@@ -76,10 +96,30 @@ describe("createLocalPartnerFromGlobal", () => {
       }),
     };
 
+    // Mock transactions collection for replaceGlobalPartnerReferences
+    const transactionsCollection = {
+      where: vi.fn().mockReturnThis(),
+      get: vi.fn().mockResolvedValue({
+        empty: true,
+        docs: [],
+      }),
+    };
+
+    // Mock files collection for replaceGlobalPartnerReferences
+    const filesCollection = {
+      where: vi.fn().mockReturnThis(),
+      get: vi.fn().mockResolvedValue({
+        empty: true,
+        docs: [],
+      }),
+    };
+
     const db = {
       collection: vi.fn((name: string) => {
         if (name === "partners") return partnersCollection;
         if (name === "globalPartners") return globalCollection;
+        if (name === "transactions") return transactionsCollection;
+        if (name === "files") return filesCollection;
         throw new Error(`Unexpected collection: ${name}`);
       }),
     };

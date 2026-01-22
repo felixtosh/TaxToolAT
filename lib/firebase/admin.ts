@@ -23,15 +23,23 @@ function shouldUseEmulators(): boolean {
   );
 }
 
+// IMPORTANT: Set emulator env vars at module load time, BEFORE any Firebase operations
+// The Auth SDK reads these env vars on first use and caches the connection
+if (shouldUseEmulators()) {
+  process.env.FIRESTORE_EMULATOR_HOST = "localhost:8080";
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST = "localhost:9199";
+  process.env.FIREBASE_AUTH_EMULATOR_HOST = "localhost:9099";
+}
+
 /**
  * Get the Firebase Admin app (singleton)
  */
 export function getAdminApp(): App {
-  // Set emulator hosts FIRST, before any app initialization or reuse
-  // This ensures the env vars are set even if we reuse an existing app
+  // Env vars are set at module load time (above), but reinforce here for safety
   if (shouldUseEmulators()) {
     process.env.FIRESTORE_EMULATOR_HOST = "localhost:8080";
     process.env.FIREBASE_STORAGE_EMULATOR_HOST = "localhost:9199";
+    process.env.FIREBASE_AUTH_EMULATOR_HOST = "localhost:9099";
   }
 
   if (_adminApp) return _adminApp;

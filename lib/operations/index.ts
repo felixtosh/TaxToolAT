@@ -97,3 +97,9 @@ export * from "./onboarding-ops";
 
 // MFA operations (for multi-factor authentication)
 export * from "./mfa-ops";
+
+// Agentic search operations (for AI-driven receipt search)
+export * from "./agentic-search-ops";
+
+// Report operations (for UVA and tax reporting)
+export * from "./report-ops";

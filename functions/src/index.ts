@@ -106,3 +106,50 @@ export {
   deletePasskey,
   updateTotpStatus,
 } from "./auth/mfaFunctions";
+
+// ============================================================================
+// DATA OPERATIONS - All mutations go through Cloud Functions
+// ============================================================================
+
+// Transaction operations
+export {
+  updateTransactionCallable as updateTransaction,
+  bulkUpdateTransactionsCallable as bulkUpdateTransactions,
+  deleteTransactionsBySourceCallable as deleteTransactionsBySource,
+} from "./transactions";
+
+// File operations
+export {
+  createFileCallable as createFile,
+  updateFileCallable as updateFile,
+  deleteFileCallable as deleteFile,
+  restoreFileCallable as restoreFile,
+  markFileAsNotInvoiceCallable as markFileAsNotInvoice,
+  unmarkFileAsNotInvoiceCallable as unmarkFileAsNotInvoice,
+  connectFileToTransactionCallable as connectFileToTransaction,
+  disconnectFileFromTransactionCallable as disconnectFileFromTransaction,
+  dismissTransactionSuggestionCallable as dismissTransactionSuggestion,
+  unrejectFileFromTransactionCallable as unrejectFileFromTransaction,
+} from "./files";
+
+// Import operations
+export {
+  bulkCreateTransactionsCallable as bulkCreateTransactions,
+  createImportRecordCallable as createImportRecord,
+} from "./imports";
+
+// Partner operations
+export {
+  createUserPartnerCallable as createUserPartner,
+  updateUserPartnerCallable as updateUserPartner,
+  deleteUserPartnerCallable as deleteUserPartner,
+  assignPartnerToTransactionCallable as assignPartnerToTransaction,
+  removePartnerFromTransactionCallable as removePartnerFromTransaction,
+} from "./partners";
+
+// Source operations
+export {
+  createSourceCallable as createSource,
+  updateSourceCallable as updateSource,
+  deleteSourceCallable as deleteSource,
+} from "./sources";

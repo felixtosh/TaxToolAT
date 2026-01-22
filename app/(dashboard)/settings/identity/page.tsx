@@ -9,8 +9,21 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserData } from "@/hooks/use-user-data";
 import { useSources } from "@/hooks/use-sources";
-import { UserDataFormData } from "@/types/user-data";
+import { UserDataFormData, TaxCountryCode } from "@/types/user-data";
 import { useAuth } from "@/components/auth";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+const TAX_COUNTRIES: { value: TaxCountryCode; label: string; flag: string }[] = [
+  { value: "AT", label: "Austria", flag: "🇦🇹" },
+  { value: "DE", label: "Germany", flag: "🇩🇪" },
+  { value: "CH", label: "Switzerland", flag: "🇨🇭" },
+];
 
 export default function IdentityPage() {
   const { user } = useAuth();
@@ -19,6 +32,7 @@ export default function IdentityPage() {
 
   const [name, setName] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [country, setCountry] = useState<TaxCountryCode>("AT");
   const [aliases, setAliases] = useState<string[]>([]);
   const [newAlias, setNewAlias] = useState("");
   const [vatIds, setVatIds] = useState<string[]>([]);
@@ -49,6 +63,7 @@ export default function IdentityPage() {
     if (userData) {
       setName(userData.name || "");
       setCompanyName(userData.companyName || "");
+      setCountry(userData.country || "AT");
       setAliases(userData.aliases || []);
       setVatIds(userData.vatIds || []);
       setIbans(userData.ibans || []);
@@ -124,6 +139,7 @@ export default function IdentityPage() {
     const data: UserDataFormData = {
       name,
       companyName,
+      country,
       aliases,
       vatIds,
       ibans,
@@ -138,6 +154,7 @@ export default function IdentityPage() {
     !userData ||
     name !== (userData?.name || "") ||
     companyName !== (userData?.companyName || "") ||
+    country !== (userData?.country || "AT") ||
     JSON.stringify(aliases) !== JSON.stringify(userData?.aliases || []) ||
     JSON.stringify(vatIds) !== JSON.stringify(userData?.vatIds || []) ||
     JSON.stringify(ibans) !== JSON.stringify(userData?.ibans || []) ||
@@ -180,6 +197,29 @@ export default function IdentityPage() {
                 onChange={(e) => setCompanyName(e.target.value)}
               />
             </div>
+          </div>
+
+          {/* Tax Country */}
+          <div className="space-y-2 max-w-xs">
+            <Label htmlFor="country">Tax Residence Country</Label>
+            <p className="text-sm text-muted-foreground">
+              Determines tax forms and reporting formats
+            </p>
+            <Select value={country} onValueChange={(v) => setCountry(v as TaxCountryCode)}>
+              <SelectTrigger id="country">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TAX_COUNTRIES.map((c) => (
+                  <SelectItem key={c.value} value={c.value}>
+                    <span className="flex items-center gap-2">
+                      <span>{c.flag}</span>
+                      <span>{c.label}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Aliases */}

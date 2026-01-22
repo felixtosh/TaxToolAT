@@ -137,6 +137,7 @@ export async function getAIUsageSummary(
       columnMatching: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
       extraction: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
       classification: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
+      domainValidation: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
     },
     byModel: {},
   };

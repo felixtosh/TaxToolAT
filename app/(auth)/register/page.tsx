@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/components/auth";
@@ -16,7 +17,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { FileSpreadsheet, AlertCircle, Loader2, CheckCircle } from "lucide-react";
+import { AlertCircle, Loader2, CheckCircle } from "lucide-react";
+import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 
 export default function RegisterPage() {
   const [email, setEmail] = useState("");
@@ -24,6 +26,13 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isLogoJumping, setIsLogoJumping] = useState(false);
+
+  const handleLogoClick = () => {
+    if (isLogoJumping) return;
+    setIsLogoJumping(true);
+    setTimeout(() => setIsLogoJumping(false), 600);
+  };
   const { signUp, signInWithGoogle } = useAuth();
   const router = useRouter();
 
@@ -77,10 +86,17 @@ export default function RegisterPage() {
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1 text-center">
         <div className="flex justify-center mb-4">
-          <div className="flex items-center gap-2">
-            <FileSpreadsheet className="h-8 w-8 text-primary" />
-            <span className="font-bold text-2xl">FiBuKI</span>
-          </div>
+          <button
+            type="button"
+            onClick={handleLogoClick}
+            className={cn(
+              "flex items-center gap-2 logo-wrapper",
+              isLogoJumping && "is-jumping"
+            )}
+          >
+            <FibukiMascot size={32} isJumping={isLogoJumping} />
+            <span className="font-bold text-2xl mascot-text">FiBuKI</span>
+          </button>
         </div>
         <CardTitle className="text-2xl">Create an account</CardTitle>
         <CardDescription>

@@ -1,0 +1,94 @@
+import { Timestamp } from "firebase/firestore";
+
+/**
+ * Record of a Cloud Function invocation for usage tracking.
+ * Stored in the `functionCalls` Firestore collection.
+ */
+export interface FunctionCallRecord {
+  id: string;
+  functionName: CloudFunctionName;
+  userId: string;
+  status: "success" | "error";
+  durationMs: number;
+  errorCode?: string;
+  errorMessage?: string;
+  createdAt: Timestamp;
+}
+
+/**
+ * All available Cloud Function names for type-safe callable invocations.
+ * Add new function names here when creating new callables.
+ */
+export type CloudFunctionName =
+  // Transaction operations
+  | "updateTransaction"
+  | "bulkUpdateTransactions"
+  | "deleteTransactionsBySource"
+  // File operations
+  | "createFile"
+  | "updateFile"
+  | "deleteFile"
+  | "restoreFile"
+  | "markFileAsNotInvoice"
+  | "unmarkFileAsNotInvoice"
+  | "connectFileToTransaction"
+  | "disconnectFileFromTransaction"
+  | "dismissTransactionSuggestion"
+  | "unrejectFileFromTransaction"
+  // Partner operations
+  | "createUserPartner"
+  | "updateUserPartner"
+  | "deleteUserPartner"
+  | "assignPartnerToTransaction"
+  | "removePartnerFromTransaction"
+  // Source operations
+  | "createSource"
+  | "updateSource"
+  | "deleteSource"
+  // Import operations
+  | "bulkCreateTransactions"
+  | "createImportRecord"
+  // Existing functions (already in codebase)
+  | "matchColumns"
+  | "matchPartners"
+  | "learnPartnerPatterns"
+  | "searchExternalPartners"
+  | "matchCategories"
+  | "searchGmailCallable"
+  | "generateSearchQueriesCallable"
+  | "scoreAttachmentMatchCallable"
+  | "findTransactionMatchesForFile"
+  | "matchFilesForPartner"
+  | "lookupCompany"
+  | "lookupByVatId"
+  | "retryFileExtraction";
+
+/**
+ * Summary statistics for function calls (for dashboards).
+ */
+export interface FunctionCallSummary {
+  totalCalls: number;
+  successCount: number;
+  errorCount: number;
+  avgDurationMs: number;
+  byFunction: Record<
+    string,
+    {
+      calls: number;
+      successCount: number;
+      errorCount: number;
+      avgDurationMs: number;
+    }
+  >;
+}
+
+/**
+ * Daily statistics for function calls.
+ */
+export interface FunctionCallDailyStats {
+  date: string; // ISO date string (YYYY-MM-DD)
+  calls: number;
+  successCount: number;
+  errorCount: number;
+  avgDurationMs: number;
+}

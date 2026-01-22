@@ -82,6 +82,7 @@ export interface UIControlActions {
   scrollToTransaction: (transactionId: string) => void;
   highlightTransaction: (transactionId: string) => void;
   showNotification: (message: string, type: "success" | "error" | "info") => void;
+  openFile: (fileId: string) => void;
 }
 
 /**
@@ -94,6 +95,7 @@ export interface ChatContextValue {
   isStreaming: boolean;
   currentSession: ChatSession | null;
   sessions: ChatSession[];
+  currentSessionId: string | null;
   pendingConfirmations: ToolCall[];
 
   // Actions
@@ -121,7 +123,14 @@ export interface ChatContextValue {
   markAllNotificationsRead: () => Promise<void>;
   startConversationFromNotification: (notification: AutoActionNotification) => void;
 
+  // Agentic search
+  startSearchThread: (transactionId: string) => void;
+
   // Sidebar mode (chat vs onboarding)
   sidebarMode: SidebarMode;
   setSidebarMode: (mode: SidebarMode) => void;
+
+  // History overlay
+  isHistoryOpen: boolean;
+  setIsHistoryOpen: (open: boolean) => void;
 }

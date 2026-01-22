@@ -81,6 +81,7 @@ export function formatFunctionName(fn: AIFunction): string {
     columnMatching: "Column Matching",
     extraction: "Extraction",
     classification: "Classification",
+    domainValidation: "Domain Validation",
   };
   return names[fn] || fn;
 }

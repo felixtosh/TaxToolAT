@@ -14,14 +14,15 @@
  * Limitation:
  * - Cannot classify image-only PDFs (no extractable text)
  * - May miss scanned documents without OCR
+ *
+ * PDF Parsing: Uses pdf-parse v2 (https://github.com/mehmet-kozan/pdf-parse)
+ * - v2 API: `new PDFParse({ data: buffer })` then `parser.getText({ first: N })`
+ * - This is the server-side PDF text extraction library used across the project
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.classifyDocumentByText = classifyDocumentByText;
 exports.shouldUseTextClassification = shouldUseTextClassification;
-const pdf_parse_1 = __importDefault(require("pdf-parse"));
+const pdf_parse_1 = require("pdf-parse");
 // === Invoice Indicator Patterns ===
 // Currency symbols and codes
 const CURRENCY_PATTERNS = [
@@ -116,15 +117,14 @@ function hasMatch(text, patterns) {
     return patterns.some((p) => p.test(text));
 }
 /**
- * Extract text from a PDF buffer using pdf-parse
+ * Extract text from a PDF buffer using pdf-parse v2
  * Returns null if text extraction fails or yields no text
  */
 async function extractTextFromPdf(buffer) {
     try {
-        const data = await (0, pdf_parse_1.default)(buffer, {
-            max: 3, // First 3 pages only for speed
-        });
-        const text = data.text?.trim();
+        const parser = new pdf_parse_1.PDFParse({ data: buffer });
+        const result = await parser.getText({ first: 3 }); // First 3 pages only for speed
+        const text = result.text?.trim();
         return text && text.length > 50 ? text : null;
     }
     catch (error) {

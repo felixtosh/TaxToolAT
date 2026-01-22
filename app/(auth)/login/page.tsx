@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/components/auth";
@@ -16,7 +17,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { FileSpreadsheet, AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
+import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 import { MfaChallengeDialog } from "@/components/mfa";
 import { useMfaChallenge } from "@/hooks/use-mfa-challenge";
 import { usePasskeys } from "@/hooks/use-passkeys";
@@ -26,6 +28,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isLogoJumping, setIsLogoJumping] = useState(false);
+
+  const handleLogoClick = () => {
+    if (isLogoJumping) return;
+    setIsLogoJumping(true);
+    setTimeout(() => setIsLogoJumping(false), 600);
+  };
   const { signIn, signInWithGoogle, mfaRequired, mfaResolver, clearMfaChallenge } = useAuth();
   const { handleMfaRequired } = useMfaChallenge();
   const { hasPasskeys } = usePasskeys();
@@ -80,10 +89,17 @@ export default function LoginPage() {
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1 text-center">
         <div className="flex justify-center mb-4">
-          <div className="flex items-center gap-2">
-            <FileSpreadsheet className="h-8 w-8 text-primary" />
-            <span className="font-bold text-2xl">FiBuKI</span>
-          </div>
+          <button
+            type="button"
+            onClick={handleLogoClick}
+            className={cn(
+              "flex items-center gap-2 logo-wrapper",
+              isLogoJumping && "is-jumping"
+            )}
+          >
+            <FibukiMascot size={32} isJumping={isLogoJumping} />
+            <span className="font-bold text-2xl mascot-text">FiBuKI</span>
+          </button>
         </div>
         <CardTitle className="text-2xl">Sign in</CardTitle>
         <CardDescription>

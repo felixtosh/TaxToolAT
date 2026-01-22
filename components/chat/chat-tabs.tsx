@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, MessageSquare, X, Plus } from "lucide-react";
+import { Bell, MessageSquare, X, Plus, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +11,7 @@ interface ChatTabsProps {
   onTabChange: (tab: ChatTab) => void;
   onNewChat: () => void;
   onClose: () => void;
+  onOpenHistory?: () => void;
 }
 
 export function ChatTabs({
@@ -18,6 +19,7 @@ export function ChatTabs({
   onTabChange,
   onNewChat,
   onClose,
+  onOpenHistory,
 }: ChatTabsProps) {
   return (
     <div className="flex items-center justify-between border-b px-2 h-14">
@@ -52,15 +54,26 @@ export function ChatTabs({
       {/* Actions */}
       <div className="flex items-center gap-1">
         {activeTab === "chat" && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onNewChat}
-            title="New Chat"
-            className="h-8 w-8"
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onOpenHistory}
+              title="Chat History"
+              className="h-8 w-8"
+            >
+              <History className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onNewChat}
+              title="New Chat"
+              className="h-8 w-8"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </>
         )}
         <Button
           variant="ghost"

@@ -5,12 +5,22 @@ import { Timestamp } from "firebase/firestore";
  * Used to ensure the user doesn't get accidentally marked as the partner for an invoice.
  * Collection: /users/{userId}/settings/userData
  */
+/** ISO 3166-1 alpha-2 country codes supported for tax reporting */
+export type TaxCountryCode = "AT" | "DE" | "CH";
+
 export interface UserData {
   /** User's full name (e.g., "Felix Häusler") */
   name: string;
 
   /** User's company name (e.g., "Infinity Vertigo GmbH") */
   companyName: string;
+
+  /**
+   * User's tax residence country (ISO 3166-1 alpha-2).
+   * Determines which tax forms and reporting formats are available.
+   * Default: "AT" (Austria)
+   */
+  country?: TaxCountryCode;
 
   /**
    * Aliases to match against (e.g., "Haeusler" for umlauts).
@@ -57,6 +67,7 @@ export interface UserData {
 export interface UserDataFormData {
   name: string;
   companyName: string;
+  country?: TaxCountryCode;
   aliases: string[];
   vatIds: string[];
   ibans: string[];

@@ -162,29 +162,48 @@ CRITICAL RULES:
 1. Each target field can ONLY be assigned to ONE column (no duplicates!)
 2. If multiple columns could match a field, pick the BEST one and leave others as null
 3. Required fields (date, amount, name) must be prioritized
+4. "Total Amount" ALWAYS beats "Amount" - if both exist, map "Total Amount" to amount field
 
-FIELD-SPECIFIC RULES:
+FIELD-SPECIFIC RULES (CONTENT MATTERS MORE THAN COLUMN NAME!):
 
-**Amount field:**
-- If there are columns like "Total Amount" AND "Amount", prefer "Total Amount" or "Gesamtbetrag"
-- Columns named "Subtotal", "Net", or partial amounts should NOT be mapped to amount
+**Reference/Transaction ID field (check this FIRST):**
+- If a column named "ID" or similar contains UUIDs like "676f61e5-37a3-ae99-beb4-..." → map to "reference"
+- Any column with unique identifiers (UUIDs, transaction IDs, alphanumeric codes) → "reference"
+- This is the BEST field for deduplication
 
-**Partner/Counterparty field:**
-- Look for the column with CLEAN company/person names (e.g., "Amazon EU S.a.r.l.", "Max Mustermann")
-- Prefer columns with structured names over verbose description/memo text
-- If a column has THE SAME VALUE in every row, it's likely the ACCOUNT OWNER, not the counterparty - do NOT map it to partner!
-- Common counterparty column names: "Empfänger", "Auftraggeber", "Zahlungspflichtiger", "Begünstigter", "Payee", "Merchant"
+**Partner/Counterparty field (LOOK AT VALUES, NOT HEADER!):**
+- If values look like company/merchant names → map to "partner", REGARDLESS of column name
+- Company indicators: GmbH, AG, Inc., Ltd., S.a.r.l., Corp., LLC, names like "Amazon", "Netflix", "Billa", etc.
+- EXAMPLE: Column "Description" with values "Arac Gmbh", "Billa Dankt", "OUSTER, INC." → map to "partner" (NOT "name")!
+- If ALL values in column are identical, it's the account owner - do NOT map to partner
 
-**Name/Description field:**
-- This is for transaction details/memo text, NOT company names
-- Look for verbose text like "SEPA Überweisung an..." or payment references
+**Name/Description field (for booking text, NOT company names):**
+- Use for verbose transaction details, payment references, invoice info
+- EXAMPLE: Column "Reference" with values "/ROC/2024122400589///URI/Invoice R-..." → map to "name"
+- Look for: SEPA references, invoice numbers, payment descriptions, booking text
 
-Consider:
-- The column header name (may be in German, English, or other languages)
-- The format and content of sample values
-- Choose the most likely match when multiple columns could fit a field
+**Amount field (CRITICAL PRIORITY!):**
+- If BOTH "Total Amount"/"Total amount" AND "Amount" columns exist, you MUST map "Total Amount" to amount and leave "Amount" unmapped (null)
+- "Total Amount" / "Gesamtbetrag" / "Total" ALWAYS wins over plain "Amount" / "Betrag"
+- The total includes fees and is the actual bank movement amount
+- NEVER map "Subtotal", "Net", "Fee", or "Amount" when "Total Amount" is available
 
-Also detect the date and amount formats from the sample values.
+CRITICAL: Analyze the ACTUAL SAMPLE VALUES to decide mappings. Column headers can be misleading!
+- A "Description" column with company names → "partner"
+- A "Reference" column with booking text → "name"
+- An "ID" column with UUIDs → "reference"
+- "Total Amount" column → "amount" (ignore plain "Amount" column if both exist)
+
+## Amount Format Detection (IMPORTANT)
+
+Analyze the sample values to determine the correct amount format:
+
+- **"simple"**: Use when numbers have NO thousands separator, just a decimal point: 1234.56, 4480.00, -795.06
+- **"us"**: Use when numbers HAVE comma as thousands separator: 1,234.56, 10,000.00
+- **"de"**: Use when numbers use German format (dot for thousands, comma for decimal): 1.234,56
+- **"simple-comma"**: Use when numbers have comma decimal but no thousands separator: 1234,56
+
+CRITICAL: If numbers like "4480.00" or "-121.52" have NO comma/thousands separator, use "simple", NOT "us"!
 
 Valid date format IDs: ${DATE_FORMATS.join(", ")}
 Valid amount format IDs: ${AMOUNT_FORMATS.join(", ")}
@@ -196,7 +215,8 @@ Respond ONLY with valid JSON in this exact format (no markdown, no explanation):
     {"csvColumn": "column name", "targetField": "field key or null", "confidence": 0.0-1.0}
   ],
   "suggestedDateFormat": "format id or null",
-  "suggestedAmountFormat": "format id or null"
+  "suggestedAmountFormat": "format id or null",
+  "suggestedBalanceFormat": "format id or null if balance field detected"
 }`;
 }
 // ============================================================================
@@ -292,6 +312,13 @@ exports.matchColumns = (0, https_1.onCall)({
         }
         if (result.suggestedAmountFormat && !AMOUNT_FORMATS.includes(result.suggestedAmountFormat)) {
             result.suggestedAmountFormat = "de"; // Default to German
+        }
+        // For balance format, default to same as amount format if not specified
+        if (!result.suggestedBalanceFormat) {
+            result.suggestedBalanceFormat = result.suggestedAmountFormat;
+        }
+        else if (!AMOUNT_FORMATS.includes(result.suggestedBalanceFormat)) {
+            result.suggestedBalanceFormat = result.suggestedAmountFormat || "de";
         }
         console.log(`Successfully matched columns:`, result.mappings.filter((m) => m.targetField).length);
         return result;

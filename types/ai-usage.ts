@@ -7,7 +7,8 @@ export type AIFunction =
   | "patternLearning"
   | "columnMatching"
   | "extraction"
-  | "classification";
+  | "classification"
+  | "domainValidation";
 
 export interface AIUsageRecord {
   id: string;
@@ -59,7 +60,10 @@ export interface AIUsageDailyStats {
   cost: number;
 }
 
-// Pricing per million tokens (USD)
+// User billing rate (for monetization display) - $0.35 per 100k tokens
+export const USER_TOKEN_RATE_PER_100K = 0.35;
+
+// Pricing per million tokens (USD) - internal costs by model
 export const AI_MODEL_PRICING: Record<string, { input: number; output: number }> = {
   // Claude models
   "claude-sonnet-4-20250514": { input: 3.0, output: 15.0 },

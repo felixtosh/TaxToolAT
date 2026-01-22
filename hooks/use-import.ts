@@ -1,15 +1,10 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
-import {
-  collection,
-  writeBatch,
-  doc,
-  setDoc,
-  Timestamp,
-} from "firebase/firestore";
-import { db, functions } from "@/lib/firebase/config";
+import { useState, useCallback } from "react";
+import { Timestamp } from "firebase/firestore";
+import { functions } from "@/lib/firebase/config";
 import { httpsCallable } from "firebase/functions";
+import { callFunction } from "@/lib/firebase/callable";
 import { Transaction } from "@/types/transaction";
 import { FieldMapping, CSVAnalysis, AmountFormatConfig } from "@/types/import";
 import { TransactionSource } from "@/types/source";
@@ -21,8 +16,9 @@ import {
 } from "@/lib/import/deduplication";
 import { autoMatchColumns, validateMappings } from "@/lib/import/field-matcher";
 import { parseCSV } from "@/lib/import/csv-parser";
-import { createNotification, uploadImportCSV, OperationsContext } from "@/lib/operations";
+import { uploadImportCSV } from "@/lib/operations";
 import { useAuth } from "@/components/auth";
+
 const BATCH_SIZE = 500; // Firestore batch limit
 
 export type ImportStep = "upload" | "mapping" | "preview" | "importing" | "complete";
@@ -61,15 +57,6 @@ export function useImport(source: TransactionSource | null) {
     error: null,
     csvContent: null,
   });
-
-  // Operations context for notifications
-  const ctx: OperationsContext = useMemo(
-    () => ({
-      db,
-      userId: userId ?? "",
-    }),
-    [userId]
-  );
 
   // Returns true when file is ready to proceed to mapping step
   const handleFileAnalyzed = useCallback(
@@ -187,7 +174,7 @@ export function useImport(source: TransactionSource | null) {
   }, []);
 
   const executeImport = useCallback(async () => {
-    if (!source || !state.analysis || !state.file) return;
+    if (!source || !state.analysis || !state.file || !userId) return;
 
     setState((s) => ({ ...s, transientStep: "importing", progress: 0, error: null }));
 
@@ -341,7 +328,7 @@ export function useImport(source: TransactionSource | null) {
           partnerSuggestions: [],
           importJobId,
           csvRowIndex: i, // Row index for re-mapping feature
-          userId: userId ?? "",
+          userId: userId,
           createdAt: now,
           updatedAt: now,
         });
@@ -369,21 +356,27 @@ export function useImport(source: TransactionSource | null) {
     );
     const skippedCount = transactions.length - newTransactions.length;
 
-    // Batch write transactions, capturing IDs for partner matching
+    // Batch write transactions using Cloud Function
     let importedCount = 0;
     const transactionIds: string[] = [];
 
     for (let i = 0; i < newTransactions.length; i += BATCH_SIZE) {
-      const batch = writeBatch(db);
       const chunk = newTransactions.slice(i, i + BATCH_SIZE);
 
-      for (const transaction of chunk) {
-        const docRef = doc(collection(db, "transactions"));
-        transactionIds.push(docRef.id);
-        batch.set(docRef, transaction);
-      }
+      // Convert Timestamps to ISO strings for Cloud Function
+      const transactionsForCF = chunk.map((t) => ({
+        ...t,
+        date: (t.date as Timestamp).toDate().toISOString(),
+        createdAt: (t.createdAt as Timestamp).toDate().toISOString(),
+        updatedAt: (t.updatedAt as Timestamp).toDate().toISOString(),
+      }));
 
-      await batch.commit();
+      const result = await callFunction<
+        { transactions: typeof transactionsForCF; sourceId: string },
+        { transactionIds: string[] }
+      >("bulkCreateTransactions", { transactions: transactionsForCF, sourceId: source.id });
+
+      transactionIds.push(...result.transactionIds);
       importedCount += chunk.length;
 
       setState((s) => ({
@@ -418,11 +411,6 @@ export function useImport(source: TransactionSource | null) {
       }
     }
 
-    // Save import record to Firestore
-    const importDocRef = doc(db, "imports", importJobId);
-
-    // Build import record data
-    // Use explicit null for queryable fields (Firestore queries need null, not missing fields)
     // Sanitize mappings to convert undefined to null (Firestore rejects undefined)
     const sanitizedMappings = state.mappings?.map((m) => ({
       csvColumn: m.csvColumn,
@@ -433,40 +421,20 @@ export function useImport(source: TransactionSource | null) {
       format: m.format ?? null, // Convert undefined to null
     })) ?? [];
 
-    const importRecordData = {
+    // Create import record using Cloud Function
+    await callFunction("createImportRecord", {
+      importJobId,
       sourceId: source.id,
       fileName: state.file.name,
       importedCount,
       skippedCount,
       errorCount: errors.length,
       totalRows: rows.length,
-      userId: userId ?? "",
-      createdAt: Timestamp.now(),
-      // CSV storage fields - use null for queryability (e.g., find imports without CSV)
       csvStoragePath: csvStoragePath ?? null,
       csvDownloadUrl: csvDownloadUrl ?? null,
-      // Parse options and mappings for re-mapping feature
       parseOptions: state.analysis?.options ?? null,
       fieldMappings: sanitizedMappings,
-    };
-
-    await setDoc(importDocRef, importRecordData);
-
-    // Create notification for the import
-    if (importedCount > 0) {
-      createNotification(ctx, {
-        type: "import_complete",
-        title: `Imported ${importedCount} transactions`,
-        message: `I see you added ${importedCount} new transactions from ${source.name}. Let me match them with your partners.`,
-        context: {
-          sourceId: source.id,
-          sourceName: source.name,
-          transactionCount: importedCount,
-        },
-      }).catch((err) => {
-        console.error("Failed to create import notification:", err);
-      });
-    }
+    });
 
     // Update results
     setState((s) => ({
@@ -481,7 +449,7 @@ export function useImport(source: TransactionSource | null) {
         errorDetails: errors,
       },
     }));
-  }, [source, state.file, state.analysis, state.mappings, state.csvContent, ctx]);
+  }, [source, state.file, state.analysis, state.mappings, state.csvContent, userId]);
 
   const reset = useCallback(() => {
     setState({

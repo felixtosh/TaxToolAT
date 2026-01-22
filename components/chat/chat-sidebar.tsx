@@ -1,10 +1,11 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback } from "react";
-import { MessageSquare, Send, Loader2, Plus } from "lucide-react";
+import { MessageSquare, Send, Loader2, Plus, ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useChat } from "./chat-provider";
 import { MessageBubble } from "./message-bubble";
@@ -12,6 +13,7 @@ import { ConfirmationCard } from "./confirmation-card";
 import { ChatTabs } from "./chat-tabs";
 import { NotificationsList } from "./notifications-list";
 import { OnboardingSidebar } from "@/components/onboarding";
+import { ChatHistoryOverlay } from "./chat-history-overlay";
 
 const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 600;
@@ -23,6 +25,7 @@ export function ChatSidebar() {
     pendingConfirmations,
     sendMessage,
     startNewSession,
+    loadSession,
     isSidebarOpen,
     toggleSidebar,
     sidebarWidth,
@@ -31,15 +34,21 @@ export function ChatSidebar() {
     setActiveTab,
     notifications,
     sidebarMode,
+    isHistoryOpen,
+    setIsHistoryOpen,
+    currentSessionId,
   } = useChat();
 
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const currentWidthRef = useRef(sidebarWidth);
   const [isResizing, setIsResizing] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const userScrolledRef = useRef(false);
 
   // Keep currentWidthRef in sync with sidebarWidth
   useEffect(() => {
@@ -83,17 +92,40 @@ export function ChatSidebar() {
     };
   }, [isResizing, setSidebarWidth]);
 
+  // Check if scroll is at bottom (within threshold)
+  const checkIsAtBottom = useCallback(() => {
+    if (!viewportRef.current) return true;
+    const { scrollTop, scrollHeight, clientHeight } = viewportRef.current;
+    const threshold = 50; // pixels from bottom to consider "at bottom"
+    return scrollHeight - scrollTop - clientHeight < threshold;
+  }, []);
+
   // Scroll to bottom helper
-  const scrollToBottom = () => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  const scrollToBottom = useCallback(() => {
+    if (viewportRef.current) {
+      viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
+      setIsAtBottom(true);
+      userScrolledRef.current = false;
     }
-  };
+  }, []);
+
+  // Handle scroll events
+  const handleScroll = useCallback(() => {
+    const atBottom = checkIsAtBottom();
+    setIsAtBottom(atBottom);
+    // If user scrolls up, mark as user-initiated scroll
+    if (!atBottom) {
+      userScrolledRef.current = true;
+    }
+  }, [checkIsAtBottom]);
 
   // Auto-scroll to bottom when new messages arrive or during streaming
+  // Only if user hasn't scrolled up
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, pendingConfirmations, isLoading]);
+    if (!userScrolledRef.current) {
+      scrollToBottom();
+    }
+  }, [messages, pendingConfirmations, isLoading, scrollToBottom]);
 
   // Focus input when clicking on empty chat area (not when selecting text)
   const handleSidebarClick = (e: React.MouseEvent) => {
@@ -118,7 +150,8 @@ export function ChatSidebar() {
     const message = input.value.trim();
     input.value = "";
 
-    // Scroll immediately when sending and keep focus on input
+    // Reset scroll tracking and scroll to bottom when user sends a message
+    userScrolledRef.current = false;
     setTimeout(() => {
       scrollToBottom();
       inputRef.current?.focus();
@@ -164,6 +197,7 @@ export function ChatSidebar() {
                 onTabChange={setActiveTab}
                 onNewChat={startNewSession}
                 onClose={toggleSidebar}
+                onOpenHistory={() => setIsHistoryOpen(true)}
               />
 
               {/* Content based on active tab */}
@@ -176,40 +210,55 @@ export function ChatSidebar() {
                   }}
                 />
               ) : (
-                <>
+                <TooltipProvider>
                   {/* Messages */}
-                  <ScrollArea className="flex-1 p-4" ref={scrollRef}>
-                    <div className="space-y-4">
-                      {messages.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
-                          <MessageSquare className="mb-4 h-12 w-12 opacity-20" />
-                          <p className="text-sm">Start a conversation with your AI tax assistant.</p>
-                          <p className="mt-2 text-xs">
-                            Try: "Show me my recent transactions" or "Categorize all Amazon purchases"
-                          </p>
-                        </div>
-                      ) : (
-                        messages.map((message) => (
-                          <MessageBubble key={message.id} message={message} />
-                        ))
-                      )}
+                  <div className="relative flex-1 overflow-hidden">
+                    <ScrollArea className="h-full px-4" ref={scrollRef} viewportRef={viewportRef} onScroll={handleScroll}>
+                      <div className="space-y-4 py-4">
+                        {messages.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
+                            <MessageSquare className="mb-4 h-12 w-12 opacity-20" />
+                            <p className="text-sm">Start a conversation with your AI tax assistant.</p>
+                            <p className="mt-2 text-xs">
+                              Try: "Show me my recent transactions" or "Categorize all Amazon purchases"
+                            </p>
+                          </div>
+                        ) : (
+                          messages.map((message) => (
+                            <MessageBubble key={message.id} message={message} />
+                          ))
+                        )}
 
-                      {/* Pending confirmations */}
-                      {pendingConfirmations
-                        .filter((tc) => tc.status === "pending")
-                        .map((toolCall) => (
-                          <ConfirmationCard key={toolCall.id} toolCall={toolCall} />
-                        ))}
+                        {/* Pending confirmations */}
+                        {pendingConfirmations
+                          .filter((tc) => tc.status === "pending")
+                          .map((toolCall) => (
+                            <ConfirmationCard key={toolCall.id} toolCall={toolCall} />
+                          ))}
 
-                      {/* Loading indicator */}
-                      {isLoading && (
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          <span className="text-sm">Thinking...</span>
-                        </div>
-                      )}
-                    </div>
-                  </ScrollArea>
+                        {/* Loading indicator */}
+                        {isLoading && (
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span className="text-sm">Thinking...</span>
+                          </div>
+                        )}
+                      </div>
+                    </ScrollArea>
+
+                    {/* Scroll to bottom button */}
+                    {!isAtBottom && messages.length > 0 && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={scrollToBottom}
+                        className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full shadow-md gap-1 h-7 px-3 text-xs"
+                      >
+                        <ArrowDown className="h-3 w-3" />
+                        Scroll to bottom
+                      </Button>
+                    )}
+                  </div>
 
                   {/* Input */}
                   <div className="border-t p-4">
@@ -228,7 +277,7 @@ export function ChatSidebar() {
                       </Button>
                     </form>
                   </div>
-                </>
+                </TooltipProvider>
               )}
             </>
           )}
@@ -255,6 +304,14 @@ export function ChatSidebar() {
       {isResizing && (
         <div className="fixed inset-0 z-50 cursor-col-resize" />
       )}
+
+      {/* Chat History Overlay */}
+      <ChatHistoryOverlay
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        onSelectSession={loadSession}
+        currentSessionId={currentSessionId}
+      />
     </>
   );
 }

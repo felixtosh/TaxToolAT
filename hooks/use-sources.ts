@@ -1,16 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, startTransition } from "react";
+import { useState, useEffect, useCallback, startTransition } from "react";
 import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
+import { callFunction } from "@/lib/firebase/callable";
 import { TransactionSource, SourceFormData, SavedFieldMapping } from "@/types/source";
-import {
-  OperationsContext,
-  createSource as createSourceOp,
-  updateSource as updateSourceOp,
-  deleteSource as deleteSourceOp,
-  saveFieldMappings as saveFieldMappingsOp,
-} from "@/lib/operations";
 import { useAuth } from "@/components/auth";
 
 const SOURCES_COLLECTION = "sources";
@@ -20,15 +14,6 @@ export function useSources() {
   const [sources, setSources] = useState<TransactionSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-
-  // Create operations context
-  const ctx: OperationsContext = useMemo(
-    () => ({
-      db,
-      userId: userId ?? "",
-    }),
-    [userId]
-  );
 
   // Realtime listener for sources - this stays in the hook
   useEffect(() => {
@@ -72,33 +57,41 @@ export function useSources() {
     return () => unsubscribe();
   }, [userId]);
 
-  // Mutations now call the operations layer
+  // Mutations call Cloud Functions
   const addSource = useCallback(
     async (data: SourceFormData): Promise<string> => {
-      return createSourceOp(ctx, data);
+      const result = await callFunction<{ data: SourceFormData }, { sourceId: string }>(
+        "createSource",
+        { data }
+      );
+      return result.sourceId;
     },
-    [ctx]
+    []
   );
 
   const updateSource = useCallback(
     async (sourceId: string, data: Partial<TransactionSource>) => {
-      await updateSourceOp(ctx, sourceId, data);
+      await callFunction("updateSource", { sourceId, data });
     },
-    [ctx]
+    []
   );
 
   const deleteSource = useCallback(
     async (sourceId: string) => {
-      await deleteSourceOp(ctx, sourceId);
+      await callFunction("deleteSource", { sourceId });
     },
-    [ctx]
+    []
   );
 
   const saveFieldMappings = useCallback(
     async (sourceId: string, mappings: SavedFieldMapping) => {
-      await saveFieldMappingsOp(ctx, sourceId, mappings);
+      // Save field mappings by updating the source
+      await callFunction("updateSource", {
+        sourceId,
+        data: { fieldMappings: mappings },
+      });
     },
-    [ctx]
+    []
   );
 
   const getSourceById = useCallback(

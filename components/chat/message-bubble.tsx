@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { ChatMessage, MessagePart, ToolCall } from "@/types/chat";
 import { Badge } from "@/components/ui/badge";
 import { useChat } from "./chat-provider";
+import { useToolResultRenderer } from "@/hooks/use-tool-result-renderer";
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -78,6 +79,15 @@ interface ToolCallBadgeProps {
 }
 
 function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
+  const { uiActions } = useChat();
+  const { renderToolResult, hasRenderer } = useToolResultRenderer({
+    uiActions: {
+      scrollToTransaction: uiActions.scrollToTransaction,
+      openTransactionSheet: uiActions.openTransactionSheet,
+      openFile: uiActions.openFile,
+    },
+  });
+
   const statusIcons = {
     pending: <Loader2 className="h-3 w-3 animate-spin" />,
     approved: <CheckCircle className="h-3 w-3 text-green-500" />,
@@ -100,10 +110,10 @@ function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
       .trim();
   };
 
-  // Check if result is a transaction list
-  const isTransactionList = toolCall.name === "listTransactions" &&
-    Array.isArray(toolCall.result) &&
-    toolCall.result.length > 0;
+  // Render result preview if available
+  const resultPreview = toolCall.status === "executed" && hasRenderer(toolCall.name)
+    ? renderToolResult(toolCall)
+    : null;
 
   return (
     <div className="flex flex-col gap-2">
@@ -119,92 +129,9 @@ function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
         {statusIcons[toolCall.status]}
       </Badge>
 
-      {/* Mini-table for transaction results */}
-      {isTransactionList && (
-        <TransactionMiniTable transactions={toolCall.result as TransactionResult[]} />
-      )}
+      {/* GenUI result preview from design system */}
+      {resultPreview}
     </div>
   );
 }
 
-interface TransactionResult {
-  id: string;
-  date: string;
-  dateFormatted?: string;
-  amount: number;
-  amountFormatted: string;
-  name: string;
-  description: string | null;
-  partner: string;
-  isComplete: boolean;
-  hasReceipts: boolean;
-}
-
-function TransactionMiniTable({ transactions }: { transactions: TransactionResult[] }) {
-  const { uiActions } = useChat();
-
-  const formatDate = (t: TransactionResult) => {
-    // Use pre-formatted date if available
-    if (t.dateFormatted) return t.dateFormatted;
-    const date = new Date(t.date);
-    return date.toLocaleDateString("de-DE", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric"
-    });
-  };
-
-  const formatAmount = (amount: number) => {
-    const euros = amount / 100;
-    return euros.toLocaleString("de-DE", {
-      style: "currency",
-      currency: "EUR"
-    });
-  };
-
-  const handleRowClick = (transactionId: string) => {
-    uiActions.scrollToTransaction(transactionId);
-    uiActions.openTransactionSheet(transactionId);
-  };
-
-  // Show max 5 transactions in mini-table
-  const displayTransactions = transactions.slice(0, 5);
-  const hasMore = transactions.length > 5;
-
-  return (
-    <div className="rounded-md border text-xs overflow-hidden">
-      <table className="w-full">
-        <thead className="bg-muted/50">
-          <tr>
-            <th className="text-left px-2 py-1 font-medium">Date</th>
-            <th className="text-left px-2 py-1 font-medium">Name</th>
-            <th className="text-right px-2 py-1 font-medium">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {displayTransactions.map((t) => (
-            <tr
-              key={t.id}
-              className="border-t border-muted/50 cursor-pointer hover:bg-muted/50 transition-colors"
-              onClick={() => handleRowClick(t.id)}
-            >
-              <td className="px-2 py-1 text-muted-foreground">{formatDate(t)}</td>
-              <td className="px-2 py-1 truncate max-w-[100px]">{t.name}</td>
-              <td className={cn(
-                "px-2 py-1 text-right tabular-nums",
-                t.amount < 0 ? "text-red-600" : "text-green-600"
-              )}>
-                {formatAmount(t.amount)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {hasMore && (
-        <div className="px-2 py-1 text-center text-muted-foreground bg-muted/30 border-t">
-          +{transactions.length - 5} more
-        </div>
-      )}
-    </div>
-  );
-}

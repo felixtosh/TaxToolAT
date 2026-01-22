@@ -1,0 +1,589 @@
+"use client";
+
+import { useState, useEffect, useMemo } from "react";
+import { format } from "date-fns";
+import { de } from "date-fns/locale";
+import {
+  FileText,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+  RefreshCw,
+  Download,
+  ExternalLink,
+  Clock,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useUserData } from "@/hooks/use-user-data";
+import { useAuth } from "@/components/auth";
+import { db } from "@/lib/firebase/config";
+import {
+  getReportReadiness,
+  calculateUVAReport,
+  createUVADraft,
+  getReportForPeriod,
+  recalculateReport,
+} from "@/lib/operations";
+import { OperationsContext } from "@/lib/operations/types";
+import {
+  ReportPeriod,
+  ReportReadiness,
+  UVAReport,
+  formatPeriod,
+  getCurrentPeriod,
+  getUvaDeadline,
+  isDeadlinePassed,
+} from "@/types/report";
+import { TaxCountryCode } from "@/types/user-data";
+import { ReportReadinessCheck } from "@/components/reports/readiness-check";
+import { UVAPreview } from "@/components/reports/uva-preview";
+import { PeriodTimeline } from "@/components/reports/period-timeline";
+
+const TAX_COUNTRIES: { value: TaxCountryCode; label: string; flag: string }[] = [
+  { value: "AT", label: "Austria", flag: "AT" },
+  { value: "DE", label: "Germany", flag: "DE" },
+  { value: "CH", label: "Switzerland", flag: "CH" },
+];
+
+const MONTHS = [
+  { value: 1, label: "January" },
+  { value: 2, label: "February" },
+  { value: 3, label: "March" },
+  { value: 4, label: "April" },
+  { value: 5, label: "May" },
+  { value: 6, label: "June" },
+  { value: 7, label: "July" },
+  { value: 8, label: "August" },
+  { value: 9, label: "September" },
+  { value: 10, label: "October" },
+  { value: 11, label: "November" },
+  { value: 12, label: "December" },
+];
+
+const QUARTERS = [
+  { value: 1, label: "Q1 (Jan-Mar)" },
+  { value: 2, label: "Q2 (Apr-Jun)" },
+  { value: 3, label: "Q3 (Jul-Sep)" },
+  { value: 4, label: "Q4 (Oct-Dec)" },
+];
+
+// Generate years from 2020 to current year
+function getAvailableYears(): number[] {
+  const currentYear = new Date().getFullYear();
+  const years: number[] = [];
+  for (let y = currentYear; y >= 2020; y--) {
+    years.push(y);
+  }
+  return years;
+}
+
+export default function ReportsPage() {
+  const { userId } = useAuth();
+  const { userData, loading: userDataLoading } = useUserData();
+
+  // Period state
+  const [periodType, setPeriodType] = useState<"monthly" | "quarterly">("monthly");
+  const [selectedPeriod, setSelectedPeriod] = useState<ReportPeriod>(() =>
+    getCurrentPeriod("monthly")
+  );
+
+  // Report state
+  const [readiness, setReadiness] = useState<ReportReadiness | null>(null);
+  const [report, setReport] = useState<Omit<UVAReport, "id" | "createdAt" | "updatedAt"> | null>(null);
+  const [existingReport, setExistingReport] = useState<UVAReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [calculating, setCalculating] = useState(false);
+
+  // Operations context
+  const ctx: OperationsContext = useMemo(
+    () => ({
+      db,
+      userId: userId ?? "",
+    }),
+    [userId]
+  );
+
+  // Country from user settings
+  const country = userData?.country || "AT";
+  const countryInfo = TAX_COUNTRIES.find((c) => c.value === country);
+
+  // Load report data when period changes
+  useEffect(() => {
+    if (!userId) return;
+
+    const loadData = async () => {
+      setLoading(true);
+      console.log("[ReportsPage] Loading data for period:", selectedPeriod, "userId:", userId);
+      try {
+        // Load readiness check
+        const readinessResult = await getReportReadiness(ctx, selectedPeriod);
+        console.log("[ReportsPage] Readiness result:", readinessResult);
+        setReadiness(readinessResult);
+
+        // Check for existing report
+        const existing = await getReportForPeriod(ctx, selectedPeriod);
+        setExistingReport(existing);
+
+        // Calculate preview
+        const reportData = await calculateUVAReport(ctx, selectedPeriod, country);
+        console.log("[ReportsPage] Report data:", reportData);
+        setReport(reportData);
+      } catch (error) {
+        console.error("Error loading report data:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [ctx, userId, selectedPeriod, country]);
+
+  // Handle period type change
+  const handlePeriodTypeChange = (type: "monthly" | "quarterly") => {
+    setPeriodType(type);
+    setSelectedPeriod(getCurrentPeriod(type));
+  };
+
+  // Navigate periods
+  const goToPreviousPeriod = () => {
+    setSelectedPeriod((prev) => {
+      if (prev.type === "monthly") {
+        const newMonth = prev.period - 1;
+        if (newMonth < 1) {
+          return { ...prev, year: prev.year - 1, period: 12 };
+        }
+        return { ...prev, period: newMonth };
+      } else {
+        const newQuarter = prev.period - 1;
+        if (newQuarter < 1) {
+          return { ...prev, year: prev.year - 1, period: 4 };
+        }
+        return { ...prev, period: newQuarter };
+      }
+    });
+  };
+
+  const goToNextPeriod = () => {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1;
+    const currentQuarter = Math.ceil(currentMonth / 3);
+
+    setSelectedPeriod((prev) => {
+      if (prev.type === "monthly") {
+        const newMonth = prev.period + 1;
+        // Don't allow going into current or future months
+        if (prev.year === currentYear && newMonth >= currentMonth) {
+          return prev;
+        }
+        if (newMonth > 12) {
+          if (prev.year + 1 > currentYear) return prev;
+          return { ...prev, year: prev.year + 1, period: 1 };
+        }
+        return { ...prev, period: newMonth };
+      } else {
+        const newQuarter = prev.period + 1;
+        // Don't allow going into current or future quarters
+        if (prev.year === currentYear && newQuarter >= currentQuarter) {
+          return prev;
+        }
+        if (newQuarter > 4) {
+          if (prev.year + 1 > currentYear) return prev;
+          return { ...prev, year: prev.year + 1, period: 1 };
+        }
+        return { ...prev, period: newQuarter };
+      }
+    });
+  };
+
+  // Recalculate report
+  const handleRecalculate = async () => {
+    setCalculating(true);
+    try {
+      const reportData = await calculateUVAReport(ctx, selectedPeriod, country);
+      setReport(reportData);
+
+      // Also refresh readiness
+      const readinessResult = await getReportReadiness(ctx, selectedPeriod);
+      setReadiness(readinessResult);
+
+      // If there's an existing report, recalculate it
+      if (existingReport) {
+        await recalculateReport(ctx, existingReport.id);
+        const updated = await getReportForPeriod(ctx, selectedPeriod);
+        setExistingReport(updated);
+      }
+    } catch (error) {
+      console.error("Error recalculating:", error);
+    } finally {
+      setCalculating(false);
+    }
+  };
+
+  // Create draft report
+  const handleCreateDraft = async () => {
+    setCalculating(true);
+    try {
+      const reportId = await createUVADraft(ctx, selectedPeriod, country);
+      const newReport = await getReportForPeriod(ctx, selectedPeriod);
+      setExistingReport(newReport);
+    } catch (error) {
+      console.error("Error creating draft:", error);
+    } finally {
+      setCalculating(false);
+    }
+  };
+
+  // Deadline info
+  const deadline = getUvaDeadline(selectedPeriod);
+  const deadlinePassed = isDeadlinePassed(selectedPeriod);
+
+  if (userDataLoading) {
+    return (
+      <div className="h-full overflow-auto p-6">
+        <div className="max-w-5xl mx-auto space-y-6">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-auto p-6">
+      <div className="max-w-5xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <FileText className="h-6 w-6" />
+              Tax Reports
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              UVA (Umsatzsteuervoranmeldung) for {countryInfo?.label}
+            </p>
+          </div>
+          <Badge variant="outline" className="text-sm">
+            {countryInfo?.flag} {countryInfo?.label}
+          </Badge>
+        </div>
+
+        {/* Period Selector */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Reporting Period</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap items-center gap-4">
+              {/* Period Type */}
+              <Select value={periodType} onValueChange={(v) => handlePeriodTypeChange(v as "monthly" | "quarterly")}>
+                <SelectTrigger className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="monthly">Monthly</SelectItem>
+                  <SelectItem value="quarterly">Quarterly</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* Period Navigation */}
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon" onClick={goToPreviousPeriod}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+
+                {/* Month/Quarter Dropdown */}
+                {periodType === "monthly" ? (
+                  <Select
+                    value={selectedPeriod.period.toString()}
+                    onValueChange={(v) => setSelectedPeriod((prev) => ({ ...prev, period: parseInt(v) }))}
+                  >
+                    <SelectTrigger className="w-36">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MONTHS.map((m) => (
+                        <SelectItem key={m.value} value={m.value.toString()}>
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Select
+                    value={selectedPeriod.period.toString()}
+                    onValueChange={(v) => setSelectedPeriod((prev) => ({ ...prev, period: parseInt(v) }))}
+                  >
+                    <SelectTrigger className="w-36">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {QUARTERS.map((q) => (
+                        <SelectItem key={q.value} value={q.value.toString()}>
+                          {q.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {/* Year Dropdown */}
+                <Select
+                  value={selectedPeriod.year.toString()}
+                  onValueChange={(v) => setSelectedPeriod((prev) => ({ ...prev, year: parseInt(v) }))}
+                >
+                  <SelectTrigger className="w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {getAvailableYears().map((y) => (
+                      <SelectItem key={y} value={y.toString()}>
+                        {y}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Button variant="outline" size="icon" onClick={goToNextPeriod}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="flex-1" />
+
+              {/* Deadline */}
+              <div className="flex items-center gap-2 text-sm">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                <span className={deadlinePassed ? "text-destructive" : "text-muted-foreground"}>
+                  Deadline: {format(deadline, "dd.MM.yyyy", { locale: de })}
+                  {deadlinePassed && " (passed)"}
+                </span>
+              </div>
+            </div>
+
+            {/* Timeline Chart */}
+            {userId && (
+              <div className="pt-4 border-t -mx-[25px] -mb-[25px]">
+                <PeriodTimeline
+                  userId={userId}
+                  periodType={periodType}
+                  selectedPeriod={selectedPeriod}
+                  onSelectPeriod={setSelectedPeriod}
+                />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {loading ? (
+          <div className="space-y-4">
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-64 w-full" />
+          </div>
+        ) : (
+          <>
+            {/* Readiness Check */}
+            {readiness && (
+              <ReportReadinessCheck
+                readiness={readiness}
+                period={selectedPeriod}
+              />
+            )}
+
+            {/* Report Preview */}
+            <Tabs defaultValue="preview" className="w-full">
+              <TabsList>
+                <TabsTrigger value="preview">Preview</TabsTrigger>
+                <TabsTrigger value="breakdown">Breakdown</TabsTrigger>
+                <TabsTrigger value="export">Export</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="preview" className="mt-4">
+                {report && (
+                  <UVAPreview
+                    report={report}
+                    period={selectedPeriod}
+                    country={country}
+                  />
+                )}
+              </TabsContent>
+
+              <TabsContent value="breakdown" className="mt-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Transaction Breakdown</CardTitle>
+                    <CardDescription>
+                      Summary by VAT rate for {formatPeriod(selectedPeriod)}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {report?.breakdown && report.breakdown.length > 0 ? (
+                      <div className="space-y-4">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b">
+                              <th className="text-left py-2">VAT Rate</th>
+                              <th className="text-right py-2">Transactions</th>
+                              <th className="text-right py-2">Net Amount</th>
+                              <th className="text-right py-2">VAT Amount</th>
+                              <th className="text-right py-2">Gross Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {report.breakdown.map((row) => (
+                              <tr key={row.rate} className="border-b">
+                                <td className="py-2">{row.rate}%</td>
+                                <td className="text-right py-2">{row.transactionCount}</td>
+                                <td className="text-right py-2 font-mono">
+                                  {(row.netAmount / 100).toFixed(2)} EUR
+                                </td>
+                                <td className="text-right py-2 font-mono">
+                                  {(row.vatAmount / 100).toFixed(2)} EUR
+                                </td>
+                                <td className="text-right py-2 font-mono">
+                                  {(row.grossAmount / 100).toFixed(2)} EUR
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr className="font-medium">
+                              <td className="py-2">Total</td>
+                              <td className="text-right py-2">
+                                {report.transactionCount.total}
+                              </td>
+                              <td className="text-right py-2 font-mono">
+                                {(report.breakdown.reduce((sum, r) => sum + r.netAmount, 0) / 100).toFixed(2)} EUR
+                              </td>
+                              <td className="text-right py-2 font-mono">
+                                {(report.breakdown.reduce((sum, r) => sum + r.vatAmount, 0) / 100).toFixed(2)} EUR
+                              </td>
+                              <td className="text-right py-2 font-mono">
+                                {(report.breakdown.reduce((sum, r) => sum + r.grossAmount, 0) / 100).toFixed(2)} EUR
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+
+                        <div className="grid grid-cols-4 gap-4 pt-4 border-t">
+                          <div className="text-center">
+                            <div className="text-2xl font-bold">{report.transactionCount.total}</div>
+                            <div className="text-xs text-muted-foreground">Total</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-2xl font-bold text-green-600">{report.transactionCount.income}</div>
+                            <div className="text-xs text-muted-foreground">Income</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-2xl font-bold text-red-600">{report.transactionCount.expense}</div>
+                            <div className="text-xs text-muted-foreground">Expenses</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-2xl font-bold">{report.transactionCount.complete}</div>
+                            <div className="text-xs text-muted-foreground">Complete</div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground text-center py-8">
+                        No transactions found for this period
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="export" className="mt-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Export Options</CardTitle>
+                    <CardDescription>
+                      Download or submit your UVA report
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {!readiness?.isReady && (
+                      <div className="flex items-center gap-2 p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-800">
+                        <AlertCircle className="h-5 w-5 flex-shrink-0" />
+                        <p className="text-sm">
+                          Please complete all transactions before exporting. Missing documentation may cause issues with the Finanzamt.
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Button variant="outline" className="h-auto py-4" disabled={!report}>
+                        <div className="flex flex-col items-center gap-2">
+                          <Download className="h-5 w-5" />
+                          <span>Download PDF</span>
+                          <span className="text-xs text-muted-foreground">For your records</span>
+                        </div>
+                      </Button>
+
+                      <Button variant="outline" className="h-auto py-4" disabled={!report}>
+                        <div className="flex flex-col items-center gap-2">
+                          <Download className="h-5 w-5" />
+                          <span>Download XML</span>
+                          <span className="text-xs text-muted-foreground">FinanzOnline format</span>
+                        </div>
+                      </Button>
+                    </div>
+
+                    <div className="pt-4 border-t">
+                      <Button
+                        className="w-full"
+                        disabled={!readiness?.isReady || !report}
+                      >
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        Submit to FinanzOnline
+                      </Button>
+                      <p className="text-xs text-muted-foreground text-center mt-2">
+                        Opens FinanzOnline in a new tab with pre-filled data
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
+
+            {/* Actions */}
+            <div className="flex items-center justify-between pt-4 border-t">
+              <Button variant="outline" onClick={handleRecalculate} disabled={calculating}>
+                {calculating ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                )}
+                Recalculate
+              </Button>
+
+              {!existingReport ? (
+                <Button onClick={handleCreateDraft} disabled={calculating}>
+                  Save as Draft
+                </Button>
+              ) : (
+                <Badge variant="outline">
+                  Draft saved {existingReport.updatedAt ? format(existingReport.updatedAt.toDate(), "dd.MM.yyyy HH:mm", { locale: de }) : ""}
+                </Badge>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

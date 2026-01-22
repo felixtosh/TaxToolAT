@@ -1246,6 +1246,7 @@ export function ConnectFileOverlay({
 
   // Handle loading email content
   const handleSelectEmail = async (email: EmailWithContent) => {
+    console.log("[ConnectFileOverlay] Selected email classification:", email.classification);
     setSelectedEmail(email);
     if (email.htmlBody || email.textBody) return;
 
@@ -1361,7 +1362,7 @@ export function ConnectFileOverlay({
       <ContentOverlay open={open} onClose={onClose} title="Connect File to Transaction" subtitle={subtitle}>
       <div className="flex h-full">
         {/* Left sidebar: Search + Tabs + Results */}
-        <div className="w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
+        <div className="@container w-[35%] min-w-[280px] max-w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
           {/* Search section */}
           <div className="p-4 border-b space-y-3">
             {/* Search input with inline button */}
@@ -1462,34 +1463,54 @@ export function ConnectFileOverlay({
           {/* Tabs */}
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
             <TabsList className="h-10 w-full grid grid-cols-4 rounded-none border-b shrink-0">
-              <TabsTrigger value="files" className="gap-1 text-xs">
-                <HardDrive className="h-3.5 w-3.5" />
-                Files
-                {hasSearchedLocalFiles && localFileResults.length > 0 && (
-                  <span className="ml-1 text-xs text-muted-foreground">({localFileResults.length})</span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="gmail-attachments" className="gap-1 text-xs">
-                <Paperclip className="h-3.5 w-3.5" />
-                Attachments
-                {hasSearched && allAttachments.length > 0 && (
-                  <span className="ml-1 text-xs text-muted-foreground">({allAttachments.length})</span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="email-to-pdf" className="gap-1 text-xs">
-                <Mail className="h-3.5 w-3.5" />
-                Emails
-                {hasSearched && sortedEmails.length > 0 && (
-                  <span className="ml-1 text-xs text-muted-foreground">({sortedEmails.length})</span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="browser" className="gap-1 text-xs">
-                <Globe className="h-3.5 w-3.5" />
-                Browser
-                {partner?.invoiceSources && partner.invoiceSources.length > 0 && (
-                  <span className="ml-1 text-xs text-muted-foreground">({partner.invoiceSources.length})</span>
-                )}
-              </TabsTrigger>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <TabsTrigger value="files" className="gap-1 text-xs px-1 @min-[340px]:px-2">
+                    <HardDrive className="h-3.5 w-3.5 shrink-0" />
+                    <span className="hidden @min-[340px]:inline">Files</span>
+                    {hasSearchedLocalFiles && localFileResults.length > 0 && (
+                      <span className="text-[10px] text-muted-foreground">({localFileResults.length})</span>
+                    )}
+                  </TabsTrigger>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Files</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <TabsTrigger value="gmail-attachments" className="gap-1 text-xs px-1 @min-[340px]:px-2">
+                    <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                    <span className="hidden @min-[340px]:inline">Attach</span>
+                    {hasSearched && allAttachments.length > 0 && (
+                      <span className="text-[10px] text-muted-foreground">({allAttachments.length})</span>
+                    )}
+                  </TabsTrigger>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Attachments</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <TabsTrigger value="email-to-pdf" className="gap-1 text-xs px-1 @min-[340px]:px-2">
+                    <Mail className="h-3.5 w-3.5 shrink-0" />
+                    <span className="hidden @min-[340px]:inline">Emails</span>
+                    {hasSearched && sortedEmails.length > 0 && (
+                      <span className="text-[10px] text-muted-foreground">({sortedEmails.length})</span>
+                    )}
+                  </TabsTrigger>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Emails</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <TabsTrigger value="browser" className="gap-1 text-xs px-1 @min-[340px]:px-2">
+                    <Globe className="h-3.5 w-3.5 shrink-0" />
+                    <span className="hidden @min-[340px]:inline">Browser</span>
+                    {partner?.invoiceSources && partner.invoiceSources.length > 0 && (
+                      <span className="text-[10px] text-muted-foreground">({partner.invoiceSources.length})</span>
+                    )}
+                  </TabsTrigger>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Browser</TooltipContent>
+              </Tooltip>
             </TabsList>
 
             {gmailAuthIssueList.length > 0 && (
@@ -1909,11 +1930,28 @@ export function ConnectFileOverlay({
                     </div>
                   )}
                 </div>
-                <div className="border-t p-4 flex justify-end shrink-0">
-                  <Button onClick={handleConvertToPdf} disabled={isConverting}>
-                    {isConverting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileDown className="h-4 w-4 mr-2" />}
-                    To PDF and Connect
-                  </Button>
+                <div className="border-t p-4 shrink-0 space-y-3">
+                  {/* Matched Keywords from Classification */}
+                  {selectedEmail.classification?.matchedKeywords &&
+                   selectedEmail.classification.matchedKeywords.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedEmail.classification.matchedKeywords.map((keyword, idx) => (
+                        <Badge
+                          key={idx}
+                          variant="secondary"
+                          className="text-xs"
+                        >
+                          {keyword}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex justify-end">
+                    <Button onClick={handleConvertToPdf} disabled={isConverting}>
+                      {isConverting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileDown className="h-4 w-4 mr-2" />}
+                      To PDF and Connect
+                    </Button>
+                  </div>
                 </div>
               </>
             ) : (

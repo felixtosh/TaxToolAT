@@ -1,5 +1,11 @@
 /**
  * Tools that require user confirmation before execution
+ *
+ * Note: createPartner and assignPartnerToTransaction do NOT require confirmation
+ * as they are low-risk and users typically want them executed immediately.
+ *
+ * Note: Download tools (downloadGmailAttachment, convertEmailToPdf) do NOT require
+ * confirmation - the agent downloads when it finds a reasonable match.
  */
 export const TOOLS_REQUIRING_CONFIRMATION = [
   "updateTransaction",

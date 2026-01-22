@@ -277,7 +277,7 @@ export function ConnectTransactionDialog({
 
         <div className="flex flex-1 overflow-hidden">
           {/* Left column: Transaction search and list */}
-          <div className="w-[420px] border-r flex flex-col">
+          <div className="w-[35%] min-w-[280px] max-w-[420px] border-r flex flex-col">
             {/* Search */}
             <div className="p-4 border-b">
               <div className="relative">

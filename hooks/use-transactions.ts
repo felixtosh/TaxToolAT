@@ -1,13 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, startTransition } from "react";
+import { useState, useEffect, useCallback, startTransition } from "react";
 import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { Transaction } from "@/types/transaction";
-import {
-  OperationsContext,
-  updateTransaction as updateTransactionOp,
-} from "@/lib/operations";
+import { callFunction } from "@/lib/firebase/callable";
 import { useAuth } from "@/components/auth";
 
 const TRANSACTIONS_COLLECTION = "transactions";
@@ -17,15 +14,6 @@ export function useTransactions() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-
-  // Create operations context
-  const ctx: OperationsContext = useMemo(
-    () => ({
-      db,
-      userId: userId ?? "",
-    }),
-    [userId]
-  );
 
   // Realtime listener for transactions - this stays in the hook
   useEffect(() => {
@@ -69,12 +57,12 @@ export function useTransactions() {
     return () => unsubscribe();
   }, [userId]);
 
-  // Mutations now call the operations layer
+  // Mutations call Cloud Functions
   const updateTransaction = useCallback(
     async (transactionId: string, data: Partial<Transaction>) => {
-      await updateTransactionOp(ctx, transactionId, data);
+      await callFunction("updateTransaction", { id: transactionId, data });
     },
-    [ctx]
+    []
   );
 
   // NOTE: deleteTransaction is intentionally NOT exposed.

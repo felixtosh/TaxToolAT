@@ -3,87 +3,188 @@
 ## Project Overview
 FiBuKI - A tax/accounting tool for managing bank transactions, receipts, and categorization.
 
-## Architecture: Operations Layer Pattern
+## Architecture: Cloud Functions Pattern
 
-**IMPORTANT**: This project uses an operations layer abstraction for all data access. This enables both the React UI and MCP server (AI tools) to share the same business logic.
+**IMPORTANT**: All data mutations go through Cloud Functions. This ensures:
+- Single source of truth for business logic
+- Consistent access from UI, MCP, LangGraph, and external actors
+- Automatic usage tracking for admin/user dashboards and billing
 
 ### The Pattern
 
 ```
-┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│  React UI   │  │ MCP Server  │  │ Future Chat │
-│  (hooks)    │  │ (Claude)    │  │    API      │
-└──────┬──────┘  └──────┬──────┘  └──────┬──────┘
-       │                │                │
-       └────────────────┼────────────────┘
-                        │
-             ┌──────────▼──────────┐
-             │  Operations Layer   │  ← All Firestore logic here
-             │  /lib/operations/   │
-             └──────────┬──────────┘
-                        │
-             ┌──────────▼──────────┐
-             │     Firebase        │
-             └────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                     CONSUMERS                                   │
+│  React UI  │  MCP Server  │  LangGraph  │  External Actors      │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                    httpsCallable / HTTP
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  CLOUD FUNCTIONS (europe-west1)                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  createCallable() wrapper                               │   │
+│  │  - Auth validation                                      │   │
+│  │  - Usage logging (function invocations)                 │   │
+│  │  - AI usage logging (model calls)                       │   │
+│  │  - Error handling                                       │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                              │                                  │
+│                     Individual Callables                        │
+│  transactions/ │ files/ │ partners/ │ sources/ │ imports/      │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                        Admin SDK
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        FIRESTORE                                │
+│  transactions │ files │ partners │ sources │ aiUsage │ fnCalls │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Rules for New Features
 
-1. **NEVER write Firestore queries directly in hooks or components**
-   - ❌ `import { getDocs } from "firebase/firestore"` in `/hooks/`
-   - ✅ `import { listSources } from "@/lib/operations"` in `/hooks/`
+1. **All mutations go through Cloud Functions**
+   - ❌ Direct Firestore writes in hooks/components
+   - ✅ Call Cloud Functions via `callFunction()` from `lib/firebase/callable.ts`
 
-2. **All data mutations go through `/lib/operations/`**
-   - Create a new `*-ops.ts` file for new entities
-   - Export functions that take `OperationsContext` as first param
-   - Re-export from `/lib/operations/index.ts`
+2. **Create callable functions using the `createCallable()` wrapper**
+   - Located in `/functions/src/utils/createCallable.ts`
+   - Automatically handles auth, usage tracking, and error handling
 
-3. **Hooks are for React state + realtime listeners only**
-   - Use `onSnapshot` for realtime updates (stays in hook)
-   - Call operations layer for mutations
+3. **Realtime listeners stay in hooks** (this is OK)
+   - Use `onSnapshot` for realtime updates in React hooks
+   - Only mutations need to go through Cloud Functions
 
-4. **When adding a new entity/feature:**
+4. **When adding a new feature:**
    ```
    1. Add types to /types/new-entity.ts
-   2. Create /lib/operations/new-entity-ops.ts
-   3. Export from /lib/operations/index.ts
-   4. Create /hooks/use-new-entity.ts (calls operations layer)
-   5. Add MCP tools to /mcp-server/src/tools/new-entity.ts
+   2. Create callable in /functions/src/feature/newFeatureCallable.ts
+   3. Use createCallable() wrapper for automatic usage tracking
+   4. Export from /functions/src/index.ts
+   5. Call from frontend via callFunction() in /lib/firebase/callable.ts
    ```
 
-### Example: Adding a new operation
+### Example: Adding a new callable
 
 ```typescript
-// /lib/operations/category-ops.ts
-import { OperationsContext } from "./types";
+// /functions/src/categories/createCategory.ts
+import { createCallable, HttpsError } from "../utils/createCallable";
 
-export async function listCategories(ctx: OperationsContext) {
-  // Firestore query here
+interface CreateCategoryRequest {
+  name: string;
+  color: string;
 }
 
-export async function createCategory(ctx: OperationsContext, data: CategoryData) {
-  // Firestore mutation here
+interface CreateCategoryResponse {
+  success: boolean;
+  categoryId: string;
 }
+
+export const createCategoryCallable = createCallable<
+  CreateCategoryRequest,
+  CreateCategoryResponse
+>(
+  { name: "createCategory" },
+  async (ctx, request) => {
+    const { name, color } = request;
+
+    if (!name) {
+      throw new HttpsError("invalid-argument", "name is required");
+    }
+
+    const docRef = ctx.db.collection("categories").doc();
+    await docRef.set({
+      userId: ctx.userId,
+      name,
+      color,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    return { success: true, categoryId: docRef.id };
+  }
+);
 ```
 
 ```typescript
 // /hooks/use-categories.ts
-import { listCategories, createCategory } from "@/lib/operations";
-import { useAuth } from "@/components/auth";
+import { callFunction } from "@/lib/firebase/callable";
 
 export function useCategories() {
-  const { userId } = useAuth();
-  const ctx = useMemo(() => ({ db, userId: userId ?? "" }), [userId]);
-
   // Realtime listener stays in hook
   useEffect(() => { onSnapshot(...) }, [userId]);
 
-  // Mutations call operations layer
-  const addCategory = useCallback((data) => createCategory(ctx, data), [ctx]);
+  // Mutations call Cloud Function
+  const addCategory = useCallback(async (data) => {
+    return callFunction("createCategory", data);
+  }, []);
 }
 ```
 
+### Available Callables
+
+**Transactions:**
+- `updateTransactionCallable` - Update a single transaction
+- `bulkUpdateTransactionsCallable` - Update multiple transactions
+- `deleteTransactionsBySourceCallable` - Delete all transactions for a source
+
+**Files:**
+- `connectFileToTransactionCallable` - Connect file to transaction
+- `disconnectFileFromTransactionCallable` - Disconnect file from transaction
+- `updateFileCallable` - Update file metadata
+- `deleteFileCallable` - Soft or hard delete a file
+
+**Imports:**
+- `bulkCreateTransactionsCallable` - Bulk create transactions from CSV
+- `createImportRecordCallable` - Create import record
+
+### Usage Tracking
+
+All callable functions automatically log to `functionCalls` collection:
+- Function name
+- User ID
+- Duration (ms)
+- Status (success/error)
+- Timestamp
+
+AI usage is logged separately to `aiUsage` collection via `ctx.logAIUsage()`
+
 ## Business Rules
+
+### Server-Side Scoring Only
+
+**CRITICAL**: All file/transaction matching and scoring MUST use server-side Cloud Functions. Never implement local scoring logic in frontend hooks or components.
+
+**Why**: Ensures consistency between UI and AI/agent tools. Both must produce identical scores.
+
+**Scoring Architecture**:
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────────────────────┐
+│  Frontend   │────▶│  API Route  │────▶│  scoreAttachmentMatchCallable│
+│  (hooks)    │     │             │     │  (Cloud Function)           │
+└─────────────┘     └─────────────┘     └─────────────────────────────┘
+                                                      ▲
+┌─────────────┐                                       │
+│ Agent Tools │───────────────────────────────────────┘
+│  (search)   │     (calls directly via callFirebaseFunction)
+└─────────────┘
+```
+
+**Rules**:
+1. **Frontend scoring**: Call `/api/matching/score-files` which proxies to `scoreAttachmentMatchCallable`
+2. **Agent tools**: Call `scoreAttachmentMatchCallable` directly via `callFirebaseFunction`
+3. **Pre-computed scores**: Stored in `file.transactionSuggestions` (computed by `matchFileTransactions` trigger)
+4. **NEVER** implement local `scoreResult()` or similar functions in hooks/components
+
+**Key Files**:
+- `functions/src/precision-search/scoreAttachmentMatch.ts` - Single source of truth for scoring
+- `functions/src/precision-search/scoreAttachmentMatchCallable.ts` - Callable wrapper
+- `app/api/matching/score-files/route.ts` - API route for frontend
+- `functions/src/matching/matchFileTransactions.ts` - Pre-computes suggestions on file upload
+
+**Claude Code Hook**: `.claude/hooks/check-cloud-function-pattern.sh` warns if local scoring is detected.
 
 ### Transaction Deletion NOT Allowed
 

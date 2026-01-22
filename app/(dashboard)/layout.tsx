@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,8 +11,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FileSpreadsheet, Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Mail, Palette, Shield, Zap } from "lucide-react";
+import { Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Mail, Palette, Shield, Zap, FileText, FlaskConical } from "lucide-react";
 import Link from "next/link";
+import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 import { cn } from "@/lib/utils";
 import { ChatProvider, ChatSidebar, useChat } from "@/components/chat";
 import { ProtectedRoute, useAuth } from "@/components/auth";
@@ -24,6 +25,7 @@ const navItems = [
   { href: "/files", label: "Files", icon: Files },
   { href: "/sources", label: "Accounts", icon: Building2 },
   { href: "/partners", label: "Partners", icon: Users },
+  { href: "/reports", label: "Reports", icon: FileText },
 ];
 
 /**
@@ -66,8 +68,33 @@ function OnboardingController() {
 
 function DashboardContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { isSidebarOpen, sidebarWidth } = useChat();
   const { user, isAdmin, signOut } = useAuth();
+  const [isLogoJumping, setIsLogoJumping] = useState(false);
+
+  const handleLogoClick = () => {
+    if (!isLogoJumping) {
+      setIsLogoJumping(true);
+      setTimeout(() => setIsLogoJumping(false), 600);
+    }
+    router.push("/transactions");
+  };
+
+  // Listen for chat:openFile events to navigate to files page
+  useEffect(() => {
+    const handleOpenFile = (e: CustomEvent<{ fileId: string }>) => {
+      const { fileId } = e.detail;
+      if (fileId) {
+        router.push(`/files?id=${fileId}`);
+      }
+    };
+
+    window.addEventListener("chat:openFile", handleOpenFile as EventListener);
+    return () => {
+      window.removeEventListener("chat:openFile", handleOpenFile as EventListener);
+    };
+  }, [router]);
 
   return (
     <div
@@ -77,10 +104,16 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       {/* Header */}
       <header className="border-b bg-card sticky top-0 z-50 px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-8">
-            <Link href="/transactions" className="flex items-center gap-2 hover:opacity-80">
-              <FileSpreadsheet className="h-5 w-5 text-primary" />
-              <span className="font-semibold text-lg">FiBuKI</span>
-            </Link>
+            <button
+              onClick={handleLogoClick}
+              className={cn(
+                "flex items-center gap-2 hover:opacity-80 logo-wrapper",
+                isLogoJumping && "is-jumping"
+              )}
+            >
+              <FibukiMascot size={28} className="-my-1" isJumping={isLogoJumping} />
+              <span className="font-semibold text-lg mascot-text">FiBuKI</span>
+            </button>
             <nav className="flex items-center gap-1">
               {navItems.map((item) => {
                 const isActive = pathname.startsWith(item.href);
@@ -177,6 +210,12 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                       <Link href="/admin/automation" className="flex items-center gap-2">
                         <Zap className="h-4 w-4" />
                         Automations
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href="/admin/testing" className="flex items-center gap-2">
+                        <FlaskConical className="h-4 w-4" />
+                        Tests
                       </Link>
                     </DropdownMenuItem>
                     <DropdownMenuItem asChild>

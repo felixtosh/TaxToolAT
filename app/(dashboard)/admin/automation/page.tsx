@@ -4,11 +4,15 @@ import { useState, useMemo } from "react";
 import {
   Bot,
   Building2,
+  ChevronDown,
+  Download,
+  Edit,
   FileSearch,
   FileText,
   FolderOpen,
   Globe,
   HelpCircle,
+  Lock,
   Mail,
   MessageSquare,
   Monitor,
@@ -56,6 +60,17 @@ import {
 } from "@/lib/matching/automation-defs";
 import { TRANSACTION_MATCH_CONFIG } from "@/types/transaction-matching";
 import type { AutomationStep, AutomationPipeline, PipelineId } from "@/types/automation";
+import {
+  ALL_CHAT_TOOLS,
+  TOOL_CATEGORIES,
+  type ChatToolDefinition,
+  type ToolCategory,
+} from "@/lib/chat/tool-definitions";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
 // Icon mapping for automation steps
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -70,6 +85,9 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   Mail,
   FolderOpen,
   FileText,
+  Monitor,
+  Edit,
+  Download,
 };
 
 function getIcon(iconName: string) {
@@ -342,8 +360,183 @@ function ConfigCard() {
   );
 }
 
+function ChatToolCategoryBadge({ category }: { category: ToolCategory }) {
+  const variants: Record<ToolCategory, { color: string; icon: React.ComponentType<{ className?: string }> }> = {
+    read: { color: "bg-blue-100 text-blue-800", icon: Search },
+    navigation: { color: "bg-purple-100 text-purple-800", icon: Monitor },
+    write: { color: "bg-amber-100 text-amber-800", icon: Edit },
+    search: { color: "bg-green-100 text-green-800", icon: FileSearch },
+    download: { color: "bg-cyan-100 text-cyan-800", icon: Download },
+  };
+  const v = variants[category];
+  const Icon = v.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${v.color}`}>
+      <Icon className="h-3 w-3" />
+      {TOOL_CATEGORIES[category].name}
+    </span>
+  );
+}
+
+function ChatToolsTable({ tools }: { tools: ChatToolDefinition[] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Tool</TableHead>
+          <TableHead>Category</TableHead>
+          <TableHead>Confirmation</TableHead>
+          <TableHead>Inputs</TableHead>
+          <TableHead className="text-right">Related Tools</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {tools.map((tool) => (
+          <TableRow key={tool.id}>
+            <TableCell>
+              <div className="min-w-0">
+                <p className="font-medium font-mono text-sm">{tool.id}</p>
+                <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+                  {tool.description.split(".")[0]}
+                </p>
+              </div>
+            </TableCell>
+            <TableCell>
+              <ChatToolCategoryBadge category={tool.category} />
+            </TableCell>
+            <TableCell>
+              {tool.requiresConfirmation ? (
+                <Badge variant="destructive" className="gap-1 text-xs">
+                  <Lock className="h-3 w-3" />
+                  Required
+                </Badge>
+              ) : (
+                <span className="text-xs text-muted-foreground">No</span>
+              )}
+            </TableCell>
+            <TableCell>
+              <div className="flex flex-wrap gap-1">
+                {tool.inputSchema.required.map((field) => (
+                  <code
+                    key={field}
+                    className="px-1.5 py-0.5 text-xs bg-primary/10 text-primary rounded font-medium"
+                  >
+                    {field}*
+                  </code>
+                ))}
+                {tool.inputSchema.optional.slice(0, 3).map((field) => (
+                  <code
+                    key={field}
+                    className="px-1.5 py-0.5 text-xs bg-muted rounded"
+                  >
+                    {field}
+                  </code>
+                ))}
+                {tool.inputSchema.optional.length > 3 && (
+                  <span className="text-xs text-muted-foreground">
+                    +{tool.inputSchema.optional.length - 3} more
+                  </span>
+                )}
+              </div>
+            </TableCell>
+            <TableCell className="text-right">
+              <div className="flex flex-wrap justify-end gap-1">
+                {tool.relatedTools?.map((t) => (
+                  <code
+                    key={t}
+                    className="px-1.5 py-0.5 text-xs bg-muted rounded"
+                  >
+                    {t}
+                  </code>
+                ))}
+              </div>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function ChatToolsCard() {
+  const [isOpen, setIsOpen] = useState(true);
+  const toolsByCategory = useMemo(() => {
+    const grouped: Record<ToolCategory, ChatToolDefinition[]> = {
+      read: [],
+      navigation: [],
+      write: [],
+      search: [],
+      download: [],
+    };
+    ALL_CHAT_TOOLS.forEach((tool) => {
+      grouped[tool.category].push(tool);
+    });
+    return grouped;
+  }, []);
+
+  const confirmationRequired = ALL_CHAT_TOOLS.filter((t) => t.requiresConfirmation).length;
+
+  return (
+    <Card>
+      <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+        <CardHeader>
+          <CollapsibleTrigger className="flex items-start gap-4 w-full text-left">
+            <div className="p-2 rounded-lg bg-primary/10">
+              <MessageSquare className="h-6 w-6 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <CardTitle className="text-lg flex items-center gap-2">
+                AI Chat Assistant Tools
+                <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? "" : "-rotate-90"}`} />
+              </CardTitle>
+              <CardDescription className="mt-1">
+                Tools available to the AI assistant for reading data, controlling UI, and performing actions
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <div className="text-right">
+                <div className="font-semibold text-foreground">{ALL_CHAT_TOOLS.length}</div>
+                <div className="text-xs">tools</div>
+              </div>
+              <div className="text-right">
+                <div className="font-semibold text-foreground">{confirmationRequired}</div>
+                <div className="text-xs">need confirm</div>
+              </div>
+            </div>
+          </CollapsibleTrigger>
+        </CardHeader>
+        <CollapsibleContent>
+          <CardContent className="space-y-6">
+            {/* Category summary */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {(Object.keys(TOOL_CATEGORIES) as ToolCategory[]).map((cat) => {
+                const meta = TOOL_CATEGORIES[cat];
+                const Icon = getIcon(meta.icon);
+                const count = toolsByCategory[cat].length;
+                return (
+                  <div key={cat} className="p-3 rounded-lg border bg-card">
+                    <div className="flex items-center gap-2">
+                      <Icon className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">{meta.name}</span>
+                    </div>
+                    <div className="mt-1 text-2xl font-bold">{count}</div>
+                    <p className="text-xs text-muted-foreground">{meta.description}</p>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Tools table */}
+            <ChatToolsTable tools={ALL_CHAT_TOOLS} />
+          </CardContent>
+        </CollapsibleContent>
+      </Collapsible>
+    </Card>
+  );
+}
+
 export default function AdminAutomationPage() {
-  const [filter, setFilter] = useState<"all" | PipelineId | "trigger-based">("all");
+  const [filter, setFilter] = useState<"all" | PipelineId | "trigger-based" | "chat-tools">("all");
 
   const filteredPipelines = useMemo(() => {
     if (filter === "all") return ALL_PIPELINES;
@@ -375,7 +568,8 @@ export default function AdminAutomationPage() {
                   <SelectValue placeholder="Filter pipelines" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Pipelines</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="chat-tools">AI Chat Tools</SelectItem>
                   <SelectItem value="find-partner">Partner Matching</SelectItem>
                   <SelectItem value="find-file">File Matching</SelectItem>
                   <SelectItem value="trigger-based">Automatic Re-matching</SelectItem>
@@ -385,7 +579,7 @@ export default function AdminAutomationPage() {
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <Card>
               <CardContent className="pt-6">
                 <div className="text-2xl font-bold">{ALL_PIPELINES.length}</div>
@@ -395,7 +589,13 @@ export default function AdminAutomationPage() {
             <Card>
               <CardContent className="pt-6">
                 <div className="text-2xl font-bold">{totalSteps}</div>
-                <p className="text-xs text-muted-foreground">Total Steps</p>
+                <p className="text-xs text-muted-foreground">Pipeline Steps</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-2xl font-bold">{ALL_CHAT_TOOLS.length}</div>
+                <p className="text-xs text-muted-foreground">Chat Tools</p>
               </CardContent>
             </Card>
             <Card>
@@ -412,15 +612,20 @@ export default function AdminAutomationPage() {
             </Card>
           </div>
 
+          {/* AI Chat Tools */}
+          {(filter === "all" || filter === "chat-tools") && <ChatToolsCard />}
+
           {/* Configuration Thresholds */}
-          <ConfigCard />
+          {filter !== "chat-tools" && <ConfigCard />}
 
           {/* Pipelines */}
-          <div className="space-y-6">
-            {filteredPipelines.map((pipeline) => (
-              <PipelineCard key={pipeline.id} pipeline={pipeline} />
-            ))}
-          </div>
+          {filter !== "chat-tools" && (
+            <div className="space-y-6">
+              {filteredPipelines.map((pipeline) => (
+                <PipelineCard key={pipeline.id} pipeline={pipeline} />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </ProtectedRoute>

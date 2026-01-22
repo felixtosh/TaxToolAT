@@ -12,10 +12,11 @@ import {
 } from "@/lib/operations";
 import { useAuth } from "@/components/auth";
 
-const MAX_RECORDS = 100;
+const MAX_RECORDS = 500;
 
-export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all" }) {
+export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all"; allUsers?: boolean }) {
   const { userId } = useAuth();
+  const allUsers = options?.allUsers ?? false;
   const [records, setRecords] = useState<AIUsageRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -43,7 +44,8 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all" }) {
 
   // Real-time listener for recent usage records
   useEffect(() => {
-    if (!userId) {
+    // For user-specific queries, require userId
+    if (!allUsers && !userId) {
       setRecords([]);
       setLoading(false);
       return;
@@ -51,21 +53,42 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all" }) {
 
     setLoading(true);
 
-    let q = query(
-      collection(db, "aiUsage"),
-      where("userId", "==", userId),
-      orderBy("createdAt", "desc"),
-      limit(MAX_RECORDS)
-    );
+    let q;
 
-    if (dateFrom) {
-      q = query(
-        collection(db, "aiUsage"),
-        where("userId", "==", userId),
-        where("createdAt", ">=", Timestamp.fromDate(dateFrom)),
-        orderBy("createdAt", "desc"),
-        limit(MAX_RECORDS)
-      );
+    if (allUsers) {
+      // Admin view: all users
+      if (dateFrom) {
+        q = query(
+          collection(db, "aiUsage"),
+          where("createdAt", ">=", Timestamp.fromDate(dateFrom)),
+          orderBy("createdAt", "desc"),
+          limit(MAX_RECORDS)
+        );
+      } else {
+        q = query(
+          collection(db, "aiUsage"),
+          orderBy("createdAt", "desc"),
+          limit(MAX_RECORDS)
+        );
+      }
+    } else {
+      // User view: only their records
+      if (dateFrom) {
+        q = query(
+          collection(db, "aiUsage"),
+          where("userId", "==", userId),
+          where("createdAt", ">=", Timestamp.fromDate(dateFrom)),
+          orderBy("createdAt", "desc"),
+          limit(MAX_RECORDS)
+        );
+      } else {
+        q = query(
+          collection(db, "aiUsage"),
+          where("userId", "==", userId),
+          orderBy("createdAt", "desc"),
+          limit(MAX_RECORDS)
+        );
+      }
     }
 
     const unsubscribe = onSnapshot(
@@ -87,7 +110,7 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all" }) {
     );
 
     return () => unsubscribe();
-  }, [userId, dateFrom]);
+  }, [userId, dateFrom, allUsers]);
 
   // Calculate summary from records
   const summary: AIUsageSummary = useMemo(() => {
@@ -104,6 +127,7 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all" }) {
         columnMatching: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
         extraction: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
         classification: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
+        domainValidation: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 },
       },
       byModel: {},
     };
@@ -203,6 +227,7 @@ function formatFunctionName(fn: AIFunction): string {
     columnMatching: "Column Matching",
     extraction: "File Extraction",
     classification: "Classification",
+    domainValidation: "Domain Validation",
   };
   return names[fn] || fn;
 }

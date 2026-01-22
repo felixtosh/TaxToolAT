@@ -1,70 +1,10 @@
 "use client";
 
 import { useCallback } from "react";
-import { httpsCallable } from "firebase/functions";
-import { functions } from "@/lib/firebase/config";
+import { useAuth } from "@/components/auth";
 
 // ============================================================================
-// Types matching the cloud function
-// ============================================================================
-
-interface AttachmentScoreInput {
-  key: string; // Unique identifier for this attachment
-  filename: string;
-  mimeType: string;
-  emailSubject?: string | null;
-  emailFrom?: string | null;
-  emailSnippet?: string | null;
-  emailBodyText?: string | null;
-  emailDate?: string | null; // ISO string
-  integrationId?: string | null;
-  // For local files with extracted data
-  fileExtractedAmount?: number | null;
-  fileExtractedDate?: string | null;
-  fileExtractedPartner?: string | null;
-}
-
-interface TransactionScoreInput {
-  amount?: number | null;
-  date?: string | null; // ISO string
-  name?: string | null;
-  reference?: string | null;
-  partner?: string | null;
-}
-
-interface PartnerScoreInput {
-  name?: string | null;
-  emailDomains?: string[] | null;
-  fileSourcePatterns?: Array<{
-    sourceType: string;
-    integrationId?: string;
-  }> | null;
-}
-
-interface ScoreAttachmentRequest {
-  attachments: AttachmentScoreInput[];
-  transaction: TransactionScoreInput;
-  partner?: PartnerScoreInput | null;
-}
-
-interface AttachmentScoreResult {
-  key: string;
-  score: number;
-  label: "Strong" | "Likely" | null;
-  reasons: string[];
-}
-
-interface ScoreAttachmentResponse {
-  scores: AttachmentScoreResult[];
-}
-
-const scoreAttachmentMatchFn = httpsCallable<
-  ScoreAttachmentRequest,
-  ScoreAttachmentResponse
->(functions, "scoreAttachmentMatchCallable");
-
-// ============================================================================
-// Hook
+// Types
 // ============================================================================
 
 export interface AttachmentToScore {
@@ -82,6 +22,7 @@ export interface AttachmentToScore {
   fileExtractedAmount?: number | null;
   fileExtractedDate?: Date | null;
   fileExtractedPartner?: string | null;
+  filePartnerId?: string | null;
 }
 
 export interface TransactionForScoring {
@@ -90,6 +31,7 @@ export interface TransactionForScoring {
   name?: string | null;
   reference?: string | null;
   partner?: string | null;
+  partnerId?: string | null;
 }
 
 export interface PartnerForScoring {
@@ -110,9 +52,11 @@ export interface ScoredAttachment {
 
 /**
  * Hook for scoring attachments against a transaction
- * Uses the unified scoring cloud function
+ * Uses the unified scoring API route (/api/matching/score-files)
  */
 export function useAttachmentScoring() {
+  const { user } = useAuth();
+
   const scoreAttachments = useCallback(
     async (
       attachments: AttachmentToScore[],
@@ -124,38 +68,55 @@ export function useAttachmentScoring() {
       }
 
       try {
-        const result = await scoreAttachmentMatchFn({
-          attachments: attachments.map((att) => ({
-            key: att.key,
-            filename: att.filename,
-            mimeType: att.mimeType,
-            emailSubject: att.emailSubject,
-            emailFrom: att.emailFrom,
-            emailSnippet: att.emailSnippet,
-            emailBodyText: att.emailBodyText,
-            emailDate: att.emailDate?.toISOString() || null,
-            integrationId: att.integrationId,
-            fileExtractedAmount: att.fileExtractedAmount,
-            fileExtractedDate: att.fileExtractedDate?.toISOString() || null,
-            fileExtractedPartner: att.fileExtractedPartner,
-          })),
-          transaction: {
-            amount: transaction.amount,
-            date: transaction.date?.toISOString() || null,
-            name: transaction.name,
-            reference: transaction.reference,
-            partner: transaction.partner,
+        // Get auth token for the API call
+        const token = user ? await user.getIdToken() : null;
+
+        const response = await fetch("/api/matching/score-files", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          partner: partner
-            ? {
-                name: partner.name,
-                emailDomains: partner.emailDomains,
-                fileSourcePatterns: partner.fileSourcePatterns,
-              }
-            : null,
+          body: JSON.stringify({
+            attachments: attachments.map((att) => ({
+              key: att.key,
+              filename: att.filename,
+              mimeType: att.mimeType,
+              emailSubject: att.emailSubject,
+              emailFrom: att.emailFrom,
+              emailSnippet: att.emailSnippet,
+              emailBodyText: att.emailBodyText,
+              emailDate: att.emailDate?.toISOString() || null,
+              integrationId: att.integrationId,
+              fileExtractedAmount: att.fileExtractedAmount,
+              fileExtractedDate: att.fileExtractedDate?.toISOString() || null,
+              fileExtractedPartner: att.fileExtractedPartner,
+              filePartnerId: att.filePartnerId,
+            })),
+            transaction: {
+              amount: transaction.amount,
+              date: transaction.date?.toISOString() || null,
+              name: transaction.name,
+              reference: transaction.reference,
+              partner: transaction.partner,
+              partnerId: transaction.partnerId,
+            },
+            partner: partner
+              ? {
+                  name: partner.name,
+                  emailDomains: partner.emailDomains,
+                  fileSourcePatterns: partner.fileSourcePatterns,
+                }
+              : null,
+          }),
         });
 
-        return result.data.scores;
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+
+        const result = await response.json();
+        return result.scores;
       } catch (error) {
         console.error("[useAttachmentScoring] Error scoring attachments:", error);
         // Return empty scores on error (don't break the UI)
@@ -167,7 +128,7 @@ export function useAttachmentScoring() {
         }));
       }
     },
-    []
+    [user]
   );
 
   return { scoreAttachments };

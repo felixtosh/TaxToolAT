@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useAuth } from "@/components/auth";
 import { Button } from "@/components/ui/button";
@@ -16,18 +17,25 @@ import {
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  FileSpreadsheet,
   AlertCircle,
   Loader2,
   CheckCircle,
   ArrowLeft,
 } from "lucide-react";
+import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 
 export default function ResetPasswordPage() {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLogoJumping, setIsLogoJumping] = useState(false);
+
+  const handleLogoClick = () => {
+    if (isLogoJumping) return;
+    setIsLogoJumping(true);
+    setTimeout(() => setIsLogoJumping(false), 600);
+  };
   const { resetPassword } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -54,10 +62,17 @@ export default function ResetPasswordPage() {
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1 text-center">
         <div className="flex justify-center mb-4">
-          <div className="flex items-center gap-2">
-            <FileSpreadsheet className="h-8 w-8 text-primary" />
-            <span className="font-bold text-2xl">FiBuKI</span>
-          </div>
+          <button
+            type="button"
+            onClick={handleLogoClick}
+            className={cn(
+              "flex items-center gap-2 logo-wrapper",
+              isLogoJumping && "is-jumping"
+            )}
+          >
+            <FibukiMascot size={32} isJumping={isLogoJumping} />
+            <span className="font-bold text-2xl mascot-text">FiBuKI</span>
+          </button>
         </div>
         <CardTitle className="text-2xl">Reset password</CardTitle>
         <CardDescription>

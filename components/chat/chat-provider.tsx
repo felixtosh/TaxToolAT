@@ -2,13 +2,14 @@
 "use client";
 
 import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useChat as useVercelChat } from "@ai-sdk/react";
-import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall } from "@/types/chat";
+import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession } from "@/types/chat";
 import { AutoActionNotification } from "@/types/notification";
 import { requiresConfirmation, getConfirmationDetails } from "@/lib/chat/confirmation-config";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useChatPersistence } from "@/hooks/use-chat-persistence";
+import { useChatSessions } from "@/hooks/use-chat-sessions";
 import { useAuth } from "@/components/auth";
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -33,12 +34,49 @@ interface ChatProviderProps {
 
 export function ChatProvider({ children }: ChatProviderProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Read initial state from URL params
+  const initialChatOpen = searchParams.get("chat") === "1";
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(initialChatOpen);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [pendingConfirmations, setPendingConfirmations] = useState<ToolCall[]>([]);
-  const [activeTab, setActiveTab] = useState<ChatTab>("notifications");
+  const [activeTab, setActiveTab] = useState<ChatTab>(initialChatOpen ? "chat" : "notifications");
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("chat");
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
+  // Keep searchParams in a ref to avoid dependency loops
+  const searchParamsRef = useRef(searchParams);
+  useEffect(() => {
+    searchParamsRef.current = searchParams;
+  }, [searchParams]);
+
+  // Helper to update URL params without navigation (only handles chat open/close)
+  const updateUrlParams = useCallback((updates: { chat?: boolean }) => {
+    const currentParams = searchParamsRef.current;
+    const params = new URLSearchParams(currentParams.toString());
+
+    if (updates.chat !== undefined) {
+      if (updates.chat) {
+        params.set("chat", "1");
+      } else {
+        params.delete("chat");
+      }
+    }
+
+    // Check if URL would actually change to avoid unnecessary navigation
+    const newParamsString = params.toString();
+    const currentParamsString = currentParams.toString();
+    if (newParamsString === currentParamsString) {
+      return; // No change needed
+    }
+
+    const newUrl = newParamsString ? `${pathname}?${newParamsString}` : pathname;
+    router.replace(newUrl, { scroll: false });
+  }, [pathname, router]);
 
   // Notifications hook
   const {
@@ -53,25 +91,44 @@ export function ChatProvider({ children }: ChatProviderProps) {
     currentSessionId,
     isLoading: isSessionLoading,
     saveMessage,
+    switchSession,
+    createNewSession: createPersistenceSession,
   } = useChatPersistence();
 
-  // Get auth token for API requests
+  // Chat sessions hook (for history)
+  const {
+    sessions,
+    isLoading: isSessionsLoading,
+    getSessionMessages,
+  } = useChatSessions();
+
+  // Keep user in a ref so we can always access the current value in callbacks
+  const userRef = useRef(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  // Helper to get auth headers - must be called before each request
   const getAuthHeaders = useCallback(async (): Promise<Record<string, string>> => {
-    if (!user) return {};
+    const currentUser = userRef.current;
+    if (!currentUser) {
+      console.warn("[Chat] No user available for auth headers");
+      return {};
+    }
     try {
-      const token = await user.getIdToken();
+      const token = await currentUser.getIdToken();
       return { Authorization: `Bearer ${token}` };
     } catch (e) {
       console.error("[Chat] Failed to get auth token:", e);
       return {};
     }
-  }, [user]);
+  }, []);
 
   // Use Vercel AI SDK's useChat hook
+  // Note: We don't rely on hook-level headers - we pass them explicitly per-request
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const chatHook = (useVercelChat as any)({
     api: "/api/chat",
-    headers: getAuthHeaders,
     onToolCall: ({ toolCall }: { toolCall: any }) => {
       // Check if this tool requires confirmation
       if (requiresConfirmation(toolCall.toolName)) {
@@ -118,21 +175,76 @@ export function ChatProvider({ children }: ChatProviderProps) {
       if (msg.role === "assistant") {
         // Extract text content from parts or content
         let textContent = "";
-        if ((msg as { parts?: Array<{ type: string; text?: string }> }).parts) {
-          textContent = (msg as { parts: Array<{ type: string; text?: string }> }).parts
-            .filter((p) => p.type === "text" && p.text)
-            .map((p) => p.text)
-            .join("");
+        const toolInvocations: Array<{
+          toolCallId: string;
+          toolName: string;
+          args: Record<string, unknown>;
+          state: string;
+          result?: unknown;
+        }> = [];
+
+        if ((msg as any).parts) {
+          for (const p of (msg as any).parts) {
+            if (p.type === "text" && p.text) {
+              textContent += p.text;
+            } else if (typeof p.type === "string" && (p.type.startsWith("tool-") || p.type === "dynamic-tool")) {
+              // Extract tool invocation data
+              const toolName = p.toolName || (p.type.startsWith("tool-") ? p.type.replace("tool-", "") : null);
+              if (toolName && p.toolCallId) {
+                // Check if we already have this tool call
+                const existing = toolInvocations.find((t) => t.toolCallId === p.toolCallId);
+                if (existing) {
+                  // Update existing
+                  if (p.input) existing.args = p.input;
+                  if (p.output !== undefined) existing.result = typeof p.output === "string" ? JSON.parse(p.output) : p.output;
+                  if (p.state) existing.state = p.state;
+                } else {
+                  toolInvocations.push({
+                    toolCallId: p.toolCallId,
+                    toolName,
+                    args: p.input || {},
+                    state: p.state || "result",
+                    result: p.output !== undefined ? (typeof p.output === "string" ? JSON.parse(p.output) : p.output) : undefined,
+                  });
+                }
+              }
+            }
+          }
         } else if ((msg as { content?: string }).content) {
           textContent = (msg as { content: string }).content;
         }
 
-        if (textContent) {
-          saveMessage({
-            role: "assistant",
-            content: textContent,
-          }).catch((err) => console.error("Failed to save assistant message:", err));
+        // Save message with tool invocations (only include fields with values - Firestore rejects undefined)
+        const messageToSave: {
+          role: "assistant";
+          content: string;
+          toolCalls?: ToolCall[];
+          toolResults?: { toolCallId: string; result: unknown }[];
+        } = {
+          role: "assistant",
+          content: textContent,
+        };
+
+        if (toolInvocations.length > 0) {
+          messageToSave.toolCalls = toolInvocations.map((t) => ({
+            id: t.toolCallId,
+            name: t.toolName,
+            args: t.args,
+            result: t.result,
+            status: "executed" as const,
+            requiresConfirmation: false,
+          }));
+
+          const resultsWithData = toolInvocations.filter((t) => t.result !== undefined);
+          if (resultsWithData.length > 0) {
+            messageToSave.toolResults = resultsWithData.map((t) => ({
+              toolCallId: t.toolCallId,
+              result: t.result,
+            }));
+          }
         }
+
+        saveMessage(messageToSave).catch((err) => console.error("Failed to save assistant message:", err));
       }
     }
 
@@ -181,6 +293,14 @@ export function ChatProvider({ children }: ChatProviderProps) {
           })
         );
       },
+
+      openFile: (fileId: string) => {
+        window.dispatchEvent(
+          new CustomEvent("chat:openFile", {
+            detail: { fileId },
+          })
+        );
+      },
     }),
     [router]
   );
@@ -203,7 +323,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     [uiActions]
   );
 
-  // Send message using the SDK's sendMessage
+  // Send message using the SDK's sendMessage with explicit auth headers
   const sendMessage = useCallback(
     async (content: string) => {
       // Save user message to Firestore
@@ -212,9 +332,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
         content,
       }).catch((err) => console.error("Failed to save user message:", err));
 
-      await sdkSendMessage({ role: "user", content });
+      // Get fresh auth headers for this request
+      const headers = await getAuthHeaders();
+      await sdkSendMessage({ role: "user", content }, { headers });
     },
-    [sdkSendMessage, saveMessage]
+    [sdkSendMessage, saveMessage, getAuthHeaders]
   );
 
   // Approve tool call (for confirmation flow)
@@ -248,16 +370,76 @@ export function ChatProvider({ children }: ChatProviderProps) {
     setPendingConfirmations([]);
   }, [setMessages]);
 
-  // Load session (placeholder - will implement with Firestore)
+  // Load session - actually load messages from Firestore
   const loadSession = useCallback(async (sessionId: string) => {
-    // TODO: Load from Firestore
-    console.log("Loading session:", sessionId);
-  }, []);
+    try {
+      // Get messages for the session (already includes toolInvocations from serializeMessagesForSDK)
+      const messages = await getSessionMessages(sessionId);
+
+      // Messages from serializeMessagesForSDK already have the correct format including toolInvocations
+      // Just ensure proper typing for the SDK
+      const sdkMessages = messages.map((m: any) => ({
+        id: m.id,
+        role: m.role as "user" | "assistant" | "system",
+        content: m.content || "",
+        createdAt: m.createdAt,
+        // Include toolInvocations if present (for restoring tool call UI)
+        ...(m.toolInvocations && m.toolInvocations.length > 0 ? { toolInvocations: m.toolInvocations } : {}),
+      }));
+
+      // Update the chat state
+      setMessages(sdkMessages);
+      setPendingConfirmations([]);
+
+      // Update the persistence layer's current session
+      await switchSession(sessionId);
+
+      // Update the message counter to avoid re-saving loaded messages
+      lastSavedMessageCount.current = sdkMessages.length;
+    } catch (error) {
+      console.error("Failed to load session:", error);
+    }
+  }, [getSessionMessages, setMessages, switchSession]);
 
   // Toggle sidebar
   const toggleSidebar = useCallback(() => {
     setIsSidebarOpen((prev) => !prev);
   }, []);
+
+  // Start a new search thread for a transaction
+  const startSearchThread = useCallback(
+    async (transactionId: string) => {
+      // Switch to chat mode and tab
+      setSidebarMode("chat");
+      setActiveTab("chat");
+
+      // Open sidebar if not open
+      if (!isSidebarOpen) {
+        setIsSidebarOpen(true);
+      }
+
+      // Create a NEW session for this search to avoid polluting current chat
+      try {
+        await createPersistenceSession(`Find receipt for transaction`);
+      } catch (err) {
+        console.error("Failed to create new session for search:", err);
+      }
+
+      // Simple prompt - the agent will use searchReceiptForTransaction to get all details
+      const prompt = `Find receipt for transaction ${transactionId}`;
+
+      // Clear previous messages and send the search prompt
+      setMessages([]);
+      // Reset saved message counter for new session
+      lastSavedMessageCount.current = 0;
+
+      // Use setTimeout to ensure state is updated, then use wrapped sendMessage (saves to Firestore)
+      setTimeout(() => {
+        sendMessage(prompt);
+      }, 100);
+    },
+    [isSidebarOpen, setMessages, sendMessage, createPersistenceSession]
+  );
 
   // Start conversation from a notification
   const startConversationFromNotification = useCallback(
@@ -290,21 +472,18 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
       // Clear previous messages and send the context message
       setMessages([]);
-      // Use setTimeout to ensure state is cleared before sending
+      // Reset saved message counter for new conversation
+      lastSavedMessageCount.current = 0;
+      // Use setTimeout to ensure state is cleared, then use wrapped sendMessage (saves to Firestore)
       setTimeout(() => {
-        sdkSendMessage({ role: "user", content: contextMessage });
+        sendMessage(contextMessage);
       }, 100);
     },
-    [markNotificationRead, setMessages, sdkSendMessage]
+    [markNotificationRead, setMessages, sendMessage]
   );
 
-  // Load sidebar state from localStorage
+  // Load sidebar width from localStorage (width still uses localStorage, not URL)
   useEffect(() => {
-    const saved = localStorage.getItem("chatSidebarOpen");
-    if (saved !== null) {
-      setIsSidebarOpen(JSON.parse(saved));
-    }
-    // Load sidebar width
     const savedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
     if (savedWidth) {
       const parsed = parseInt(savedWidth, 10);
@@ -314,10 +493,16 @@ export function ChatProvider({ children }: ChatProviderProps) {
     }
   }, []);
 
-  // Save sidebar state to localStorage
+  // Sync sidebar open/close state to URL params
+  const hasInitialized = useRef(false);
   useEffect(() => {
-    localStorage.setItem("chatSidebarOpen", JSON.stringify(isSidebarOpen));
-  }, [isSidebarOpen]);
+    // Skip on initial render - we read from URL
+    if (hasInitialized.current) {
+      updateUrlParams({ chat: isSidebarOpen });
+    } else {
+      hasInitialized.current = true;
+    }
+  }, [isSidebarOpen, updateUrlParams]);
 
   // Handler for setting sidebar width (with persistence)
   const handleSetSidebarWidth = useCallback((width: number) => {
@@ -329,35 +514,116 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const value: ChatContextValue = useMemo(
     () => ({
       messages: messages.map((m: any) => {
+        // Debug: log raw message structure (only once per unique message)
+        if (m.role === "assistant" && m.parts?.length > 0) {
+          const partTypes = m.parts.map((p: any) => p.type);
+          const hasToolParts = partTypes.some((t: string) => t && (t.startsWith("tool-") || t === "dynamic-tool"));
+          if (hasToolParts) {
+            console.log("[ChatProvider] Message has tool parts:", partTypes.filter((t: string) => t !== "text"));
+          }
+        }
+
         // AI SDK v6 uses 'parts' array - preserve order for chronological rendering
         const orderedParts: Array<{ type: "text"; text: string } | { type: "tool"; toolCall: NonNullable<ChatContextValue["messages"][0]["toolCalls"]>[0] }> = [];
         let fullTextContent = "";
 
         if (m.parts) {
+          // Track tool calls by ID to merge chunks, and their index in orderedParts for in-place updates
+          const toolCallsById = new Map<string, {
+            data: {
+              id: string;
+              name: string;
+              args: Record<string, unknown>;
+              result?: unknown;
+              state: string;
+            };
+            partIndex: number; // Index in orderedParts where this tool is rendered
+          }>();
+
+          // Helper to parse JSON output
+          const parseOutput = (output: unknown) => {
+            if (typeof output === "string") {
+              try {
+                return JSON.parse(output);
+              } catch {
+                return output;
+              }
+            }
+            return output;
+          };
+
+          // Helper to create tool part for orderedParts
+          const createToolPart = (toolCall: { id: string; name: string; args: Record<string, unknown>; result?: unknown; state: string }) => ({
+            type: "tool" as const,
+            toolCall: {
+              id: toolCall.id,
+              name: toolCall.name,
+              args: toolCall.args,
+              result: toolCall.result,
+              status:
+                toolCall.state === "output-available" || toolCall.result !== undefined
+                  ? ("executed" as const)
+                  : toolCall.state === "input-available" || toolCall.state === "input-streaming"
+                  ? ("pending" as const)
+                  : pendingConfirmations.find((pc) => pc.id === toolCall.id)?.status || ("pending" as const),
+              requiresConfirmation: requiresConfirmation(toolCall.name),
+            },
+          });
+
           for (const p of m.parts) {
             if (p.type === "text" && (p as { text?: string }).text) {
               const text = (p as { text: string }).text;
               fullTextContent += text;
               orderedParts.push({ type: "text", text });
-            } else if (typeof p.type === "string" && p.type.startsWith("tool-")) {
-              const toolPart = p as { type: string; toolCallId: string; input?: Record<string, unknown>; output?: unknown; state: string };
-              const toolName = toolPart.type.replace("tool-", "");
-              orderedParts.push({
-                type: "tool",
-                toolCall: {
-                  id: toolPart.toolCallId,
+            } else if (typeof p.type === "string" && (p.type.startsWith("tool-") || p.type === "dynamic-tool")) {
+              // Handle tool parts - could be chunk types or accumulated types
+              const toolPart = p as {
+                type: string;
+                toolCallId: string;
+                toolName?: string;
+                input?: Record<string, unknown>;
+                output?: unknown;
+                state?: string;
+                dynamic?: boolean;
+              };
+
+              // Determine tool name
+              let toolName: string | null = null;
+              if (toolPart.toolName) {
+                toolName = toolPart.toolName;
+              } else if (p.type.startsWith("tool-") && !["tool-input-start", "tool-input-delta", "tool-output-available", "tool-result"].includes(p.type)) {
+                toolName = p.type.replace("tool-", "");
+              }
+
+              // Skip chunk types without toolName (like tool-input-delta)
+              if (!toolName && !toolCallsById.has(toolPart.toolCallId)) {
+                continue;
+              }
+
+              const toolCallId = toolPart.toolCallId;
+              const existing = toolCallsById.get(toolCallId);
+              const parsedOutput = parseOutput(toolPart.output);
+
+              if (existing) {
+                // Update existing tool call data
+                if (toolPart.input) existing.data.args = toolPart.input;
+                if (parsedOutput !== undefined) existing.data.result = parsedOutput;
+                if (toolPart.state) existing.data.state = toolPart.state;
+                // Update the part in orderedParts in-place
+                orderedParts[existing.partIndex] = createToolPart(existing.data);
+              } else if (toolName) {
+                // Create new tool call and add to orderedParts at current position
+                const toolData = {
+                  id: toolCallId,
                   name: toolName,
                   args: toolPart.input || {},
-                  result: toolPart.output,
-                  status:
-                    toolPart.state === "output-available"
-                      ? "executed"
-                      : toolPart.state === "input-available" || toolPart.state === "input-streaming"
-                      ? "pending"
-                      : pendingConfirmations.find((pc) => pc.id === toolPart.toolCallId)?.status || "pending",
-                  requiresConfirmation: requiresConfirmation(toolName),
-                },
-              });
+                  result: parsedOutput,
+                  state: toolPart.state || "pending",
+                };
+                const partIndex = orderedParts.length;
+                orderedParts.push(createToolPart(toolData));
+                toolCallsById.set(toolCallId, { data: toolData, partIndex });
+              }
             }
           }
         }
@@ -381,8 +647,9 @@ export function ChatProvider({ children }: ChatProviderProps) {
       }) as ChatContextValue["messages"],
       isLoading,
       isStreaming: isLoading,
-      currentSession: null,
-      sessions: [],
+      currentSession: sessions.find((s) => s.id === currentSessionId) || null,
+      sessions,
+      currentSessionId,
       pendingConfirmations,
       sendMessage,
       approveToolCall,
@@ -402,9 +669,14 @@ export function ChatProvider({ children }: ChatProviderProps) {
       markNotificationRead,
       markAllNotificationsRead,
       startConversationFromNotification,
+      // Agentic search
+      startSearchThread,
       // Sidebar mode
       sidebarMode,
       setSidebarMode,
+      // History
+      isHistoryOpen,
+      setIsHistoryOpen,
     }),
     [
       messages,
@@ -426,7 +698,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
       markNotificationRead,
       markAllNotificationsRead,
       startConversationFromNotification,
+      startSearchThread,
       sidebarMode,
+      isHistoryOpen,
+      sessions,
+      currentSessionId,
     ]
   );
 
