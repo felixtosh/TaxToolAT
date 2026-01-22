@@ -11,6 +11,8 @@ import {
 } from "@/components/ui/tooltip";
 import { LocalFilesSearchResult, LocalFileCandidate, ToolResultUIActions } from "./types";
 
+// Note: strategy field is available but not displayed in header to save space
+
 interface LocalFilesResultProps {
   result: LocalFilesSearchResult;
   uiActions?: ToolResultUIActions;
@@ -26,7 +28,7 @@ export function LocalFilesResult({
   uiActions,
   maxItems = 5,
 }: LocalFilesResultProps) {
-  const { candidates, totalFound, strategy, searchedTransaction } = result;
+  const { candidates, totalFound } = result;
   const displayCandidates = candidates.slice(0, maxItems);
   const hasMore = totalFound > maxItems;
 
@@ -50,12 +52,6 @@ export function LocalFilesResult({
     return "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300";
   };
 
-  const strategyLabels: Record<string, string> = {
-    partner_files: "Partner",
-    amount_files: "Amount",
-    both: "Combined",
-  };
-
   if (candidates.length === 0) {
     return (
       <div className="rounded-md border p-3 text-sm text-muted-foreground flex items-center gap-2">
@@ -67,55 +63,46 @@ export function LocalFilesResult({
 
   return (
     <div className="rounded-md border text-xs overflow-hidden">
-      {/* Header */}
-      <div className="bg-muted/50 px-3 py-2 flex items-center justify-between border-b">
-        <div className="flex items-center gap-2">
-          <FolderSearch className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="font-medium text-sm">Local Files</span>
-          {strategy && (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
-              {strategyLabels[strategy] || strategy}
-            </Badge>
-          )}
-        </div>
-        <span className="text-muted-foreground">
-          {totalFound} found
-        </span>
+      {/* Table header row */}
+      <div className="bg-muted/50 grid grid-cols-[1fr_auto_auto] gap-2 px-2 py-1.5 border-b items-center">
+        <span className="font-medium text-muted-foreground">Name</span>
+        <span className="font-medium text-muted-foreground text-right w-[70px]">Amount</span>
+        <span className="font-medium text-muted-foreground text-right w-[50px]">Match</span>
       </div>
 
-      {/* Results list - compact single-line rows */}
+      {/* Results list - table rows */}
       <div className="divide-y divide-muted/50">
         {displayCandidates.map((candidate) => (
           <button
             key={candidate.id}
             type="button"
             onClick={() => handleRowClick(candidate)}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 hover:bg-muted/50 transition-colors text-left"
+            className="w-full grid grid-cols-[1fr_auto_auto] gap-2 px-2 py-2 hover:bg-muted/50 transition-colors text-left items-center"
           >
-            {/* File icon - smaller */}
-            <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            {/* Filename with icon */}
+            <div className="flex items-center gap-2 min-w-0">
+              <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="text-xs font-medium truncate">
+                {candidate.fileName || "Unnamed file"}
+              </span>
+            </div>
 
-            {/* Filename - single line */}
-            <span className="text-xs font-medium truncate flex-1 min-w-0">
-              {candidate.fileName || "Unnamed file"}
+            {/* Extracted amount */}
+            <span className={cn(
+              "text-right tabular-nums w-[70px]",
+              candidate.extractedAmount
+                ? (candidate.extractedAmount < 0 ? "text-red-600" : "text-green-600")
+                : "text-muted-foreground"
+            )}>
+              {candidate.extractedAmount ? formatAmount(candidate.extractedAmount) : "—"}
             </span>
 
-            {/* Extracted amount if available */}
-            {candidate.extractedAmount && (
-              <span className={cn(
-                "text-[10px] font-medium shrink-0",
-                candidate.extractedAmount < 0 ? "text-red-600" : "text-green-600"
-              )}>
-                {formatAmount(candidate.extractedAmount)}
-              </span>
-            )}
-
-            {/* Score badge */}
+            {/* Score badge with tooltip */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Badge
                   variant="outline"
-                  className={cn("text-[10px] py-0 h-4 cursor-help shrink-0", getScoreColor(candidate.score))}
+                  className={cn("text-[10px] py-0 h-4 cursor-help w-[50px] justify-center", getScoreColor(candidate.score))}
                 >
                   {candidate.score}%
                 </Badge>
