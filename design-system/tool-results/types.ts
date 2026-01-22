@@ -138,6 +138,35 @@ export interface SearchSuggestionsResultData {
 }
 
 /**
+ * File result from listFiles tool
+ */
+export interface FileResult {
+  id: string;
+  fileName: string;
+  fileType: string;
+  date: string | null;
+  dateFormatted: string;
+  amount: number | null;
+  amountFormatted: string | null;
+  partnerId: string | null;
+  partnerName: string | null;
+  transactionIds: string[];
+  hasTransaction: boolean;
+  extractionComplete: boolean;
+  isNotInvoice: boolean;
+  uploadedAt: string;
+}
+
+/**
+ * Result from listFiles tool
+ */
+export interface FileListResult {
+  files: FileResult[];
+  total: number;
+  hasMore: boolean;
+}
+
+/**
  * Props for tool result UI actions
  */
 export interface ToolResultUIActions {

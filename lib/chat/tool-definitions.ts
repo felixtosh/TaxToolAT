@@ -147,6 +147,39 @@ export const READ_TOOLS: ChatToolDefinition[] = [
     ],
     relatedTools: ["rollbackTransaction"],
   },
+  {
+    id: "listFiles",
+    name: "List Files",
+    description:
+      "List uploaded files with optional filters. Returns date, name, amount, partner, and connection status. Supports filtering by date range, amount range, search text, partner, and whether the file is connected to a transaction.",
+    category: "read",
+    requiresConfirmation: false,
+    inputSchema: {
+      required: [],
+      optional: [
+        "search",
+        "partnerId",
+        "startDate",
+        "endDate",
+        "minAmount",
+        "maxAmount",
+        "hasTransaction",
+        "limit",
+      ],
+    },
+    outputFields: [
+      "files[]",
+      "total",
+      "hasMore",
+    ],
+    relatedTools: ["searchLocalFiles", "listTransactions"],
+    examples: [
+      "Show me all my uploaded files",
+      "List invoices from IKEA",
+      "Find files without transactions",
+      "Show files from last month",
+    ],
+  },
 ];
 
 // ============================================================================
@@ -260,9 +293,9 @@ export const WRITE_TOOLS: ChatToolDefinition[] = [
 export const SEARCH_TOOLS: ChatToolDefinition[] = [
   {
     id: "searchLocalFiles",
-    name: "Search Local Files",
+    name: "Search Local Files for Transaction",
     description:
-      "Search uploaded files that might match a transaction. Scores files by amount, date, and partner match. Returns candidates with match scores and reasons.",
+      "Search uploaded files that might match a specific transaction. Requires a transaction ID. Scores files by amount, date, and partner match. Returns candidates with match scores and reasons.",
     category: "search",
     requiresConfirmation: false,
     inputSchema: {
@@ -277,10 +310,10 @@ export const SEARCH_TOOLS: ChatToolDefinition[] = [
       "candidates[]",
       "totalFound",
     ],
-    relatedTools: ["searchGmailAttachments", "executeNominatedDownloads"],
+    relatedTools: ["listFiles", "searchGmailAttachments", "executeNominatedDownloads"],
     examples: [
       "Find receipts for this transaction",
-      "Search for matching invoices",
+      "Search for matching invoices for transaction X",
     ],
   },
   {

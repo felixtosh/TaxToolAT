@@ -6,10 +6,12 @@ import {
   GmailAttachmentsResult,
   SearchSuggestionsResult,
   TransactionListResult,
+  FileListResult,
   LocalFilesSearchResult,
   GmailAttachmentsSearchResult,
   SearchSuggestionsResultData,
   TransactionResult,
+  FileResult,
   ToolResultUIActions,
 } from "@/design-system/tool-results";
 import { ToolCall } from "@/types/chat";
@@ -114,6 +116,35 @@ export function useToolResultRenderer(options: UseToolResultRendererOptions = {}
       return (
         <SearchSuggestionsResult
           result={{ ...typedResult, searchType: "search_suggestions" }}
+        />
+      );
+    },
+
+    // List files
+    listFiles: (result, actions, toolArgs) => {
+      // Handle both formats: {files: [...], total: N} or direct array
+      let files: FileResult[];
+      let totalCount: number | undefined;
+      if (Array.isArray(result)) {
+        files = result;
+      } else if (result && typeof result === "object" && "files" in result) {
+        const typedResult = result as { files: FileResult[]; total?: number };
+        files = typedResult.files;
+        totalCount = typedResult.total;
+      } else {
+        return null;
+      }
+      if (!Array.isArray(files) || files.length === 0) return null;
+
+      // Extract search query from tool args if available
+      const searchQuery = toolArgs?.search as string | undefined;
+
+      return (
+        <FileListResult
+          files={files}
+          uiActions={actions}
+          searchQuery={searchQuery}
+          totalCount={totalCount}
         />
       );
     },

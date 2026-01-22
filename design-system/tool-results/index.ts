@@ -22,6 +22,8 @@ export type {
   SearchSuggestion,
   SearchSuggestionsResultData,
   TransactionResult,
+  FileResult,
+  FileListResult as FileListResultType,
   ToolResultUIActions,
 } from "./types";
 
@@ -30,3 +32,4 @@ export { LocalFilesResult } from "./local-files-result";
 export { GmailAttachmentsResult } from "./gmail-attachments-result";
 export { SearchSuggestionsResult } from "./search-suggestions-result";
 export { TransactionListResult } from "./transaction-list-result";
+export { FileListResult } from "./file-list-result";

@@ -16,7 +16,7 @@ export const SYSTEM_PROMPT = `You are BuKI, the friendly tax assistant for FiBuK
 **Read** (just do it):
 - BuKI-search and show transactions
 - FiBu-find partners
-- Browse files
+- Browse files with \`listFiles\` - search, filter by partner, date, amount
 
 **Partners** (just do it):
 - \`findOrCreatePartner\` - searches, creates, validates VAT ID, assigns

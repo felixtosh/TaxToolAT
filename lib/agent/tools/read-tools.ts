@@ -367,6 +367,135 @@ export const getTransactionHistoryTool = tool(
 );
 
 // ============================================================================
+// List Files
+// ============================================================================
+
+export const listFilesTool = tool(
+  async (
+    {
+      search,
+      partnerId,
+      startDate,
+      endDate,
+      minAmount,
+      maxAmount,
+      hasTransaction,
+      limit = 20,
+    },
+    config
+  ) => {
+    const userId = config?.configurable?.userId;
+    if (!userId) {
+      return { error: "User ID not provided" };
+    }
+
+    let query = db
+      .collection("files")
+      .where("userId", "==", userId)
+      .where("deletedAt", "==", null)
+      .orderBy("uploadedAt", "desc");
+
+    // Apply partnerId filter at query level if provided
+    if (partnerId) {
+      query = query.where("partnerId", "==", partnerId);
+    }
+
+    // Fetch more for client-side filtering
+    const fetchLimit = search || startDate || endDate || minAmount !== undefined || maxAmount !== undefined ? 500 : limit;
+    const snapshot = await query.limit(fetchLimit).get();
+
+    const files = snapshot.docs.map((doc) => {
+      const data = doc.data();
+      // Get extracted date if available
+      const extractedDate = data.extractedDate?.toDate?.() || data.uploadedAt?.toDate?.();
+      // Get extracted amount (in cents)
+      const extractedAmount = data.extractedGrossAmount || data.extractedNetAmount || null;
+
+      return {
+        id: doc.id,
+        fileName: data.fileName,
+        fileType: data.fileType,
+        date: extractedDate?.toISOString() || null,
+        dateFormatted: extractedDate?.toLocaleDateString("de-DE") || "—",
+        amount: extractedAmount,
+        amountFormatted: extractedAmount
+          ? new Intl.NumberFormat("de-DE", {
+              style: "currency",
+              currency: data.extractedCurrency || "EUR",
+            }).format(extractedAmount / 100)
+          : null,
+        partnerId: data.partnerId || null,
+        partnerName: data.extractedPartner || null,
+        transactionIds: data.transactionIds || [],
+        hasTransaction: (data.transactionIds || []).length > 0,
+        extractionComplete: data.extractionComplete || false,
+        isNotInvoice: data.isNotInvoice || false,
+        uploadedAt: data.uploadedAt?.toDate?.()?.toISOString(),
+      };
+    });
+
+    // Apply client-side filters
+    let filtered = files;
+
+    if (startDate) {
+      const start = new Date(startDate);
+      filtered = filtered.filter((f) => f.date && new Date(f.date) >= start);
+    }
+
+    if (endDate) {
+      const end = new Date(endDate);
+      filtered = filtered.filter((f) => f.date && new Date(f.date) <= end);
+    }
+
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filtered = filtered.filter(
+        (f) =>
+          f.fileName?.toLowerCase().includes(searchLower) ||
+          f.partnerName?.toLowerCase().includes(searchLower)
+      );
+    }
+
+    if (minAmount !== undefined) {
+      filtered = filtered.filter((f) => f.amount && Math.abs(f.amount) >= minAmount * 100);
+    }
+
+    if (maxAmount !== undefined) {
+      filtered = filtered.filter((f) => f.amount && Math.abs(f.amount) <= maxAmount * 100);
+    }
+
+    if (hasTransaction !== undefined) {
+      filtered = filtered.filter((f) => f.hasTransaction === hasTransaction);
+    }
+
+    // Apply limit to final results
+    const totalMatches = filtered.length;
+    const limitedResults = filtered.slice(0, limit);
+
+    return {
+      files: limitedResults,
+      total: totalMatches,
+      hasMore: totalMatches > limit,
+    };
+  },
+  {
+    name: "listFiles",
+    description:
+      "List uploaded files with optional filters. Returns date, name, amount, partner, and connection status.",
+    schema: z.object({
+      search: z.string().optional().describe("Search in filename/partner name"),
+      partnerId: z.string().optional().describe("Filter by partner ID"),
+      startDate: z.string().optional().describe("Start date filter (ISO format)"),
+      endDate: z.string().optional().describe("End date filter (ISO format)"),
+      minAmount: z.number().optional().describe("Minimum amount in EUR"),
+      maxAmount: z.number().optional().describe("Maximum amount in EUR"),
+      hasTransaction: z.boolean().optional().describe("Filter by transaction connection status"),
+      limit: z.number().optional().describe("Max results (default 20)"),
+    }),
+  }
+);
+
+// ============================================================================
 // List Partners
 // ============================================================================
 
@@ -484,6 +613,7 @@ export const READ_TOOLS = [
   listSourcesTool,
   getSourceTool,
   getTransactionHistoryTool,
+  listFilesTool,
   listPartnersTool,
   getPartnerTool,
 ];
