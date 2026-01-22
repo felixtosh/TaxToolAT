@@ -514,20 +514,33 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const value: ChatContextValue = useMemo(
     () => ({
       messages: messages.map((m: any) => {
-        // Debug: log raw message structure (only once per unique message)
-        if (m.role === "assistant" && m.parts?.length > 0) {
-          const partTypes = m.parts.map((p: any) => p.type);
-          const hasToolParts = partTypes.some((t: string) => t && (t.startsWith("tool-") || t === "dynamic-tool"));
-          if (hasToolParts) {
-            console.log("[ChatProvider] Message has tool parts:", partTypes.filter((t: string) => t !== "text"));
-          }
-        }
-
         // AI SDK v6 uses 'parts' array - preserve order for chronological rendering
         const orderedParts: Array<{ type: "text"; text: string } | { type: "tool"; toolCall: NonNullable<ChatContextValue["messages"][0]["toolCalls"]>[0] }> = [];
         let fullTextContent = "";
 
-        if (m.parts) {
+        // Handle messages loaded from Firestore (have toolInvocations, not parts)
+        if (m.toolInvocations && m.toolInvocations.length > 0) {
+          // Add text content first
+          if (m.content) {
+            fullTextContent = m.content;
+            orderedParts.push({ type: "text", text: m.content });
+          }
+          // Then add tool invocations
+          for (const ti of m.toolInvocations) {
+            orderedParts.push({
+              type: "tool",
+              toolCall: {
+                id: ti.toolCallId,
+                name: ti.toolName,
+                args: ti.args || {},
+                result: ti.result,
+                status: ti.state === "result" || ti.result !== undefined ? "executed" : "pending",
+                requiresConfirmation: requiresConfirmation(ti.toolName),
+              },
+            });
+          }
+        } else if (m.parts) {
+          // Handle live streaming messages (have parts array)
           // Track tool calls by ID to merge chunks, and their index in orderedParts for in-place updates
           const toolCallsById = new Map<string, {
             data: {
@@ -595,11 +608,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
                 toolName = p.type.replace("tool-", "");
               }
 
-              // Skip chunk types without toolName (like tool-input-delta)
-              if (!toolName && !toolCallsById.has(toolPart.toolCallId)) {
-                continue;
-              }
-
+              // For chunk types without toolName, try to find if we have a pending tool with this ID
+              // This helps preserve tool calls that arrive in chunks
               const toolCallId = toolPart.toolCallId;
               const existing = toolCallsById.get(toolCallId);
               const parsedOutput = parseOutput(toolPart.output);
@@ -624,21 +634,24 @@ export function ChatProvider({ children }: ChatProviderProps) {
                 orderedParts.push(createToolPart(toolData));
                 toolCallsById.set(toolCallId, { data: toolData, partIndex });
               }
+              // Note: If no toolName and not tracked, skip silently (chunk without header)
             }
           }
         }
 
-        // Fallback for legacy content string
+        // Fallback for legacy content string (no parts, no toolInvocations)
         if (!fullTextContent && (m as unknown as { content?: string }).content) {
           fullTextContent = (m as unknown as { content: string }).content;
-          orderedParts.push({ type: "text", text: fullTextContent });
+          if (orderedParts.length === 0 || orderedParts[0].type !== "text") {
+            orderedParts.unshift({ type: "text", text: fullTextContent });
+          }
         }
 
         return {
           id: m.id,
           role: m.role as "user" | "assistant" | "system",
           content: fullTextContent,
-          createdAt: new Date(),
+          createdAt: m.createdAt instanceof Date ? m.createdAt : new Date(),
           parts: orderedParts,
           toolCalls: orderedParts
             .filter((p): p is { type: "tool"; toolCall: NonNullable<ChatContextValue["messages"][0]["toolCalls"]>[0] } => p.type === "tool")

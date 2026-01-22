@@ -20,6 +20,9 @@ export interface ChatMessage {
   content: string;
   createdAt: Date | Timestamp;
 
+  /** Sequence number for deterministic ordering (auto-incremented per session) */
+  sequence?: number;
+
   /** Ordered parts for rendering (text and tool calls in chronological order) */
   parts?: MessagePart[];
 

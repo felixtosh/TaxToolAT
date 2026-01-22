@@ -127,6 +127,9 @@ export async function getChatMessages(
   options: { limit?: number; offset?: number } = {}
 ): Promise<ChatMessage[]> {
   const messagesPath = getMessagesCollection(ctx.userId, sessionId);
+
+  // Try ordering by sequence first (for newer messages), fall back to createdAt
+  // Note: sequence field may not exist on older messages
   const q = query(
     collection(ctx.db, messagesPath),
     orderBy("createdAt", "asc"),
@@ -134,10 +137,20 @@ export async function getChatMessages(
   );
 
   const snapshot = await getDocs(q);
-  return snapshot.docs.map((doc) => ({
+  const messages = snapshot.docs.map((doc) => ({
     id: doc.id,
     ...doc.data(),
   })) as ChatMessage[];
+
+  // Sort by sequence if available, otherwise keep createdAt order
+  return messages.sort((a, b) => {
+    // If both have sequence, use that
+    if (a.sequence !== undefined && b.sequence !== undefined) {
+      return a.sequence - b.sequence;
+    }
+    // Otherwise, keep original order (createdAt is already sorted by query)
+    return 0;
+  });
 }
 
 /**
@@ -146,26 +159,31 @@ export async function getChatMessages(
 export async function addChatMessage(
   ctx: OperationsContext,
   sessionId: string,
-  message: Omit<ChatMessage, "id" | "createdAt">
+  message: Omit<ChatMessage, "id" | "createdAt" | "sequence">
 ): Promise<string> {
   const messagesPath = getMessagesCollection(ctx.userId, sessionId);
   const now = Timestamp.now();
 
+  // Update session with message count and preview first to get the new count
+  const sessionRef = doc(ctx.db, `users/${ctx.userId}/chatSessions`, sessionId);
+  const sessionSnap = await getDoc(sessionRef);
+
+  let newCount = 1;
+  if (sessionSnap.exists()) {
+    const sessionData = sessionSnap.data();
+    newCount = (sessionData.messageCount || 0) + 1;
+  }
+
   const newMessage = {
     ...message,
     createdAt: now,
+    sequence: newCount, // Use message count as sequence for deterministic ordering
   };
 
   const docRef = await addDoc(collection(ctx.db, messagesPath), newMessage);
 
-  // Update session with message count and preview
-  const sessionRef = doc(ctx.db, `users/${ctx.userId}/chatSessions`, sessionId);
-  const sessionSnap = await getDoc(sessionRef);
-
+  // Update session
   if (sessionSnap.exists()) {
-    const sessionData = sessionSnap.data();
-    const newCount = (sessionData.messageCount || 0) + 1;
-
     // Generate title from first user message if this is the first message
     const updates: Record<string, unknown> = {
       messageCount: newCount,
