@@ -11,6 +11,14 @@ interface GmailAttachment {
   existingFileId?: string | null;
 }
 
+interface EmailClassification {
+  hasPdfAttachment: boolean;
+  possibleMailInvoice: boolean;
+  possibleInvoiceLink: boolean;
+  confidence: number;
+  matchedKeywords: string[];
+}
+
 interface GmailMessage {
   messageId: string;
   threadId: string;
@@ -21,6 +29,7 @@ interface GmailMessage {
   snippet: string;
   bodyText: string | null;
   attachments: GmailAttachment[];
+  classification?: EmailClassification;
 }
 
 interface SearchGmailResponse {
