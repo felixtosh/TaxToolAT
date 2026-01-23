@@ -52,6 +52,8 @@ exports.scoreAttachmentMatchCallable = (0, https_1.onCall)({
             // Explicit partner IDs for connected partner matching
             filePartnerId: att.filePartnerId,
             transactionPartnerId: transaction?.partnerId,
+            // Email classification
+            classification: att.classification,
         };
         const result = (0, scoreAttachmentMatch_1.scoreAttachmentMatch)(input);
         return {

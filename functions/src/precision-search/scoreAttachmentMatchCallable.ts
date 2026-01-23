@@ -27,6 +27,13 @@ interface ScoreAttachmentRequest {
     fileExtractedPartner?: string | null;
     // Explicit partner ID assigned to the file
     filePartnerId?: string | null;
+    // Email classification (for emails)
+    classification?: {
+      hasPdfAttachment?: boolean;
+      possibleMailInvoice?: boolean;
+      possibleInvoiceLink?: boolean;
+      confidence?: number;
+    } | null;
   }>;
   transaction: {
     amount?: number | null;
@@ -110,6 +117,8 @@ export const scoreAttachmentMatchCallable = onCall<
         // Explicit partner IDs for connected partner matching
         filePartnerId: att.filePartnerId,
         transactionPartnerId: transaction?.partnerId,
+        // Email classification
+        classification: att.classification,
       };
 
       const result = scoreAttachmentMatch(input);

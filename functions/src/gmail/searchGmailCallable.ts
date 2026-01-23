@@ -5,6 +5,7 @@
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { classifyEmail, EmailClassification } from "../precision-search/shared-utils";
 
 const db = getFirestore();
 
@@ -44,6 +45,8 @@ interface GmailMessageResult {
   snippet: string;
   bodyText: string | null;
   attachments: GmailAttachment[];
+  /** Email classification based on content analysis */
+  classification?: EmailClassification;
 }
 
 interface SearchGmailResponse {
@@ -439,15 +442,20 @@ export const searchGmailCallable = onCall<
       const fromHeader = extractHeader(msg, "From");
       const { email: fromEmail, name: fromName } = parseFromHeader(fromHeader);
       const attachments = extractAttachments(msg);
+      const subject = extractHeader(msg, "Subject") || "(No Subject)";
+      const snippet = msg.snippet || "";
+
+      // Classify email to determine type (mail invoice, invoice link, has PDF)
+      const classification = classifyEmail(subject, snippet, attachments);
 
       return {
         messageId: msg.id,
         threadId: msg.threadId,
-        subject: extractHeader(msg, "Subject") || "(No Subject)",
+        subject,
         from: fromEmail,
         fromName,
         date: new Date(parseInt(msg.internalDate, 10)).toISOString(),
-        snippet: msg.snippet || "",
+        snippet,
         bodyText: extractBodyText(msg),
         attachments: attachments.map((att) => {
           const key = `${msg.id}:${att.attachmentId}`;
@@ -456,6 +464,7 @@ export const searchGmailCallable = onCall<
             existingFileId: existingFilesMap.get(key) || null,
           };
         }),
+        classification,
       };
     });
 

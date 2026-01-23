@@ -193,6 +193,22 @@ function scoreAttachmentMatch(input) {
         }
         // Note: For file extracted date, no date multiplier - that's for email date
     }
+    // === EMAIL CLASSIFICATION BOOST ===
+    // If email was classified as likely invoice, boost the score
+    const classification = input.classification;
+    if (classification) {
+        if (classification.possibleMailInvoice) {
+            // Email body IS the invoice (order confirmation, receipt)
+            score += 0.15;
+            reasons.push("Mail invoice detected");
+        }
+        if (classification.possibleInvoiceLink) {
+            // Email has links to download invoice
+            score += 0.10;
+            reasons.push("Invoice link detected");
+        }
+        // hasPdfAttachment is already covered by MIME type check below
+    }
     // 1. Likely receipt file type (+15%)
     if (isLikelyReceiptMimeType(mimeType)) {
         score += 0.15;

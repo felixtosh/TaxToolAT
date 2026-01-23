@@ -195,6 +195,9 @@ export interface EmailMessage {
   /** Snippet/preview text */
   snippet: string;
 
+  /** Full body text (plain text or stripped HTML) */
+  bodyText?: string | null;
+
   /** Attachments in this email */
   attachments: EmailAttachment[];
 

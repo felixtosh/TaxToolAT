@@ -10,6 +10,7 @@ exports.buildGmailSearchQuery = buildGmailSearchQuery;
 exports.isLikelyReceiptAttachment = isLikelyReceiptAttachment;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
+const shared_utils_1 = require("../precision-search/shared-utils");
 const db = (0, firestore_1.getFirestore)();
 // ============================================================================
 // Helper Functions
@@ -286,14 +287,18 @@ exports.searchGmailCallable = (0, https_1.onCall)({
         const fromHeader = extractHeader(msg, "From");
         const { email: fromEmail, name: fromName } = parseFromHeader(fromHeader);
         const attachments = extractAttachments(msg);
+        const subject = extractHeader(msg, "Subject") || "(No Subject)";
+        const snippet = msg.snippet || "";
+        // Classify email to determine type (mail invoice, invoice link, has PDF)
+        const classification = (0, shared_utils_1.classifyEmail)(subject, snippet, attachments);
         return {
             messageId: msg.id,
             threadId: msg.threadId,
-            subject: extractHeader(msg, "Subject") || "(No Subject)",
+            subject,
             from: fromEmail,
             fromName,
             date: new Date(parseInt(msg.internalDate, 10)).toISOString(),
-            snippet: msg.snippet || "",
+            snippet,
             bodyText: extractBodyText(msg),
             attachments: attachments.map((att) => {
                 const key = `${msg.id}:${att.attachmentId}`;
@@ -302,6 +307,7 @@ exports.searchGmailCallable = (0, https_1.onCall)({
                     existingFileId: existingFilesMap.get(key) || null,
                 };
             }),
+            classification,
         };
     });
     // Update last accessed time

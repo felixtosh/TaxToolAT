@@ -17,6 +17,7 @@ import {
   ArrowRight,
   Globe,
   ExternalLink,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -216,6 +217,7 @@ export function ConnectFileOverlay({
   const [strategyGmailMessageIds, setStrategyGmailMessageIds] = useState<Set<string>>(new Set());
   const [strategyEmailMessageIds, setStrategyEmailMessageIds] = useState<Set<string>>(new Set());
   const [strategyQueryByMessageId, setStrategyQueryByMessageId] = useState<Map<string, string>>(new Map());
+  const [showAllSuggestions, setShowAllSuggestions] = useState(false);
 
   // Files tab state
   const [selectedResult, setSelectedResult] = useState<UnifiedSearchResult | null>(null);
@@ -289,6 +291,16 @@ export function ConnectFileOverlay({
     partner,
     enabled: open,
   });
+
+  const suggestionPreviewLimit = 3;
+  const typedSuggestionsToShow = showAllSuggestions ? typedSuggestions : typedSuggestions.slice(0, suggestionPreviewLimit);
+  const suggestedQueriesToShow = showAllSuggestions ? suggestedQueries : suggestedQueries.slice(0, suggestionPreviewLimit);
+  const showMoreTypedSuggestions = !showAllSuggestions && typedSuggestions.length > suggestionPreviewLimit;
+  const showMoreSuggestedQueries = !showAllSuggestions && suggestedQueries.length > suggestionPreviewLimit;
+
+  useEffect(() => {
+    setShowAllSuggestions(false);
+  }, [open, suggestionsLoading, typedSuggestions.length, suggestedQueries.length]);
 
   // Build transaction info for the search hook
   const searchTransactionInfo: TransactionInfo | null = useMemo(() => {
@@ -537,8 +549,10 @@ export function ConnectFileOverlay({
       emailSubject: email.subject,
       emailFrom: email.from,
       emailSnippet: email.snippet,
+      emailBodyText: email.bodyText || email.textBody || null,
       emailDate: email.date,
       integrationId: email.integrationId,
+      classification: email.classification,
     }));
 
     scoreAttachments(
@@ -1395,60 +1409,88 @@ export function ConnectFileOverlay({
                 <span>Generating suggestions...</span>
               </div>
             ) : typedSuggestions.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {typedSuggestions.map((suggestion, idx) => {
-                  const typeLabel = getSuggestionTypeLabel(suggestion.type);
-                  const isActive = searchQuery === suggestion.query;
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {typedSuggestionsToShow.map((suggestion, idx) => {
+                    const typeLabel = getSuggestionTypeLabel(suggestion.type);
+                    const isActive = searchQuery === suggestion.query;
 
-                  return (
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery(suggestion.query);
+                          handleSearch(suggestion.query, "manual");
+                        }}
+                        className={cn(
+                          "inline-flex items-stretch rounded-md text-xs font-medium transition-colors overflow-hidden border",
+                          isActive
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-background border-input hover:bg-accent hover:text-accent-foreground"
+                        )}
+                      >
+                        {typeLabel && (
+                          <span
+                            className={cn(
+                              "px-1.5 py-0.5 text-[10px] font-semibold flex items-center",
+                              getSuggestionTypeLabelStyle(suggestion.type, isActive)
+                            )}
+                          >
+                            {typeLabel}
+                          </span>
+                        )}
+                        <span className="px-2 py-0.5">{suggestion.query}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {showMoreTypedSuggestions && (
+                  <span className="text-sm flex-1 min-w-0">
                     <button
-                      key={idx}
                       type="button"
-                      onClick={() => {
-                        setSearchQuery(suggestion.query);
-                        handleSearch(suggestion.query, "manual");
-                      }}
-                      className={cn(
-                        "inline-flex items-stretch rounded-md text-xs font-medium transition-colors overflow-hidden border",
-                        isActive
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-background border-input hover:bg-accent hover:text-accent-foreground"
-                      )}
+                      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                      onClick={() => setShowAllSuggestions(true)}
                     >
-                      {typeLabel && (
-                        <span
-                          className={cn(
-                            "px-1.5 py-0.5 text-[10px] font-semibold flex items-center",
-                            getSuggestionTypeLabelStyle(suggestion.type, isActive)
-                          )}
-                        >
-                          {typeLabel}
-                        </span>
-                      )}
-                      <span className="px-2 py-0.5">{suggestion.query}</span>
+                      Show more
+                      <ChevronDown className="h-3 w-3" aria-hidden="true" />
                     </button>
-                  );
-                })}
+                  </span>
+                )}
               </div>
             ) : suggestedQueries.length > 0 ? (
               // Fallback to plain queries if no typed suggestions
-              <div className="flex flex-wrap gap-1.5">
-                {suggestedQueries.map((query, idx) => (
-                  <Badge
-                    key={idx}
-                    variant={searchQuery === query ? "default" : "outline"}
-                    className={cn(
-                      "cursor-pointer hover:bg-primary/10 transition-colors",
-                      searchQuery === query && "bg-primary text-primary-foreground"
-                    )}
-                    onClick={() => {
-                      setSearchQuery(query);
-                      handleSearch(query, "manual");
-                    }}
-                  >
-                    {query}
-                  </Badge>
-                ))}
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {suggestedQueriesToShow.map((query, idx) => (
+                    <Badge
+                      key={idx}
+                      variant={searchQuery === query ? "default" : "outline"}
+                      className={cn(
+                        "cursor-pointer hover:bg-primary/10 transition-colors",
+                        searchQuery === query && "bg-primary text-primary-foreground"
+                      )}
+                      onClick={() => {
+                        setSearchQuery(query);
+                        handleSearch(query, "manual");
+                      }}
+                    >
+                      {query}
+                    </Badge>
+                  ))}
+                </div>
+                {showMoreSuggestedQueries && (
+                  <span className="text-sm flex-1 min-w-0">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                      onClick={() => setShowAllSuggestions(true)}
+                    >
+                      Show more
+                      <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                    </button>
+                  </span>
+                )}
               </div>
             ) : null}
           </div>
@@ -1465,7 +1507,12 @@ export function ConnectFileOverlay({
             <TabsList className="h-10 w-full grid grid-cols-4 rounded-none border-b shrink-0">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <TabsTrigger value="files" className="gap-1 text-xs px-1 @min-[340px]:px-2">
+                  <TabsTrigger
+                    value="files"
+                    aria-label="Files"
+                    title="Files"
+                    className="gap-1 text-xs px-1 @min-[340px]:px-2 border border-transparent text-muted-foreground hover:text-foreground hover:bg-muted aria-[selected=true]:border-transparent aria-[selected=true]:bg-primary/10 aria-[selected=true]:text-primary aria-[selected=true]:shadow-none"
+                  >
                     <HardDrive className="h-3.5 w-3.5 shrink-0" />
                     <span className="hidden @min-[340px]:inline">Files</span>
                     {hasSearchedLocalFiles && localFileResults.length > 0 && (
@@ -1477,7 +1524,12 @@ export function ConnectFileOverlay({
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <TabsTrigger value="gmail-attachments" className="gap-1 text-xs px-1 @min-[340px]:px-2">
+                  <TabsTrigger
+                    value="gmail-attachments"
+                    aria-label="Attachments"
+                    title="Attachments"
+                    className="gap-1 text-xs px-1 @min-[340px]:px-2 border border-transparent text-muted-foreground hover:text-foreground hover:bg-muted aria-[selected=true]:border-transparent aria-[selected=true]:bg-primary/10 aria-[selected=true]:text-primary aria-[selected=true]:shadow-none"
+                  >
                     <Paperclip className="h-3.5 w-3.5 shrink-0" />
                     <span className="hidden @min-[340px]:inline">Attach</span>
                     {hasSearched && allAttachments.length > 0 && (
@@ -1489,7 +1541,12 @@ export function ConnectFileOverlay({
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <TabsTrigger value="email-to-pdf" className="gap-1 text-xs px-1 @min-[340px]:px-2">
+                  <TabsTrigger
+                    value="email-to-pdf"
+                    aria-label="Emails"
+                    title="Emails"
+                    className="gap-1 text-xs px-1 @min-[340px]:px-2 border border-transparent text-muted-foreground hover:text-foreground hover:bg-muted aria-[selected=true]:border-transparent aria-[selected=true]:bg-primary/10 aria-[selected=true]:text-primary aria-[selected=true]:shadow-none"
+                  >
                     <Mail className="h-3.5 w-3.5 shrink-0" />
                     <span className="hidden @min-[340px]:inline">Emails</span>
                     {hasSearched && sortedEmails.length > 0 && (
@@ -1501,7 +1558,12 @@ export function ConnectFileOverlay({
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <TabsTrigger value="browser" className="gap-1 text-xs px-1 @min-[340px]:px-2">
+                  <TabsTrigger
+                    value="browser"
+                    aria-label="Browser"
+                    title="Browser"
+                    className="gap-1 text-xs px-1 @min-[340px]:px-2 border border-transparent text-muted-foreground hover:text-foreground hover:bg-muted aria-[selected=true]:border-transparent aria-[selected=true]:bg-primary/10 aria-[selected=true]:text-primary aria-[selected=true]:shadow-none"
+                  >
                     <Globe className="h-3.5 w-3.5 shrink-0" />
                     <span className="hidden @min-[340px]:inline">Browser</span>
                     {partner?.invoiceSources && partner.invoiceSources.length > 0 && (
@@ -1641,6 +1703,25 @@ export function ConnectFileOverlay({
                       const signal = attachmentSignals.get(item.key);
                       const confidence = signal ? Math.round(signal.score * 100) : null;
 
+                      // Build classification badges from message classification
+                      const classificationBadges: Array<{ label: string; description: string; variant: "receipt" | "link" | "pdf" }> = [];
+                      if (item.message.classification) {
+                        if (item.message.classification.possibleMailInvoice) {
+                          classificationBadges.push({
+                            label: "Receipt",
+                            description: "Email body contains receipt/order confirmation",
+                            variant: "receipt",
+                          });
+                        }
+                        if (item.message.classification.possibleInvoiceLink) {
+                          classificationBadges.push({
+                            label: "Link",
+                            description: "Email contains links to download invoice",
+                            variant: "link",
+                          });
+                        }
+                      }
+
                       return (
                         <ConnectResultRow
                           key={item.key}
@@ -1661,6 +1742,7 @@ export function ConnectFileOverlay({
                           highlightVariant="strategy"
                           confidence={confidence !== null && confidence > 0 ? confidence : undefined}
                           matchSignals={signal?.reasons}
+                          classificationBadges={classificationBadges}
                           onClick={() => setSelectedAttachmentKey(item.key)}
                         />
                       );
@@ -1707,6 +1789,32 @@ export function ConnectFileOverlay({
                       const signal = emailSignals.get(email.messageId);
                       const confidence = signal ? Math.round(signal.score * 100) : null;
 
+                      // Build classification badges from email classification
+                      const classificationBadges: Array<{ label: string; description: string; variant: "receipt" | "link" | "pdf" }> = [];
+                      if (email.classification) {
+                        if (email.classification.possibleMailInvoice) {
+                          classificationBadges.push({
+                            label: "Receipt",
+                            description: "Email body contains receipt/order confirmation",
+                            variant: "receipt",
+                          });
+                        }
+                        if (email.classification.possibleInvoiceLink) {
+                          classificationBadges.push({
+                            label: "Link",
+                            description: "Email contains links to download invoice",
+                            variant: "link",
+                          });
+                        }
+                        if (email.classification.hasPdfAttachment) {
+                          classificationBadges.push({
+                            label: "PDF",
+                            description: "Email has PDF attachment",
+                            variant: "pdf",
+                          });
+                        }
+                      }
+
                       return (
                         <ConnectResultRow
                           key={email.messageId}
@@ -1726,6 +1834,7 @@ export function ConnectFileOverlay({
                           highlightVariant="strategy"
                           confidence={confidence !== null && confidence > 0 ? confidence : undefined}
                           matchSignals={signal?.reasons}
+                          classificationBadges={classificationBadges}
                           onClick={() => handleSelectEmail(email)}
                         />
                       );

@@ -23,6 +23,13 @@ export interface AttachmentToScore {
   fileExtractedDate?: Date | null;
   fileExtractedPartner?: string | null;
   filePartnerId?: string | null;
+  // Email classification
+  classification?: {
+    hasPdfAttachment?: boolean;
+    possibleMailInvoice?: boolean;
+    possibleInvoiceLink?: boolean;
+    confidence?: number;
+  } | null;
 }
 
 export interface TransactionForScoring {
@@ -92,6 +99,7 @@ export function useAttachmentScoring() {
               fileExtractedDate: att.fileExtractedDate?.toISOString() || null,
               fileExtractedPartner: att.fileExtractedPartner,
               filePartnerId: att.filePartnerId,
+              classification: att.classification,
             })),
             transaction: {
               amount: transaction.amount,

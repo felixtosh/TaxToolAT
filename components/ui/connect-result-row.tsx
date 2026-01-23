@@ -10,6 +10,15 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
+export interface ClassificationBadge {
+  /** Short label (e.g., "Receipt", "Link") */
+  label: string;
+  /** Description shown in tooltip */
+  description: string;
+  /** Badge color variant */
+  variant: "receipt" | "link" | "pdf";
+}
+
 export interface ConnectResultRowProps {
   /** Unique identifier */
   id: string;
@@ -43,6 +52,8 @@ export interface ConnectResultRowProps {
   confidence?: number;
   /** Match signal labels for tooltip */
   matchSignals?: string[];
+  /** Email classification badges with tooltips */
+  classificationBadges?: ClassificationBadge[];
   /** Click handler */
   onClick?: () => void;
   /** Whether the button is disabled */
@@ -69,6 +80,7 @@ export function ConnectResultRow({
   highlightVariant = "suggestion",
   confidence,
   matchSignals = [],
+  classificationBadges = [],
   onClick,
   disabled = false,
 }: ConnectResultRowProps) {
@@ -173,8 +185,27 @@ export function ConnectResultRow({
                 </div>
               </TooltipContent>
             </Tooltip>
-          )
-          }
+          )}
+          {classificationBadges.map((badge, idx) => (
+            <Tooltip key={idx}>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-[10px] py-0 h-4 cursor-help",
+                    badge.variant === "receipt" && "bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-900/50 dark:text-purple-200 dark:border-purple-700",
+                    badge.variant === "link" && "bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-900/50 dark:text-blue-200 dark:border-blue-700",
+                    badge.variant === "pdf" && "bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-900/50 dark:text-orange-200 dark:border-orange-700"
+                  )}
+                >
+                  {badge.label}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-[200px] text-xs">
+                {badge.description}
+              </TooltipContent>
+            </Tooltip>
+          ))}
         </div>
       </div>
 

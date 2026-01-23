@@ -19,6 +19,13 @@ interface AttachmentInput {
   fileExtractedDate?: string | null; // ISO string
   fileExtractedPartner?: string | null;
   filePartnerId?: string | null;
+  // Email classification
+  classification?: {
+    hasPdfAttachment?: boolean;
+    possibleMailInvoice?: boolean;
+    possibleInvoiceLink?: boolean;
+    confidence?: number;
+  } | null;
 }
 
 interface TransactionInput {
@@ -111,6 +118,7 @@ export async function POST(request: NextRequest) {
           fileExtractedDate: att.fileExtractedDate,
           fileExtractedPartner: att.fileExtractedPartner,
           filePartnerId: att.filePartnerId,
+          classification: att.classification,
         })),
         transaction: {
           amount: transaction.amount,
