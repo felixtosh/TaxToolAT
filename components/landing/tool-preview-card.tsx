@@ -8,9 +8,10 @@ import {
   Mail,
   Check,
   Paperclip,
+  Globe,
 } from "lucide-react";
 
-type ToolType = "transactions" | "files" | "gmail";
+type ToolType = "transactions" | "files" | "integrations";
 
 interface ToolPreviewCardProps {
   type: ToolType;
@@ -44,34 +45,30 @@ const FAKE_TRANSACTIONS = [
 
 const FAKE_FILES = [
   {
-    date: "15.01.26",
     name: "Rechnung_2026_001.pdf",
     partner: "REWE Group",
-    amount: -4523,
+    status: "connected",
   },
   {
-    date: "12.01.26",
     name: "Amazon_Invoice.pdf",
     partner: "Amazon EU",
-    amount: -12999,
+    status: "connected",
   },
   {
-    date: "10.01.26",
     name: "Telefonrechnung.pdf",
     partner: "Telekom",
-    amount: -3999,
+    status: "matching",
   },
 ];
 
-const FAKE_EMAILS = [
-  { filename: "Invoice_2026_01.pdf", date: "15.01.26", score: 92, downloaded: true },
-  {
-    filename: "Bestellung_Bestatigung.pdf",
-    date: "14.01.26",
-    score: 78,
-    downloaded: false,
-  },
-  { filename: "Rechnung_Amazon.pdf", date: "12.01.26", score: 85, downloaded: true },
+const FAKE_GMAIL = [
+  { filename: "Invoice_2026_01.pdf", score: 92 },
+  { filename: "Rechnung_Amazon.pdf", score: 85 },
+];
+
+const FAKE_BROWSER = [
+  { filename: "Bestellung_Download.pdf", score: 88 },
+  { filename: "Kaufbeleg_Online.pdf", score: 76 },
 ];
 
 export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
@@ -141,20 +138,16 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
           className
         )}
       >
-        <div className="bg-muted/50 grid grid-cols-[70px_1fr_70px] gap-2 px-2 py-1.5 border-b">
-          <span className="font-medium text-muted-foreground">Date</span>
-          <span className="font-medium text-muted-foreground">Name</span>
-          <span className="font-medium text-muted-foreground text-right">
-            Amount
-          </span>
+        <div className="bg-muted/50 grid grid-cols-[1fr_auto] gap-2 px-2 py-1.5 border-b">
+          <span className="font-medium text-muted-foreground">Receipt</span>
+          <span className="font-medium text-muted-foreground">Status</span>
         </div>
         <div className="divide-y divide-muted/50">
           {FAKE_FILES.map((f, i) => (
             <div
               key={i}
-              className="grid grid-cols-[70px_1fr_70px] gap-2 px-2 py-2 items-center"
+              className="grid grid-cols-[1fr_auto] gap-2 px-2 py-2 items-center"
             >
-              <span className="text-muted-foreground">{f.date}</span>
               <div className="min-w-0 overflow-hidden flex items-center gap-2">
                 <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 <div className="min-w-0">
@@ -166,11 +159,13 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
               </div>
               <span
                 className={cn(
-                  "text-right tabular-nums",
-                  f.amount < 0 ? "text-amount-negative" : "text-amount-positive"
+                  "text-[10px] px-1.5 py-0.5 rounded-full",
+                  f.status === "connected"
+                    ? "bg-green-100 text-green-700"
+                    : "bg-yellow-100 text-yellow-700"
                 )}
               >
-                {formatAmount(f.amount)}
+                {f.status === "connected" ? "Connected" : "Matching..."}
               </span>
             </div>
           ))}
@@ -179,49 +174,45 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
     );
   }
 
-  // Gmail type
+  // Integrations type - overlapping Gmail and Browser cards
   return (
-    <div
-      className={cn(
-        "rounded-md border text-xs overflow-hidden bg-card shadow-lg",
-        className
-      )}
-    >
-      <div className="bg-muted/50 px-3 py-2 flex items-center justify-between border-b">
-        <div className="flex items-center gap-2">
+    <div className={cn("relative h-[140px]", className)}>
+      {/* Gmail card - back */}
+      <div className="absolute top-0 left-0 right-4 rounded-md border text-xs overflow-hidden bg-card shadow-lg">
+        <div className="bg-muted/50 px-3 py-1.5 flex items-center gap-2 border-b">
           <Mail className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="font-medium text-sm">Gmail Attachments</span>
+          <span className="font-medium text-sm">Gmail</span>
         </div>
-        <span className="text-muted-foreground">3 found</span>
+        <div className="divide-y divide-muted/50">
+          {FAKE_GMAIL.map((e, i) => (
+            <div key={i} className="flex items-center gap-2 px-2.5 py-1.5">
+              <Paperclip className="h-3 w-3 text-muted-foreground shrink-0" />
+              <span className="text-xs truncate flex-1">{e.filename}</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+                {e.score}%
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
-      <div className="divide-y divide-muted/50">
-        {FAKE_EMAILS.map((e, i) => (
-          <div key={i} className="flex items-center gap-2 px-2.5 py-1.5">
-            {e.downloaded ? (
-              <Check className="h-3.5 w-3.5 text-green-600 shrink-0" />
-            ) : (
-              <Paperclip className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            )}
-            <span className="text-xs font-medium truncate flex-1 min-w-0">
-              {e.filename}
-            </span>
-            <span className="text-[10px] text-muted-foreground shrink-0">
-              {e.date}
-            </span>
-            <span
-              className={cn(
-                "text-[10px] px-1.5 py-0.5 rounded-full shrink-0",
-                e.score >= 90
-                  ? "bg-green-100 text-green-700"
-                  : e.score >= 70
-                    ? "bg-yellow-100 text-yellow-700"
-                    : "bg-gray-100 text-gray-700"
-              )}
-            >
-              {e.score}%
-            </span>
-          </div>
-        ))}
+
+      {/* Browser card - front */}
+      <div className="absolute top-8 left-4 right-0 rounded-md border text-xs overflow-hidden bg-card shadow-xl">
+        <div className="bg-muted/50 px-3 py-1.5 flex items-center gap-2 border-b">
+          <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="font-medium text-sm">Browser Downloads</span>
+        </div>
+        <div className="divide-y divide-muted/50">
+          {FAKE_BROWSER.map((e, i) => (
+            <div key={i} className="flex items-center gap-2 px-2.5 py-1.5">
+              <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
+              <span className="text-xs truncate flex-1">{e.filename}</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+                {e.score}%
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

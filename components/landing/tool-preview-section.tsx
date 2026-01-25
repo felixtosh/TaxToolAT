@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { ToolPreviewCard } from "./tool-preview-card";
-import { Receipt, FileText, Mail } from "lucide-react";
+import { Receipt, FileText, Plug } from "lucide-react";
 
 export function ToolPreviewSection() {
   const t = useTranslations("landing.toolPreviews");
@@ -27,13 +27,13 @@ export function ToolPreviewSection() {
         <ToolPreviewCard type="files" />
       </div>
 
-      {/* Gmail Preview */}
+      {/* Integrations Preview */}
       <div className="space-y-3 animate-float-fast">
         <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-          <Mail className="h-4 w-4" />
-          <span>{t("gmail.title")}</span>
+          <Plug className="h-4 w-4" />
+          <span>{t("integrations.title")}</span>
         </div>
-        <ToolPreviewCard type="gmail" />
+        <ToolPreviewCard type="integrations" />
       </div>
     </div>
   );

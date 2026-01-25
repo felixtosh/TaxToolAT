@@ -1,23 +1,20 @@
 {
   "landing": {
     "hero": {
-      "title": "Deine KI-Buchhaltungsassistentin",
-      "subtitle": "FiBuKI hilft dir, Belege, Transaktionen und E-Mails intelligent zu verwalten.",
+      "title": "Deine Buchhaltung arbeitet, während du schläfst",
+      "subtitle": "FiBuKI lernt mit jeder Aktion dazu und erledigt deine Vorkontierung automatisch – damit du dich auf dein Geschäft konzentrieren kannst.",
       "ctaLogin": "Zum Dashboard",
       "ctaGetStarted": "Loslegen"
     },
     "toolPreviews": {
       "transactions": {
-        "title": "Transaktionen durchsuchen",
-        "description": "Finde Zahlungen nach Betrag, Datum oder Partner"
+        "title": "Transaktionen verwalten"
       },
       "files": {
-        "title": "Belege durchsuchen",
-        "description": "Finde Rechnungen und Quittungen"
+        "title": "Belege automatisch zuordnen"
       },
-      "gmail": {
-        "title": "Gmail durchsuchen",
-        "description": "Finde relevante E-Mail-Anhänge"
+      "integrations": {
+        "title": "Integrationen verbinden"
       }
     },
     "footer": {
