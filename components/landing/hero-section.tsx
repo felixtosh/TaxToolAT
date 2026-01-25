@@ -44,8 +44,8 @@ export function HeroSection() {
   // Check collision with letters
   const checkCollisions = useCallback((x: number) => {
     const letterPositions = getLetterPositions();
-    // Hitbox position: mascot starts at -MASCOT_SIZE-16, hitbox is centered in mascot
-    const hitboxLeft = x + MASCOT_HITBOX_OFFSET;
+    // Mascot visual is at x, hitbox is offset from center
+    const hitboxLeft = x - MASCOT_HITBOX_OFFSET;
     const hitboxRight = hitboxLeft + MASCOT_HITBOX_WIDTH;
 
     letterPositions.forEach((pos, i) => {
@@ -181,7 +181,7 @@ export function HeroSection() {
               : undefined
           }
         >
-          <div style={{ transform: `scaleX(${facingRight ? 1 : -1})` }}>
+          <div style={{ transform: `scaleX(${facingRight ? -1 : 1})` }}>
             <div className={cn(isWalking && !isLogoJumping && "animate-wiggle")}>
               <FibukiMascot size={MASCOT_SIZE} isJumping={isLogoJumping} />
             </div>
