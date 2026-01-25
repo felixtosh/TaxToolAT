@@ -23,6 +23,7 @@ export function HeroSection() {
   const [facingRight, setFacingRight] = useState(true);
   const [isWalking, setIsWalking] = useState(false);
   const [fallenLetters, setFallenLetters] = useState<Set<number>>(new Set());
+  const [growingLetters, setGrowingLetters] = useState<Set<number>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const controlRef = useRef<HTMLDivElement>(null);
   const walkingTimeout = useRef<NodeJS.Timeout | null>(null);
@@ -41,26 +42,37 @@ export function HeroSection() {
   // Check collision with letters
   const checkCollisions = useCallback((x: number) => {
     const letterPositions = getLetterPositions();
-    const mascotLeft = x;
-    const mascotRight = x + MASCOT_SIZE * 0.6; // mascot collision width
+    // Offset x by MASCOT_SIZE since mascot starts one icon before letters
+    const adjustedX = x - MASCOT_SIZE;
+    const mascotLeft = adjustedX;
+    const mascotRight = adjustedX + MASCOT_SIZE * 0.5; // mascot collision width
 
     letterPositions.forEach((pos, i) => {
-      if (!fallenLetters.has(i)) {
+      if (!fallenLetters.has(i) && !growingLetters.has(i)) {
         // Check if mascot overlaps with letter
         if (mascotRight > pos.left && mascotLeft < pos.right) {
           setFallenLetters((prev) => new Set([...prev, i]));
-          // Schedule regrow
+          // Schedule regrow with grow animation
           setTimeout(() => {
             setFallenLetters((prev) => {
               const next = new Set(prev);
               next.delete(i);
               return next;
             });
+            setGrowingLetters((prev) => new Set([...prev, i]));
+            // Remove from growing after animation completes
+            setTimeout(() => {
+              setGrowingLetters((prev) => {
+                const next = new Set(prev);
+                next.delete(i);
+                return next;
+              });
+            }, 400);
           }, REGROW_DELAY);
         }
       }
     });
-  }, [fallenLetters, getLetterPositions]);
+  }, [fallenLetters, growingLetters, getLetterPositions]);
 
   // Handle keyboard controls
   useEffect(() => {
@@ -121,6 +133,7 @@ export function HeroSection() {
     setIsControlMode(false);
     setMascotX(0);
     setFallenLetters(new Set());
+    setGrowingLetters(new Set());
   };
 
   return (
@@ -163,11 +176,9 @@ export function HeroSection() {
               key={i}
               className={cn(
                 "mascot-text inline-block",
-                fallenLetters.has(i) && "animate-letter-fall"
+                fallenLetters.has(i) && "animate-letter-fall",
+                growingLetters.has(i) && "animate-letter-grow"
               )}
-              style={{
-                opacity: fallenLetters.has(i) ? 0 : 1,
-              }}
             >
               {letter}
             </span>

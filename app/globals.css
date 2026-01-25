@@ -142,16 +142,42 @@
   animation: letter-fall 0.6s ease-in forwards;
 }
 
+/* Letter grow animation for regrowth */
+@keyframes letter-grow {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-letter-grow {
+  animation: letter-grow 0.4s ease-out forwards;
+}
+
 /* Wiggle animation for FiBuKI walking */
 @keyframes wiggle {
   0%, 100% {
-    transform: rotate(-3deg);
+    transform: rotate(-5deg) translateY(0);
+  }
+  25% {
+    transform: rotate(0deg) translateY(-2px);
   }
   50% {
-    transform: rotate(3deg);
+    transform: rotate(5deg) translateY(0);
+  }
+  75% {
+    transform: rotate(0deg) translateY(-2px);
   }
 }
 
 .animate-wiggle {
-  animation: wiggle 0.15s ease-in-out infinite;
+  animation: wiggle 0.2s ease-in-out infinite;
 }
