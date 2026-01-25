@@ -2,30 +2,30 @@
 
 @theme {
   --color-background: hsl(0 0% 100%);
-  --color-foreground: hsl(222.2 84% 4.9%);
+  --color-foreground: hsl(20 15% 10%);
   --color-card: hsl(0 0% 100%);
-  --color-card-foreground: hsl(222.2 84% 4.9%);
+  --color-card-foreground: hsl(20 15% 10%);
   --color-popover: hsl(0 0% 100%);
-  --color-popover-foreground: hsl(222.2 84% 4.9%);
-  --color-primary: hsl(222.2 47.4% 11.2%);
-  --color-primary-foreground: hsl(210 40% 98%);
-  --color-secondary: hsl(210 40% 96.1%);
-  --color-secondary-foreground: hsl(222.2 47.4% 11.2%);
-  --color-muted: hsl(210 40% 96.1%);
-  --color-muted-foreground: hsl(215.4 16.3% 46.9%);
-  --color-accent: hsl(210 40% 96.1%);
-  --color-accent-foreground: hsl(222.2 47.4% 11.2%);
+  --color-popover-foreground: hsl(20 15% 10%);
+  --color-primary: hsl(20 20% 14%);
+  --color-primary-foreground: hsl(30 25% 98%);
+  --color-secondary: hsl(28 18% 95%);
+  --color-secondary-foreground: hsl(20 20% 14%);
+  --color-muted: hsl(28 16% 95%);
+  --color-muted-foreground: hsl(20 10% 40%);
+  --color-accent: hsl(28 18% 95%);
+  --color-accent-foreground: hsl(20 20% 14%);
   --color-destructive: hsl(0 84.2% 60.2%);
-  --color-destructive-foreground: hsl(210 40% 98%);
+  --color-destructive-foreground: hsl(30 25% 98%);
   --color-info: hsl(45 93% 94%);
   --color-info-foreground: hsl(32 81% 29%);
   --color-info-border: hsl(45 80% 70%);
   /* Amount colors for income/expense */
-  --color-amount-positive: hsl(142.1 76.2% 36.3%);
-  --color-amount-negative: hsl(0 72.2% 50.6%);
-  --color-border: hsl(214.3 31.8% 91.4%);
-  --color-input: hsl(214.3 31.8% 91.4%);
-  --color-ring: hsl(222.2 84% 4.9%);
+  --color-amount-positive: #289f01;
+  --color-amount-negative: #e21212;
+  --color-border: hsl(24 18% 85%);
+  --color-input: hsl(24 18% 92%);
+  --color-ring: hsl(20 20% 14%);
   --radius: 0.5rem;
 }
 
@@ -72,4 +72,56 @@
   animation: text-shake 0.3s ease-in-out;
   animation-delay: 0.4s;
   animation-fill-mode: backwards;
+}
+
+.mascot-text {
+  font-family: var(--font-logo), ui-rounded, "Segoe UI", sans-serif;
+  font-weight: 700;
+  font-size: 120%;
+  color: var(--color-primary);
+}
+
+/* Floating animations for landing page tool previews */
+@keyframes float-slow {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes float-medium {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+@keyframes float-fast {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.animate-float-slow {
+  animation: float-slow 4s ease-in-out infinite;
+}
+
+.animate-float-medium {
+  animation: float-medium 3.5s ease-in-out infinite;
+  animation-delay: 0.5s;
+}
+
+.animate-float-fast {
+  animation: float-fast 3s ease-in-out infinite;
+  animation-delay: 1s;
 }

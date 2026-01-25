@@ -1,0 +1,114 @@
+{
+  "landing": {
+    "hero": {
+      "title": "Your AI Bookkeeping Assistant",
+      "subtitle": "FiBuKI helps you intelligently manage receipts, transactions, and emails.",
+      "ctaLogin": "Go to Dashboard",
+      "ctaGetStarted": "Get Started"
+    },
+    "toolPreviews": {
+      "transactions": {
+        "title": "Search Transactions",
+        "description": "Find payments by amount, date, or partner"
+      },
+      "files": {
+        "title": "Search Files",
+        "description": "Find invoices and receipts"
+      },
+      "gmail": {
+        "title": "Search Gmail",
+        "description": "Find relevant email attachments"
+      }
+    },
+    "footer": {
+      "impressum": "Legal Notice",
+      "privacy": "Privacy Policy"
+    }
+  },
+  "privacy": {
+    "title": "Privacy Policy",
+    "lastUpdated": "Last updated: {date}",
+    "intro": "This privacy policy explains how we collect, use, and protect your personal data when using FiBuKI.",
+    "sections": {
+      "responsible": {
+        "title": "Data Controller",
+        "content": "Infinity Vertigo GmbH\nBergwald 43\n2812 Hollenthon\nAustria\n\nCommercial Register: FN571837m\nVAT ID: ATU77919424"
+      },
+      "dataCollection": {
+        "title": "Data We Collect",
+        "content": "We collect and process the following categories of personal data:\n\n• Account data: Name, email address for authentication\n• Financial data: Bank transactions, receipts, invoices you upload or connect\n• Email data: Gmail messages and attachments (only with your explicit consent)\n• Usage data: Interactions with the application for improvements"
+      },
+      "services": {
+        "title": "Third-Party Services",
+        "intro": "We use the following third-party services to provide our services:",
+        "firebase": {
+          "name": "Firebase (Google)",
+          "purpose": "Authentication, database, file storage, and cloud functions. Your data is stored in the EU (europe-west1)."
+        },
+        "gmailApi": {
+          "name": "Gmail API (Google)",
+          "purpose": "Email access for receipt search. Only active when you connect your Gmail account via OAuth. You can revoke access at any time."
+        },
+        "cloudVision": {
+          "name": "Google Cloud Vision API",
+          "purpose": "Text recognition (OCR) in uploaded documents for automatic data extraction."
+        },
+        "vertexAi": {
+          "name": "Vertex AI / Gemini (Google)",
+          "purpose": "AI-powered document analysis, categorization, and intelligent matching of receipts."
+        },
+        "anthropic": {
+          "name": "Anthropic Claude API",
+          "purpose": "AI chat assistant for accounting questions and intelligent support."
+        },
+        "truelayer": {
+          "name": "TrueLayer",
+          "purpose": "Open Banking access (UK/EU) for securely fetching your account transactions."
+        },
+        "gocardless": {
+          "name": "GoCardless Bank Account Data",
+          "purpose": "Open Banking access (Europe) for securely fetching your account transactions."
+        },
+        "langfuse": {
+          "name": "LangFuse",
+          "purpose": "Analysis and optimization of AI interactions for quality improvement."
+        }
+      },
+      "rights": {
+        "title": "Your Rights",
+        "content": "Under GDPR, you have the following rights:\n\n• Right of access: You can request information about your stored data\n• Rectification: You can have incorrect data corrected\n• Erasure: You can request deletion of your data\n• Restriction: You can request restriction of processing\n• Data portability: You can receive your data in a common format\n• Objection: You can object to processing\n• Complaint: You can lodge a complaint with a supervisory authority"
+      },
+      "contact": {
+        "title": "Contact",
+        "content": "For privacy questions, contact us at:\n\nInfinity Vertigo GmbH\nBergwald 43\n2812 Hollenthon\nAustria"
+      }
+    }
+  },
+  "impressum": {
+    "title": "Legal Notice (Impressum)",
+    "company": {
+      "title": "Company Information (as per Austrian law ECG/UGB)",
+      "name": "Infinity Vertigo GmbH",
+      "address": "Bergwald 43\n2812 Hollenthon\nAustria",
+      "register": "Commercial Register: FN571837m",
+      "vatId": "VAT ID: ATU77919424"
+    },
+    "contact": {
+      "title": "Contact"
+    },
+    "liability": {
+      "title": "Disclaimer",
+      "content": "The contents of this website have been created with the utmost care. However, we cannot guarantee the accuracy, completeness, or timeliness of the content. As a service provider, we are responsible for our own content on these pages in accordance with general laws. However, we are not obligated to monitor transmitted or stored third-party information or to investigate circumstances that indicate illegal activity."
+    },
+    "copyright": {
+      "title": "Copyright",
+      "content": "The content and works created by the site operators on these pages are subject to Austrian copyright law. Reproduction, editing, distribution, and any kind of exploitation outside the limits of copyright law require the written consent of the respective author or creator."
+    }
+  },
+  "common": {
+    "language": "Language",
+    "german": "Deutsch",
+    "english": "English",
+    "back": "Back"
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "landing": {
+    "hero": {
+      "title": "Deine KI-Buchhaltungsassistentin",
+      "subtitle": "FiBuKI hilft dir, Belege, Transaktionen und E-Mails intelligent zu verwalten.",
+      "ctaLogin": "Zum Dashboard",
+      "ctaGetStarted": "Loslegen"
+    },
+    "toolPreviews": {
+      "transactions": {
+        "title": "Transaktionen durchsuchen",
+        "description": "Finde Zahlungen nach Betrag, Datum oder Partner"
+      },
+      "files": {
+        "title": "Belege durchsuchen",
+        "description": "Finde Rechnungen und Quittungen"
+      },
+      "gmail": {
+        "title": "Gmail durchsuchen",
+        "description": "Finde relevante E-Mail-Anhänge"
+      }
+    },
+    "footer": {
+      "impressum": "Impressum",
+      "privacy": "Datenschutz"
+    }
+  },
+  "privacy": {
+    "title": "Datenschutzerklärung",
+    "lastUpdated": "Zuletzt aktualisiert: {date}",
+    "intro": "Diese Datenschutzerklärung informiert Sie über die Art, den Umfang und Zweck der Verarbeitung personenbezogener Daten innerhalb unserer Anwendung FiBuKI.",
+    "sections": {
+      "responsible": {
+        "title": "Verantwortlicher",
+        "content": "Infinity Vertigo GmbH\nBergwald 43\n2812 Hollenthon\nÖsterreich\n\nFirmenbuchnummer: FN571837m\nUID-Nr: ATU77919424"
+      },
+      "dataCollection": {
+        "title": "Erhobene Daten",
+        "content": "Wir erheben und verarbeiten folgende Kategorien personenbezogener Daten:\n\n• Kontodaten: Name, E-Mail-Adresse für die Authentifizierung\n• Finanzdaten: Banktransaktionen, Belege, Rechnungen die Sie hochladen oder verbinden\n• E-Mail-Daten: Gmail-Nachrichten und Anhänge (nur mit Ihrer ausdrücklichen Einwilligung)\n• Nutzungsdaten: Interaktionen mit der Anwendung für Verbesserungen"
+      },
+      "services": {
+        "title": "Eingesetzte Dienste",
+        "intro": "Wir nutzen folgende Drittanbieterdienste zur Bereitstellung unserer Leistungen:",
+        "firebase": {
+          "name": "Firebase (Google)",
+          "purpose": "Authentifizierung, Datenbank, Dateispeicherung und Cloud Functions. Ihre Daten werden in der EU (europe-west1) gespeichert."
+        },
+        "gmailApi": {
+          "name": "Gmail API (Google)",
+          "purpose": "E-Mail-Zugriff zur Belegsuche. Nur aktiv wenn Sie Ihr Gmail-Konto über OAuth verbinden. Sie können den Zugriff jederzeit widerrufen."
+        },
+        "cloudVision": {
+          "name": "Google Cloud Vision API",
+          "purpose": "Texterkennung (OCR) in hochgeladenen Dokumenten zur automatischen Datenextraktion."
+        },
+        "vertexAi": {
+          "name": "Vertex AI / Gemini (Google)",
+          "purpose": "KI-gestützte Dokumentenanalyse, Kategorisierung und intelligente Zuordnung von Belegen."
+        },
+        "anthropic": {
+          "name": "Anthropic Claude API",
+          "purpose": "KI-Chat-Assistent für Buchhaltungsfragen und intelligente Unterstützung."
+        },
+        "truelayer": {
+          "name": "TrueLayer",
+          "purpose": "Open Banking Zugang (UK/EU) zum sicheren Abruf Ihrer Kontotransaktionen."
+        },
+        "gocardless": {
+          "name": "GoCardless Bank Account Data",
+          "purpose": "Open Banking Zugang (Europa) zum sicheren Abruf Ihrer Kontotransaktionen."
+        },
+        "langfuse": {
+          "name": "LangFuse",
+          "purpose": "Analyse und Optimierung der KI-Interaktionen zur Qualitätsverbesserung."
+        }
+      },
+      "rights": {
+        "title": "Ihre Rechte",
+        "content": "Nach der DSGVO haben Sie folgende Rechte:\n\n• Auskunftsrecht: Sie können Auskunft über Ihre gespeicherten Daten verlangen\n• Berichtigung: Sie können unrichtige Daten korrigieren lassen\n• Löschung: Sie können die Löschung Ihrer Daten verlangen\n• Einschränkung: Sie können die Verarbeitung einschränken lassen\n• Datenübertragbarkeit: Sie können Ihre Daten in einem gängigen Format erhalten\n• Widerspruch: Sie können der Verarbeitung widersprechen\n• Beschwerde: Sie können sich bei einer Aufsichtsbehörde beschweren"
+      },
+      "contact": {
+        "title": "Kontakt",
+        "content": "Bei Fragen zum Datenschutz erreichen Sie uns unter:\n\nInfinity Vertigo GmbH\nBergwald 43\n2812 Hollenthon\nÖsterreich"
+      }
+    }
+  },
+  "impressum": {
+    "title": "Impressum",
+    "company": {
+      "title": "Angaben gemäß ECG und Unternehmensgesetzbuch",
+      "name": "Infinity Vertigo GmbH",
+      "address": "Bergwald 43\n2812 Hollenthon\nÖsterreich",
+      "register": "Firmenbuchnummer: FN571837m",
+      "vatId": "UID-Nr: ATU77919424"
+    },
+    "contact": {
+      "title": "Kontakt"
+    },
+    "liability": {
+      "title": "Haftungsausschluss",
+      "content": "Die Inhalte dieser Webseite wurden mit größtmöglicher Sorgfalt erstellt. Für die Richtigkeit, Vollständigkeit und Aktualität der Inhalte können wir jedoch keine Gewähr übernehmen. Als Diensteanbieter sind wir für eigene Inhalte auf diesen Seiten nach den allgemeinen Gesetzen verantwortlich. Wir sind jedoch nicht verpflichtet, übermittelte oder gespeicherte fremde Informationen zu überwachen oder nach Umständen zu forschen, die auf eine rechtswidrige Tätigkeit hinweisen."
+    },
+    "copyright": {
+      "title": "Urheberrecht",
+      "content": "Die durch die Seitenbetreiber erstellten Inhalte und Werke auf diesen Seiten unterliegen dem österreichischen Urheberrecht. Die Vervielfältigung, Bearbeitung, Verbreitung und jede Art der Verwertung außerhalb der Grenzen des Urheberrechtes bedürfen der schriftlichen Zustimmung des jeweiligen Autors bzw. Erstellers."
+    }
+  },
+  "common": {
+    "language": "Sprache",
+    "german": "Deutsch",
+    "english": "English",
+    "back": "Zurück"
+  }
+}
