@@ -163,7 +163,7 @@ export function HeroSection() {
         className="inline-flex items-center gap-4 logo-wrapper mx-auto cursor-pointer outline-none relative"
       >
         {/* Mascot - positioned absolutely in control mode */}
-        {/* Outer div handles position, inner div handles wiggle/flip */}
+        {/* Outer: position, Middle: flip, Inner: wiggle */}
         <div
           className={cn(
             isControlMode ? "absolute z-10" : "relative"
@@ -180,11 +180,10 @@ export function HeroSection() {
               : undefined
           }
         >
-          <div
-            className={cn(isWalking && !isLogoJumping && "animate-wiggle")}
-            style={{ transform: `scaleX(${facingRight ? 1 : -1})` }}
-          >
-            <FibukiMascot size={MASCOT_SIZE} isJumping={isLogoJumping} />
+          <div style={{ transform: `scaleX(${facingRight ? 1 : -1})` }}>
+            <div className={cn(isWalking && !isLogoJumping && "animate-wiggle")}>
+              <FibukiMascot size={MASCOT_SIZE} isJumping={isLogoJumping} />
+            </div>
           </div>
         </div>
 
