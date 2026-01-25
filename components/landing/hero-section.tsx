@@ -44,8 +44,10 @@ export function HeroSection() {
   // Check collision with letters
   const checkCollisions = useCallback((x: number) => {
     const letterPositions = getLetterPositions();
-    // Mascot visual is at x, hitbox is offset from center
-    const hitboxLeft = x - MASCOT_HITBOX_OFFSET;
+    // Mascot starts at 0, text starts after mascot (80px) + gap (16px) = 96px
+    // Hitbox is relative to mascot position
+    const textStart = MASCOT_SIZE + 16; // gap-4 = 16px
+    const hitboxLeft = x + MASCOT_SIZE - MASCOT_HITBOX_OFFSET - textStart;
     const hitboxRight = hitboxLeft + MASCOT_HITBOX_WIDTH;
 
     letterPositions.forEach((pos, i) => {
@@ -163,28 +165,13 @@ export function HeroSection() {
         onBlur={handleBlur}
         className="inline-flex items-center gap-4 logo-wrapper mx-auto cursor-pointer outline-none relative"
       >
-        {/* Placeholder to maintain layout when mascot goes absolute */}
-        {isControlMode && (
-          <div style={{ width: MASCOT_SIZE, height: MASCOT_SIZE }} />
-        )}
-
-        {/* Mascot - positioned absolutely in control mode */}
-        {/* Outer: position, Inner: wiggle */}
+        {/* Mascot - stays in flow, uses transform to move */}
         <div
-          className={cn(
-            isControlMode ? "absolute z-10" : "relative"
-          )}
-          style={
-            isControlMode
-              ? {
-                  transform: `translate3d(${mascotX}px, 0, 0)`,
-                  left: -MASCOT_SIZE - 16,
-                  top: "50%",
-                  marginTop: -MASCOT_SIZE / 2,
-                  willChange: "transform",
-                }
-              : undefined
-          }
+          className="relative"
+          style={{
+            transform: isControlMode ? `translate3d(${mascotX}px, 0, 0)` : undefined,
+            willChange: isControlMode ? "transform" : undefined,
+          }}
         >
           <div className={cn(isWalking && !isLogoJumping && "animate-wiggle")}>
             <FibukiMascot
