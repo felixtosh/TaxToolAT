@@ -11,7 +11,9 @@ import { cn } from "@/lib/utils";
 const LOGO_LETTERS = ["F", "i", "B", "u", "K", "I"];
 const LETTER_WIDTHS = [32, 16, 32, 28, 32, 16]; // individual letter widths
 const MASCOT_SIZE = 80;
-const MOVE_SPEED = 8;
+const MASCOT_HITBOX_WIDTH = 50; // actual collision width
+const MASCOT_HITBOX_OFFSET = 15; // offset from left edge to hitbox center
+const MOVE_SPEED = 16;
 const REGROW_DELAY = 3000;
 
 export function HeroSection() {
@@ -42,15 +44,14 @@ export function HeroSection() {
   // Check collision with letters
   const checkCollisions = useCallback((x: number) => {
     const letterPositions = getLetterPositions();
-    // Offset x by MASCOT_SIZE since mascot starts one icon before letters
-    const adjustedX = x - MASCOT_SIZE;
-    const mascotLeft = adjustedX;
-    const mascotRight = adjustedX + MASCOT_SIZE * 0.5; // mascot collision width
+    // Hitbox position: mascot starts at -MASCOT_SIZE-16, hitbox is centered in mascot
+    const hitboxLeft = x + MASCOT_HITBOX_OFFSET;
+    const hitboxRight = hitboxLeft + MASCOT_HITBOX_WIDTH;
 
     letterPositions.forEach((pos, i) => {
       if (!fallenLetters.has(i) && !growingLetters.has(i)) {
-        // Check if mascot overlaps with letter
-        if (mascotRight > pos.left && mascotLeft < pos.right) {
+        // Check if hitbox overlaps with letter
+        if (hitboxRight > pos.left && hitboxLeft < pos.right) {
           setFallenLetters((prev) => new Set([...prev, i]));
           // Schedule regrow with grow animation
           setTimeout(() => {
