@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
@@ -8,31 +8,170 @@ import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 import { useAuth } from "@/components/auth";
 import { cn } from "@/lib/utils";
 
+const LOGO_LETTERS = ["F", "i", "B", "u", "K", "I"];
+const LETTER_WIDTH = 40; // approx width per letter
+const MASCOT_SIZE = 80;
+const MOVE_SPEED = 8;
+const REGROW_DELAY = 3000;
+
 export function HeroSection() {
   const t = useTranslations("landing.hero");
   const { user, loading } = useAuth();
   const [isLogoJumping, setIsLogoJumping] = useState(false);
+  const [isControlMode, setIsControlMode] = useState(false);
+  const [mascotX, setMascotX] = useState(0); // position relative to start
+  const [facingRight, setFacingRight] = useState(true);
+  const [fallenLetters, setFallenLetters] = useState<Set<number>>(new Set());
+  const containerRef = useRef<HTMLDivElement>(null);
+  const controlRef = useRef<HTMLDivElement>(null);
 
+  // Letter positions (relative to text start)
+  const getLetterPositions = useCallback(() => {
+    return LOGO_LETTERS.map((_, i) => ({
+      left: i * LETTER_WIDTH,
+      right: (i + 1) * LETTER_WIDTH,
+    }));
+  }, []);
+
+  // Check collision with letters
+  const checkCollisions = useCallback((x: number) => {
+    const letterPositions = getLetterPositions();
+    const mascotLeft = x;
+    const mascotRight = x + MASCOT_SIZE * 0.6; // mascot collision width
+
+    letterPositions.forEach((pos, i) => {
+      if (!fallenLetters.has(i)) {
+        // Check if mascot overlaps with letter
+        if (mascotRight > pos.left && mascotLeft < pos.right) {
+          setFallenLetters((prev) => new Set([...prev, i]));
+          // Schedule regrow
+          setTimeout(() => {
+            setFallenLetters((prev) => {
+              const next = new Set(prev);
+              next.delete(i);
+              return next;
+            });
+          }, REGROW_DELAY);
+        }
+      }
+    });
+  }, [fallenLetters, getLetterPositions]);
+
+  // Handle keyboard controls
+  useEffect(() => {
+    if (!isControlMode) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "ArrowLeft") {
+        e.preventDefault();
+        setFacingRight(false);
+        setMascotX((prev) => {
+          const newX = prev - MOVE_SPEED;
+          checkCollisions(newX);
+          return newX;
+        });
+      } else if (e.code === "ArrowRight") {
+        e.preventDefault();
+        setFacingRight(true);
+        setMascotX((prev) => {
+          const newX = prev + MOVE_SPEED;
+          checkCollisions(newX);
+          return newX;
+        });
+      } else if (e.code === "Space") {
+        e.preventDefault();
+        if (!isLogoJumping) {
+          setIsLogoJumping(true);
+          setTimeout(() => setIsLogoJumping(false), 600);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isControlMode, isLogoJumping, checkCollisions]);
+
+  // Handle click to enter control mode
   const handleLogoClick = () => {
-    if (!isLogoJumping) {
+    if (!isControlMode) {
+      setIsControlMode(true);
+      setMascotX(0);
+      setFallenLetters(new Set());
+      // Initial jump
       setIsLogoJumping(true);
       setTimeout(() => setIsLogoJumping(false), 600);
     }
   };
 
+  // Handle blur to exit control mode
+  const handleBlur = () => {
+    setIsControlMode(false);
+    setMascotX(0);
+    setFallenLetters(new Set());
+  };
+
   return (
     <div className="text-center space-y-6 max-w-2xl">
       {/* Logo */}
-      <button
+      <div
+        ref={controlRef}
+        tabIndex={0}
         onClick={handleLogoClick}
+        onBlur={handleBlur}
         className={cn(
-          "inline-flex items-center gap-4 logo-wrapper mx-auto",
-          isLogoJumping && "is-jumping"
+          "inline-flex items-center gap-4 logo-wrapper mx-auto cursor-pointer outline-none relative",
+          isControlMode && "ring-2 ring-primary/20 rounded-lg p-2"
         )}
       >
-        <FibukiMascot size={80} isJumping={isLogoJumping} />
-        <span className="mascot-text" style={{ fontSize: "3.75rem" }}>FiBuKI</span>
-      </button>
+        {/* Mascot - positioned absolutely in control mode */}
+        <div
+          className={cn(
+            "transition-transform",
+            isControlMode ? "absolute z-10" : "relative"
+          )}
+          style={
+            isControlMode
+              ? {
+                  transform: `translateX(${mascotX}px) scaleX(${facingRight ? -1 : 1})`,
+                  left: -MASCOT_SIZE - 16,
+                  top: "50%",
+                  marginTop: -MASCOT_SIZE / 2,
+                }
+              : undefined
+          }
+        >
+          <FibukiMascot size={MASCOT_SIZE} isJumping={isLogoJumping} />
+        </div>
+
+        {/* Logo text with individual letters */}
+        <div className="flex" style={{ fontSize: "3.75rem" }}>
+          {LOGO_LETTERS.map((letter, i) => (
+            <span
+              key={i}
+              className={cn(
+                "mascot-text inline-block transition-all duration-300",
+                fallenLetters.has(i) && "animate-letter-fall"
+              )}
+              style={{
+                width: LETTER_WIDTH,
+                opacity: fallenLetters.has(i) ? 0 : 1,
+                transform: fallenLetters.has(i)
+                  ? "translateY(100vh) rotate(45deg)"
+                  : "translateY(0) rotate(0deg)",
+              }}
+            >
+              {letter}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Control hint */}
+      {isControlMode && (
+        <p className="text-xs text-muted-foreground animate-pulse">
+          ← → to move, Space to jump
+        </p>
+      )}
 
       {/* Tagline */}
       <h1 className="text-3xl font-semibold text-foreground">{t("title")}</h1>

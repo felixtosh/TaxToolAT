@@ -125,3 +125,19 @@
   animation: float-fast 3s ease-in-out infinite;
   animation-delay: 1s;
 }
+
+/* Letter fall animation for FiBuKI game mode */
+@keyframes letter-fall {
+  0% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotate(45deg);
+    opacity: 0;
+  }
+}
+
+.animate-letter-fall {
+  animation: letter-fall 0.6s ease-in forwards;
+}
