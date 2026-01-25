@@ -160,10 +160,7 @@ export function HeroSection() {
         tabIndex={0}
         onClick={handleLogoClick}
         onBlur={handleBlur}
-        className={cn(
-          "inline-flex items-center gap-4 logo-wrapper mx-auto cursor-pointer outline-none relative",
-          isControlMode && "ring-2 ring-primary/20 rounded-lg p-2"
-        )}
+        className="inline-flex items-center gap-4 logo-wrapper mx-auto cursor-pointer outline-none relative"
       >
         {/* Mascot - positioned absolutely in control mode */}
         {/* Outer div handles position, inner div handles wiggle/flip */}
@@ -207,13 +204,6 @@ export function HeroSection() {
           ))}
         </div>
       </div>
-
-      {/* Control hint */}
-      {isControlMode && (
-        <p className="text-xs text-muted-foreground animate-pulse">
-          ← → to move, Space to jump
-        </p>
-      )}
 
       {/* Tagline */}
       <h1 className="text-3xl font-semibold text-foreground">{t("title")}</h1>
