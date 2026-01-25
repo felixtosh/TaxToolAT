@@ -8,26 +8,28 @@ interface FibukiMascotProps {
   size?: number;
   className?: string;
   isJumping?: boolean;
+  forceFacingRight?: boolean; // Override mouse tracking
 }
 
-export function FibukiMascot({ size = 28, className, isJumping = false }: FibukiMascotProps) {
-  const [facingRight, setFacingRight] = useState(false);
+export function FibukiMascot({ size = 28, className, isJumping = false, forceFacingRight }: FibukiMascotProps) {
+  const [mouseFacingRight, setMouseFacingRight] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Track mouse position relative to mascot
-  // Face right when cursor is on mascot or to the right of it
+  // Track mouse position relative to mascot (only when not forced)
   const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (forceFacingRight !== undefined) return; // Skip if externally controlled
     if (!containerRef.current) return;
 
     const rect = containerRef.current.getBoundingClientRect();
-    // Face left only when cursor is to the left of the mascot's left edge
-    setFacingRight(e.clientX >= rect.left);
-  }, []);
+    setMouseFacingRight(e.clientX >= rect.left);
+  }, [forceFacingRight]);
 
   useEffect(() => {
     window.addEventListener("mousemove", handleMouseMove);
     return () => window.removeEventListener("mousemove", handleMouseMove);
   }, [handleMouseMove]);
+
+  const facingRight = forceFacingRight !== undefined ? forceFacingRight : mouseFacingRight;
 
   return (
     <div
