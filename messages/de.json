@@ -19,7 +19,63 @@
     },
     "footer": {
       "impressum": "Impressum",
-      "privacy": "Datenschutz"
+      "privacy": "Datenschutz",
+      "terms": "AGB"
+    }
+  },
+  "terms": {
+    "title": "Allgemeine Geschäftsbedingungen",
+    "lastUpdated": "Zuletzt aktualisiert: {date}",
+    "intro": "Diese Allgemeinen Geschäftsbedingungen regeln die Nutzung der FiBuKI-Anwendung, betrieben von der Infinity Vertigo GmbH.",
+    "sections": {
+      "acceptance": {
+        "title": "1. Vertragsannahme",
+        "content": "Durch die Registrierung oder Nutzung von FiBuKI erklären Sie sich mit diesen AGB einverstanden. Wenn Sie nicht einverstanden sind, nutzen Sie die Anwendung bitte nicht."
+      },
+      "serviceDescription": {
+        "title": "2. Leistungsbeschreibung",
+        "content": "FiBuKI ist eine Software zur Unterstützung der buchhalterischen Vorkontierung. Die Anwendung bietet:\n\n• Verwaltung von Banktransaktionen\n• Automatische Zuordnung von Belegen\n• KI-gestützte Kategorisierung\n• Integration mit Bankkonten und E-Mail\n\nDie Anwendung ersetzt keine professionelle steuerliche oder buchhalterische Beratung."
+      },
+      "useAtOwnRisk": {
+        "title": "3. Nutzung auf eigene Gefahr",
+        "content": "Die Nutzung von FiBuKI erfolgt auf eigenes Risiko. Der Nutzer ist für die Richtigkeit seiner Eingaben und die ordnungsgemäße Führung seiner Buchhaltung selbst verantwortlich.\n\nWir empfehlen dringend, alle automatisch erstellten Kategorisierungen und Zuordnungen vor der Verwendung für steuerliche Zwecke zu überprüfen."
+      },
+      "liability": {
+        "title": "4. Haftungsausschluss",
+        "content": "Infinity Vertigo GmbH haftet nicht für:\n\n• Schäden durch fehlerhafte KI-Kategorisierungen oder Zuordnungen\n• Finanzielle Verluste durch Nutzung der Anwendung\n• Steuerliche Nachteile aufgrund von Fehlern in der Anwendung\n• Datenverlust außerhalb unseres Einflussbereichs\n• Ausfälle oder Unterbrechungen des Dienstes\n\nDie Haftung ist auf Vorsatz und grobe Fahrlässigkeit beschränkt. Eine Haftung für entgangenen Gewinn oder mittelbare Schäden ist ausgeschlossen."
+      },
+      "noIndemnification": {
+        "title": "5. Keine Freistellung",
+        "content": "Der Nutzer hat keinen Anspruch auf Freistellung von Ansprüchen Dritter, die sich aus der Nutzung der Anwendung ergeben. Der Nutzer ist für die Einhaltung aller anwendbaren Gesetze und Vorschriften selbst verantwortlich."
+      },
+      "fees": {
+        "title": "6. Gebühren und Zahlungen",
+        "content": "Für die Nutzung von FiBuKI können Gebühren anfallen. Aktuelle Preise und Abonnementoptionen werden innerhalb der Anwendung kommuniziert.\n\n• Gebührenänderungen werden mindestens 30 Tage im Voraus angekündigt\n• Bereits gezahlte Gebühren werden nicht erstattet\n• Bei Zahlungsverzug kann der Zugang eingeschränkt werden"
+      },
+      "accountTermination": {
+        "title": "7. Kontokündigung",
+        "content": "Wir behalten uns das Recht vor, Benutzerkonten jederzeit und ohne Angabe von Gründen zu kündigen oder zu sperren, insbesondere bei:\n\n• Verstoß gegen diese AGB\n• Missbrauch der Anwendung\n• Betrügerischen Aktivitäten\n• Nichtzahlung fälliger Gebühren\n\nSie können Ihr Konto jederzeit in den Einstellungen löschen."
+      },
+      "intellectualProperty": {
+        "title": "8. Geistiges Eigentum",
+        "content": "Alle Rechte an der FiBuKI-Software, einschließlich Marken, Logos und Quellcode, verbleiben bei Infinity Vertigo GmbH. Die Nutzungslizenz ist nicht übertragbar und nicht ausschließlich."
+      },
+      "dataHandling": {
+        "title": "9. Datenverarbeitung",
+        "content": "Die Verarbeitung Ihrer personenbezogenen Daten erfolgt gemäß unserer Datenschutzerklärung. Durch die Nutzung der Anwendung stimmen Sie der dort beschriebenen Datenverarbeitung zu."
+      },
+      "changes": {
+        "title": "10. Änderungen der AGB",
+        "content": "Wir behalten uns vor, diese AGB jederzeit zu ändern. Wesentliche Änderungen werden per E-Mail oder innerhalb der Anwendung angekündigt. Die fortgesetzte Nutzung nach Änderungen gilt als Zustimmung."
+      },
+      "jurisdiction": {
+        "title": "11. Anwendbares Recht",
+        "content": "Es gilt österreichisches Recht unter Ausschluss des UN-Kaufrechts. Gerichtsstand ist Wiener Neustadt, Österreich."
+      },
+      "contact": {
+        "title": "12. Kontakt",
+        "content": "Bei Fragen zu diesen AGB:\n\nInfinity Vertigo GmbH\nBergwald 43\n2812 Hollenthon\nÖsterreich"
+      }
     }
   },
   "privacy": {

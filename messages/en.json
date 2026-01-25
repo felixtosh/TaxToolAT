@@ -19,7 +19,63 @@
     },
     "footer": {
       "impressum": "Legal Notice",
-      "privacy": "Privacy Policy"
+      "privacy": "Privacy Policy",
+      "terms": "Terms of Service"
+    }
+  },
+  "terms": {
+    "title": "Terms of Service",
+    "lastUpdated": "Last updated: {date}",
+    "intro": "These Terms of Service govern your use of the FiBuKI application, operated by Infinity Vertigo GmbH.",
+    "sections": {
+      "acceptance": {
+        "title": "1. Acceptance of Terms",
+        "content": "By registering for or using FiBuKI, you agree to these Terms of Service. If you do not agree, please do not use the application."
+      },
+      "serviceDescription": {
+        "title": "2. Service Description",
+        "content": "FiBuKI is software designed to assist with bookkeeping pre-accounting. The application provides:\n\n• Management of bank transactions\n• Automatic receipt matching\n• AI-powered categorization\n• Integration with bank accounts and email\n\nThe application does not replace professional tax or accounting advice."
+      },
+      "useAtOwnRisk": {
+        "title": "3. Use at Your Own Risk",
+        "content": "Use of FiBuKI is at your own risk. You are responsible for the accuracy of your inputs and the proper maintenance of your accounting records.\n\nWe strongly recommend reviewing all automatically generated categorizations and matches before using them for tax purposes."
+      },
+      "liability": {
+        "title": "4. Limitation of Liability",
+        "content": "Infinity Vertigo GmbH is not liable for:\n\n• Damages resulting from incorrect AI categorizations or matches\n• Financial losses from using the application\n• Tax disadvantages due to errors in the application\n• Data loss outside our control\n• Service outages or interruptions\n\nLiability is limited to cases of intent and gross negligence. Liability for lost profits or indirect damages is excluded."
+      },
+      "noIndemnification": {
+        "title": "5. No Indemnification",
+        "content": "Users have no claim to indemnification from third-party claims arising from use of the application. Users are solely responsible for compliance with all applicable laws and regulations."
+      },
+      "fees": {
+        "title": "6. Fees and Payments",
+        "content": "Fees may apply for using FiBuKI. Current pricing and subscription options are communicated within the application.\n\n• Fee changes will be announced at least 30 days in advance\n• Fees already paid are non-refundable\n• Access may be restricted for payment defaults"
+      },
+      "accountTermination": {
+        "title": "7. Account Termination",
+        "content": "We reserve the right to terminate or suspend user accounts at any time without stating reasons, particularly in cases of:\n\n• Violation of these Terms\n• Misuse of the application\n• Fraudulent activities\n• Non-payment of due fees\n\nYou may delete your account at any time in the settings."
+      },
+      "intellectualProperty": {
+        "title": "8. Intellectual Property",
+        "content": "All rights to the FiBuKI software, including trademarks, logos, and source code, remain with Infinity Vertigo GmbH. The usage license is non-transferable and non-exclusive."
+      },
+      "dataHandling": {
+        "title": "9. Data Processing",
+        "content": "Processing of your personal data is governed by our Privacy Policy. By using the application, you consent to the data processing described therein."
+      },
+      "changes": {
+        "title": "10. Changes to Terms",
+        "content": "We reserve the right to modify these Terms at any time. Material changes will be announced via email or within the application. Continued use after changes constitutes acceptance."
+      },
+      "jurisdiction": {
+        "title": "11. Governing Law",
+        "content": "Austrian law applies, excluding the UN Convention on Contracts for the International Sale of Goods. The place of jurisdiction is Wiener Neustadt, Austria."
+      },
+      "contact": {
+        "title": "12. Contact",
+        "content": "For questions about these Terms:\n\nInfinity Vertigo GmbH\nBergwald 43\n2812 Hollenthon\nAustria"
+      }
     }
   },
   "privacy": {

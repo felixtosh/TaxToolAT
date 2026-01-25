@@ -12,16 +12,22 @@ export function LandingFooter() {
         <span className="text-xs">Infinity Vertigo GmbH</span>
         <div className="flex gap-6">
           <Link
-            href="/impressum"
+            href="/terms"
             className="hover:text-foreground transition-colors"
           >
-            {t("impressum")}
+            {t("terms")}
           </Link>
           <Link
             href="/privacy"
             className="hover:text-foreground transition-colors"
           >
             {t("privacy")}
+          </Link>
+          <Link
+            href="/impressum"
+            className="hover:text-foreground transition-colors"
+          >
+            {t("impressum")}
           </Link>
         </div>
       </div>
