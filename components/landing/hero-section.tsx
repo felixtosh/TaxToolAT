@@ -107,6 +107,22 @@ export function HeroSection() {
         e.preventDefault();
         if (!isLogoJumping) {
           setIsLogoJumping(true);
+          // Jump forward in facing direction
+          const jumpDistance = MOVE_SPEED * 4;
+          const direction = facingRight ? 1 : -1;
+          // Animate forward during jump
+          let jumpProgress = 0;
+          const jumpInterval = setInterval(() => {
+            jumpProgress++;
+            setMascotX((prev) => {
+              const newX = prev + (direction * jumpDistance) / 10;
+              checkCollisions(newX);
+              return newX;
+            });
+            if (jumpProgress >= 10) {
+              clearInterval(jumpInterval);
+            }
+          }, 50);
           setTimeout(() => setIsLogoJumping(false), 600);
         }
       }
@@ -150,23 +166,29 @@ export function HeroSection() {
         )}
       >
         {/* Mascot - positioned absolutely in control mode */}
+        {/* Outer div handles position, inner div handles wiggle/flip */}
         <div
           className={cn(
-            isControlMode ? "absolute z-10" : "relative",
-            isWalking && "animate-wiggle"
+            isControlMode ? "absolute z-10" : "relative"
           )}
           style={
             isControlMode
               ? {
-                  transform: `translateX(${mascotX}px) scaleX(${facingRight ? 1 : -1})`,
+                  transform: `translate3d(${mascotX}px, 0, 0)`,
                   left: -MASCOT_SIZE - 16,
                   top: "50%",
                   marginTop: -MASCOT_SIZE / 2,
+                  willChange: "transform",
                 }
               : undefined
           }
         >
-          <FibukiMascot size={MASCOT_SIZE} isJumping={isLogoJumping} />
+          <div
+            className={cn(isWalking && !isLogoJumping && "animate-wiggle")}
+            style={{ transform: `scaleX(${facingRight ? 1 : -1})` }}
+          >
+            <FibukiMascot size={MASCOT_SIZE} isJumping={isLogoJumping} />
+          </div>
         </div>
 
         {/* Logo text with individual letters */}

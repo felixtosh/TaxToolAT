@@ -129,17 +129,18 @@
 /* Letter fall animation for FiBuKI game mode */
 @keyframes letter-fall {
   0% {
-    transform: translateY(0) rotate(0deg);
+    transform: translate3d(0, 0, 0) rotate(0deg);
     opacity: 1;
   }
   100% {
-    transform: translateY(100vh) rotate(45deg);
+    transform: translate3d(0, 100vh, 0) rotate(45deg);
     opacity: 0;
   }
 }
 
 .animate-letter-fall {
   animation: letter-fall 0.6s ease-in forwards;
+  will-change: transform, opacity;
 }
 
 /* Letter grow animation for regrowth */
@@ -165,19 +166,20 @@
 /* Wiggle animation for FiBuKI walking */
 @keyframes wiggle {
   0%, 100% {
-    transform: rotate(-5deg) translateY(0);
+    transform: rotate(-4deg) translate3d(0, 0, 0);
   }
   25% {
-    transform: rotate(0deg) translateY(-2px);
+    transform: rotate(0deg) translate3d(0, -3px, 0);
   }
   50% {
-    transform: rotate(5deg) translateY(0);
+    transform: rotate(4deg) translate3d(0, 0, 0);
   }
   75% {
-    transform: rotate(0deg) translateY(-2px);
+    transform: rotate(0deg) translate3d(0, -3px, 0);
   }
 }
 
 .animate-wiggle {
-  animation: wiggle 0.2s ease-in-out infinite;
+  animation: wiggle 0.18s ease-in-out infinite;
+  will-change: transform;
 }
