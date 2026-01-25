@@ -11,8 +11,9 @@ import { cn } from "@/lib/utils";
 const LOGO_LETTERS = ["F", "i", "B", "u", "K", "I"];
 const LETTER_WIDTHS = [32, 16, 32, 28, 32, 16]; // individual letter widths
 const MASCOT_SIZE = 80;
-const MASCOT_HITBOX_WIDTH = 50; // actual collision width
-const MASCOT_HITBOX_OFFSET = 15; // offset from left edge to hitbox center
+const MASCOT_HITBOX_WIDTH = 30; // collision width
+const MASCOT_NOSE_OFFSET = 55; // where the "nose" is from mascot's left edge
+const GAP = 16; // gap-4
 const MOVE_SPEED = 16;
 const REGROW_DELAY = 3000;
 
@@ -44,10 +45,10 @@ export function HeroSection() {
   // Check collision with letters
   const checkCollisions = useCallback((x: number) => {
     const letterPositions = getLetterPositions();
-    // Mascot starts at 0, text starts after mascot (80px) + gap (16px) = 96px
-    // Hitbox is relative to mascot position
-    const textStart = MASCOT_SIZE + 16; // gap-4 = 16px
-    const hitboxLeft = x + MASCOT_SIZE - MASCOT_HITBOX_OFFSET - textStart;
+    // Text starts after mascot (80px) + gap (16px) = 96px from flex start
+    // Hitbox is at mascot's nose position
+    const textStart = MASCOT_SIZE + GAP;
+    const hitboxLeft = x + MASCOT_NOSE_OFFSET - textStart;
     const hitboxRight = hitboxLeft + MASCOT_HITBOX_WIDTH;
 
     letterPositions.forEach((pos, i) => {
