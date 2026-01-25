@@ -31,7 +31,7 @@ export function HeroSection() {
         )}
       >
         <FibukiMascot size={80} isJumping={isLogoJumping} />
-        <span className="font-logo font-bold text-6xl text-primary">FiBuKI</span>
+        <span className="mascot-text" style={{ fontSize: "3.75rem" }}>FiBuKI</span>
       </button>
 
       {/* Tagline */}
