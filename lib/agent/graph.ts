@@ -9,7 +9,6 @@
  */
 
 import { StateGraph, Annotation, START, END } from "@langchain/langgraph";
-import { ChatAnthropic } from "@langchain/anthropic";
 import {
   AIMessage,
   BaseMessage,
@@ -20,6 +19,7 @@ import {
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { ALL_TOOLS, TOOLS_REQUIRING_CONFIRMATION } from "./tools";
 import { SYSTEM_PROMPT } from "@/lib/chat/system-prompt";
+import { createChatModel, ModelProvider } from "./model";
 
 // ============================================================================
 // State Definition
@@ -40,6 +40,10 @@ const AgentStateAnnotation = Annotation.Root({
   authHeader: Annotation<string>({
     reducer: (_, next) => next,
     default: () => "",
+  }),
+  modelProvider: Annotation<ModelProvider>({
+    reducer: (_, next) => next,
+    default: () => "anthropic" as ModelProvider,
   }),
   pendingConfirmation: Annotation<{
     toolName: string;
@@ -63,10 +67,17 @@ type AgentState = typeof AgentStateAnnotation.State;
 
 console.log("[Graph] Available tools:", ALL_TOOLS.map(t => t.name).join(", "));
 
-const model = new ChatAnthropic({
-  model: "claude-sonnet-4-20250514",
-  temperature: 0,
-}).bindTools(ALL_TOOLS);
+// Model cache to avoid recreating for same provider
+const modelCache = new Map<ModelProvider, Awaited<ReturnType<typeof createChatModel>>>();
+
+async function getModel(provider: ModelProvider) {
+  if (!modelCache.has(provider)) {
+    console.log(`[Graph] Creating ${provider} model`);
+    const model = await createChatModel({ provider }, ALL_TOOLS);
+    modelCache.set(provider, model);
+  }
+  return modelCache.get(provider)!;
+}
 
 // ============================================================================
 // Graph Nodes
@@ -76,7 +87,10 @@ const model = new ChatAnthropic({
  * Agent node - calls the LLM with tools
  */
 async function agentNode(state: AgentState): Promise<Partial<AgentState>> {
-  const { messages, userId, authHeader } = state;
+  const { messages, userId, authHeader, modelProvider } = state;
+
+  // Get the model for this provider
+  const model = await getModel(modelProvider);
 
   // Add system message if not present
   const hasSystemMessage = messages.some((m) => m instanceof SystemMessage);
@@ -85,6 +99,7 @@ async function agentNode(state: AgentState): Promise<Partial<AgentState>> {
     : [new SystemMessage(SYSTEM_PROMPT), ...messages];
 
   // Debug: log message types
+  console.log(`[Agent] Using ${modelProvider} model`);
   console.log("[Agent] Message types:", messagesWithSystem.map(m => m._getType()).join(", "));
   console.log("[Agent] Last message content:", messagesWithSystem[messagesWithSystem.length - 1].content?.toString().slice(0, 100));
 
@@ -282,7 +297,11 @@ export interface RunGraphInput {
   messages: BaseMessage[];
   userId: string;
   authHeader: string;
+  modelProvider?: ModelProvider;
 }
+
+// Re-export for consumers
+export type { ModelProvider };
 
 export interface RunGraphOutput {
   messages: BaseMessage[];
@@ -303,6 +322,7 @@ export async function runAgentGraph(input: RunGraphInput): Promise<RunGraphOutpu
     messages: input.messages,
     userId: input.userId,
     authHeader: input.authHeader,
+    modelProvider: input.modelProvider || "anthropic",
     pendingConfirmation: null,
     shouldContinue: true,
   });
