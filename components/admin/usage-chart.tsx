@@ -12,11 +12,12 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { AIUsageDailyStats } from "@/types/ai-usage";
+import { FunctionCallDailyStats } from "@/types/function-call";
 
 interface UsageChartProps {
-  data: AIUsageDailyStats[];
+  data: AIUsageDailyStats[] | FunctionCallDailyStats[];
   type: "line" | "bar";
-  dataKey: "calls" | "cost" | "inputTokens" | "outputTokens";
+  dataKey: "calls" | "cost" | "inputTokens" | "outputTokens" | "errorCount" | "successCount";
 }
 
 function formatDate(dateStr: string): string {
@@ -40,11 +41,13 @@ function formatValue(value: number, dataKey: string): string {
   return value.toString();
 }
 
-const CHART_COLORS = {
+const CHART_COLORS: Record<string, string> = {
   calls: "#3b82f6", // blue
   cost: "#22c55e", // green
   inputTokens: "#f59e0b", // amber
   outputTokens: "#8b5cf6", // violet
+  errorCount: "#ef4444", // red
+  successCount: "#22c55e", // green
 };
 
 export function UsageChart({ data, type, dataKey }: UsageChartProps) {
