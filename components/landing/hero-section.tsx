@@ -26,12 +26,12 @@ export function HeroSection() {
       <button
         onClick={handleLogoClick}
         className={cn(
-          "inline-flex items-center gap-3 logo-wrapper mx-auto",
+          "inline-flex items-center gap-4 logo-wrapper mx-auto",
           isLogoJumping && "is-jumping"
         )}
       >
-        <FibukiMascot size={64} isJumping={isLogoJumping} />
-        <span className="font-logo font-bold text-5xl mascot-text">FiBuKI</span>
+        <FibukiMascot size={80} isJumping={isLogoJumping} />
+        <span className="font-logo font-bold text-6xl text-primary">FiBuKI</span>
       </button>
 
       {/* Tagline */}
