@@ -163,6 +163,11 @@ export function HeroSection() {
         onBlur={handleBlur}
         className="inline-flex items-center gap-4 logo-wrapper mx-auto cursor-pointer outline-none relative"
       >
+        {/* Placeholder to maintain layout when mascot goes absolute */}
+        {isControlMode && (
+          <div style={{ width: MASCOT_SIZE, height: MASCOT_SIZE }} />
+        )}
+
         {/* Mascot - positioned absolutely in control mode */}
         {/* Outer: position, Inner: wiggle */}
         <div
