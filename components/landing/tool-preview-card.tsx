@@ -177,10 +177,10 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
   // Integrations type - overlapping Gmail and Browser cards
   return (
     <div className={cn("relative h-[140px]", className)}>
-      {/* Gmail card - back, rotated -2deg */}
+      {/* Gmail card - back, rotated -1deg */}
       <div
         className="absolute top-0 left-0 right-4 rounded-md border text-xs overflow-hidden bg-card shadow-lg"
-        style={{ transform: "rotate(-2deg)" }}
+        style={{ transform: "rotate(-1deg)" }}
       >
         <div className="bg-muted/50 px-3 py-1.5 flex items-center gap-2 border-b">
           <Mail className="h-3.5 w-3.5 text-muted-foreground" />
@@ -199,10 +199,10 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
         </div>
       </div>
 
-      {/* Browser card - front, rotated +2deg */}
+      {/* Browser card - front, rotated +1deg */}
       <div
         className="absolute top-8 left-4 right-0 rounded-md border text-xs overflow-hidden bg-card shadow-xl"
-        style={{ transform: "rotate(2deg)" }}
+        style={{ transform: "rotate(1deg)" }}
       >
         <div className="bg-muted/50 px-3 py-1.5 flex items-center gap-2 border-b">
           <Globe className="h-3.5 w-3.5 text-muted-foreground" />

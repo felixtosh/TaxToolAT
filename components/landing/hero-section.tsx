@@ -9,7 +9,7 @@ import { useAuth } from "@/components/auth";
 import { cn } from "@/lib/utils";
 
 const LOGO_LETTERS = ["F", "i", "B", "u", "K", "I"];
-const LETTER_WIDTH = 40; // approx width per letter
+const LETTER_WIDTHS = [32, 16, 32, 28, 32, 16]; // individual letter widths
 const MASCOT_SIZE = 80;
 const MOVE_SPEED = 8;
 const REGROW_DELAY = 3000;
@@ -21,16 +21,21 @@ export function HeroSection() {
   const [isControlMode, setIsControlMode] = useState(false);
   const [mascotX, setMascotX] = useState(0); // position relative to start
   const [facingRight, setFacingRight] = useState(true);
+  const [isWalking, setIsWalking] = useState(false);
   const [fallenLetters, setFallenLetters] = useState<Set<number>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const controlRef = useRef<HTMLDivElement>(null);
+  const walkingTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  // Letter positions (relative to text start)
+  // Letter positions (relative to text start) with individual widths
   const getLetterPositions = useCallback(() => {
-    return LOGO_LETTERS.map((_, i) => ({
-      left: i * LETTER_WIDTH,
-      right: (i + 1) * LETTER_WIDTH,
-    }));
+    let offset = 0;
+    return LOGO_LETTERS.map((_, i) => {
+      const left = offset;
+      const right = offset + LETTER_WIDTHS[i];
+      offset = right;
+      return { left, right };
+    });
   }, []);
 
   // Check collision with letters
@@ -65,6 +70,10 @@ export function HeroSection() {
       if (e.code === "ArrowLeft") {
         e.preventDefault();
         setFacingRight(false);
+        setIsWalking(true);
+        // Clear previous timeout and set new one
+        if (walkingTimeout.current) clearTimeout(walkingTimeout.current);
+        walkingTimeout.current = setTimeout(() => setIsWalking(false), 150);
         setMascotX((prev) => {
           const newX = prev - MOVE_SPEED;
           checkCollisions(newX);
@@ -73,6 +82,10 @@ export function HeroSection() {
       } else if (e.code === "ArrowRight") {
         e.preventDefault();
         setFacingRight(true);
+        setIsWalking(true);
+        // Clear previous timeout and set new one
+        if (walkingTimeout.current) clearTimeout(walkingTimeout.current);
+        walkingTimeout.current = setTimeout(() => setIsWalking(false), 150);
         setMascotX((prev) => {
           const newX = prev + MOVE_SPEED;
           checkCollisions(newX);
@@ -126,13 +139,13 @@ export function HeroSection() {
         {/* Mascot - positioned absolutely in control mode */}
         <div
           className={cn(
-            "transition-transform",
-            isControlMode ? "absolute z-10" : "relative"
+            isControlMode ? "absolute z-10" : "relative",
+            isWalking && "animate-wiggle"
           )}
           style={
             isControlMode
               ? {
-                  transform: `translateX(${mascotX}px) scaleX(${facingRight ? -1 : 1})`,
+                  transform: `translateX(${mascotX}px) scaleX(${facingRight ? 1 : -1})`,
                   left: -MASCOT_SIZE - 16,
                   top: "50%",
                   marginTop: -MASCOT_SIZE / 2,
@@ -144,20 +157,16 @@ export function HeroSection() {
         </div>
 
         {/* Logo text with individual letters */}
-        <div className="flex" style={{ fontSize: "3.75rem" }}>
+        <div className="flex items-baseline" style={{ fontSize: "3.75rem" }}>
           {LOGO_LETTERS.map((letter, i) => (
             <span
               key={i}
               className={cn(
-                "mascot-text inline-block transition-all duration-300",
+                "mascot-text inline-block",
                 fallenLetters.has(i) && "animate-letter-fall"
               )}
               style={{
-                width: LETTER_WIDTH,
                 opacity: fallenLetters.has(i) ? 0 : 1,
-                transform: fallenLetters.has(i)
-                  ? "translateY(100vh) rotate(45deg)"
-                  : "translateY(0) rotate(0deg)",
               }}
             >
               {letter}

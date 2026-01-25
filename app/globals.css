@@ -141,3 +141,17 @@
 .animate-letter-fall {
   animation: letter-fall 0.6s ease-in forwards;
 }
+
+/* Wiggle animation for FiBuKI walking */
+@keyframes wiggle {
+  0%, 100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(3deg);
+  }
+}
+
+.animate-wiggle {
+  animation: wiggle 0.15s ease-in-out infinite;
+}
