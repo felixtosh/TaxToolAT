@@ -20,6 +20,8 @@ interface FilesDataTableProps {
   onSelectionChange?: (selectedIds: Set<string>) => void;
   /** Custom empty state component */
   emptyState?: ReactNode;
+  /** Set of file IDs that are currently being searched - used to bust row memo cache */
+  searchingFileIds?: Set<string>;
 }
 
 export interface FilesDataTableHandle {
@@ -51,6 +53,7 @@ function FilesDataTableInner(
     selectedRowIds,
     onSelectionChange,
     emptyState,
+    searchingFileIds,
   }: FilesDataTableProps,
   ref: React.ForwardedRef<FilesDataTableHandle>
 ) {
@@ -86,6 +89,14 @@ function FilesDataTableInner(
     return { "file-id": row.id };
   }, []);
 
+  // Get row state key - used to bust memo cache when searching state changes
+  const getRowStateKey = React.useCallback(
+    (row: TaxFile) => {
+      return searchingFileIds?.has(row.id) ?? false;
+    },
+    [searchingFileIds]
+  );
+
   return (
     <ResizableDataTable
       ref={ref as React.Ref<DataTableHandle>}
@@ -97,6 +108,7 @@ function FilesDataTableInner(
       initialSorting={DEFAULT_SORTING}
       getRowClassName={getRowClassName}
       getRowDataAttributes={getRowDataAttributes}
+      getRowStateKey={getRowStateKey}
       emptyState={emptyState}
       emptyMessage="No files found."
       enableMultiSelect={enableMultiSelect}

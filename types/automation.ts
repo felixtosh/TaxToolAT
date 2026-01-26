@@ -12,7 +12,12 @@ export type IntegrationId = "gmail" | "outlook" | "gocardless" | "browser" | nul
 /**
  * Pipeline types for different automation flows
  */
-export type PipelineId = "find-partner" | "find-file" | "trigger-based";
+export type PipelineId =
+  | "find-partner"      // TX→Partner
+  | "find-file"         // TX→File
+  | "file-find-partner" // File→Partner
+  | "file-find-tx"      // File→TX
+  | "trigger-based";
 
 /**
  * How an automation step is triggered within its pipeline

@@ -10,6 +10,7 @@ import { TableEmptyState, emptyStatePresets } from "@/components/ui/table-empty-
 import { TaxFile, FileFilters } from "@/types/file";
 import { UserPartner, GlobalPartner } from "@/types/partner";
 import { useGmailSyncStatus } from "@/hooks/use-gmail-sync-status";
+import { useRunningWorkers } from "@/hooks/use-running-workers";
 
 export interface TransactionAmountData {
   amount: number;
@@ -62,10 +63,11 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     ref
   ) {
     const router = useRouter();
+    const { runningFileIds } = useRunningWorkers();
 
     const columns = useMemo(
-      () => getFileColumns(userPartners, globalPartners, transactionAmountsMap),
-      [userPartners, globalPartners, transactionAmountsMap]
+      () => getFileColumns(userPartners, globalPartners, transactionAmountsMap, undefined, runningFileIds),
+      [userPartners, globalPartners, transactionAmountsMap, runningFileIds]
     );
 
     // Calculate connected count (files connected to at least one transaction)
@@ -156,6 +158,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
           selectedRowIds={selectedRowIds}
           onSelectionChange={onSelectionChange}
           emptyState={emptyState}
+          searchingFileIds={runningFileIds}
         />
       </div>
     );

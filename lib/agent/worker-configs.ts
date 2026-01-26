@@ -35,33 +35,66 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
     ],
     systemPromptKey: "file_matching",
     maxMessages: 20,
+    maxToolCalls: 15,
     timeoutSeconds: 120,
   },
 
   partner_matching: {
     type: "partner_matching",
     name: "Partner Matcher",
-    description: "Identifies and assigns partners to transactions or files",
+    description: "Identifies and assigns partners to transactions",
     toolNames: [
       // Read tools (for context)
       "getTransaction",
-      "getFile",
       "listPartners",
       "getPartner",
       // Search user's own data for clues (bank names are often cryptic)
       "searchGmailEmails", // Emails have full company names, domains
       "listFiles", // Invoices have proper company names
+      "getFile", // Get file details
       "listTransactions", // Similar transactions may have partners
       // Lookup tools (read-only, for web search)
       "lookupCompanyInfo",
       "validateVatId",
-      // Write tools (separate concerns)
+      // Write tools
       "createPartner",
       "assignPartnerToTransaction",
+      // Connect file if found during search
+      "downloadGmailAttachment",
+      "waitForFileExtraction",
+      "connectFileToTransaction",
     ],
     systemPromptKey: "partner_matching",
-    maxMessages: 25, // More messages needed for multi-source search
+    maxMessages: 25,
+    maxToolCalls: 18,
     timeoutSeconds: 120,
+  },
+
+  file_partner_matching: {
+    type: "file_partner_matching",
+    name: "File Partner Matcher",
+    description: "Identifies and assigns partners to files/invoices",
+    toolNames: [
+      // Read tools (for context)
+      "getFile",
+      "listPartners",
+      "getPartner",
+      // Search user's own data
+      "searchGmailEmails",
+      "searchGmailAttachments",
+      "listFiles",
+      "listTransactions",
+      // Lookup tools
+      "lookupCompanyInfo",
+      "validateVatId",
+      // Write tools
+      "createPartner",
+      "assignPartnerToFile",
+    ],
+    systemPromptKey: "file_partner_matching",
+    maxMessages: 20,
+    maxToolCalls: 15,
+    timeoutSeconds: 90,
   },
 
   receipt_search: {
@@ -88,7 +121,8 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
       "waitForFileExtraction",
     ],
     systemPromptKey: "receipt_search",
-    maxMessages: 30, // Increased - needs room for search, download, wait, verify cycles
+    maxMessages: 30,
+    maxToolCalls: 20, // Slightly higher - needs search, download, wait, verify cycles
     timeoutSeconds: 120,
   },
 };

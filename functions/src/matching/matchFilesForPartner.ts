@@ -440,10 +440,12 @@ export async function matchFilesForPartnerInternal(
     }
   }
 
-  // Filter to unconnected files
+  // Filter to unconnected files that are invoices (not "Not Invoice")
   const unconnectedFiles = Array.from(fileMap.values()).filter((doc) => {
     const data = doc.data();
-    return !data.transactionIds || data.transactionIds.length === 0;
+    const isConnected = data.transactionIds && data.transactionIds.length > 0;
+    const isNotInvoice = data.isNotInvoice === true;
+    return !isConnected && !isNotInvoice;
   });
 
   if (unconnectedFiles.length === 0) {

@@ -9,7 +9,7 @@ interface AssignPartnerToTransactionRequest {
   transactionId: string;
   partnerId: string;
   partnerType: "global" | "user";
-  matchedBy: "manual" | "suggestion";
+  matchedBy: "manual" | "suggestion" | "auto" | "ai";
   confidence?: number;
 }
 
@@ -63,6 +63,31 @@ export const assignPartnerToTransactionCallable = createCallable<
     const partnerData = partnerSnap.data()!;
     if (partnerType === "user" && partnerData.userId !== ctx.userId) {
       throw new HttpsError("permission-denied", "Partner access denied");
+    }
+
+    // Check if user previously rejected this partner for this transaction
+    // Only block for auto/ai matches - manual/suggestion assignments are deliberate user overrides
+    // manualRemovals is an array of { transactionId: string, ... }
+    const manualRemovals = partnerData.manualRemovals || [];
+    const wasRejected = manualRemovals.some(
+      (r: { transactionId: string }) => r.transactionId === transactionId
+    );
+
+    if (wasRejected && (matchedBy === "auto" || matchedBy === "ai")) {
+      console.log(
+        `[assignPartnerToTransaction] Blocked: Partner ${partnerId} was previously rejected for transaction ${transactionId} (matchedBy: ${matchedBy})`
+      );
+      throw new HttpsError(
+        "failed-precondition",
+        `Partner was previously rejected for this transaction. To reassign, first remove it from the partner's rejection list.`
+      );
+    }
+
+    if (wasRejected) {
+      // Manual/suggestion override of a previously rejected partner
+      console.log(
+        `[assignPartnerToTransaction] Manual override: Partner ${partnerId} was previously rejected but user is re-adding via ${matchedBy}`
+      );
     }
 
     // Update transaction with partner assignment

@@ -268,6 +268,18 @@ export async function runTransactionMatching(
     return;
   }
 
+  // Skip "Not Invoice" files - no transaction matching needed
+  if (fileData.isNotInvoice === true) {
+    console.log(`[TxMatch] File ${fileId} is not an invoice, skipping transaction matching`);
+    await db.collection("files").doc(fileId).update({
+      transactionMatchComplete: true,
+      transactionMatchedAt: Timestamp.now(),
+      transactionSuggestions: [],
+      updatedAt: Timestamp.now(),
+    });
+    return;
+  }
+
   const userId = fileData.userId;
   const t0 = Date.now();
 

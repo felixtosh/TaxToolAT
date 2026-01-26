@@ -274,6 +274,66 @@ export const assignPartnerToTransactionTool = tool(
 );
 
 // ============================================================================
+// Assign Partner to File
+// ============================================================================
+
+export const assignPartnerToFileTool = tool(
+  async ({ fileId, partnerId }, config) => {
+    const authHeader = config?.configurable?.authHeader;
+    if (!authHeader) {
+      return { error: "Auth header not provided" };
+    }
+
+    try {
+      // Call updateFile Cloud Function to assign the partner
+      const result = await callFirebaseFunction<
+        { fileId: string; data: { partnerId: string; partnerType: "user"; partnerMatchedBy: "ai" } },
+        { success: boolean }
+      >(
+        "updateFile",
+        {
+          fileId,
+          data: {
+            partnerId,
+            partnerType: "user",
+            partnerMatchedBy: "ai",
+          },
+        },
+        authHeader
+      );
+
+      if (!result.success) {
+        return { error: "Failed to assign partner to file" };
+      }
+
+      // Get partner name for response
+      const partnerDoc = await db.collection("partners").doc(partnerId).get();
+      const partnerName = partnerDoc.exists ? partnerDoc.data()?.name : "Unknown";
+
+      return {
+        success: true,
+        fileId,
+        partnerId,
+        partnerName,
+        message: `Assigned partner "${partnerName}" to file`,
+      };
+    } catch (err) {
+      const error = err as Error;
+      return { error: error.message || "Failed to assign partner to file" };
+    }
+  },
+  {
+    name: "assignPartnerToFile",
+    description:
+      "Assign a partner (vendor/supplier) to a file/invoice. Use after finding/creating the partner. This directly assigns the partner to the file without needing a transaction.",
+    schema: z.object({
+      fileId: z.string().describe("The file ID"),
+      partnerId: z.string().describe("The partner ID to assign"),
+    }),
+  }
+);
+
+// ============================================================================
 // Create Partner
 // ============================================================================
 
@@ -739,6 +799,7 @@ export const WRITE_TOOLS = [
   createSourceTool,
   rollbackTransactionTool,
   assignPartnerToTransactionTool,
+  assignPartnerToFileTool,
   bulkAssignPartnerToTransactionsTool,
   createPartnerTool,
   updatePartnerTool,

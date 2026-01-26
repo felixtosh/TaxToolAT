@@ -1,6 +1,7 @@
 "use client";
 
-import { Bot, Loader2, CheckCircle, XCircle, FileSearch, MessageSquare, Receipt } from "lucide-react";
+import { Bot, Loader2, CheckCircle, XCircle, FileSearch, MessageSquare, Receipt, ExternalLink } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { AutoActionNotification } from "@/types/notification";
 import { WorkerType } from "@/types/worker";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,9 @@ const workerIcons: Record<WorkerType, { icon: typeof Bot }> = {
   },
   partner_matching: {
     icon: Bot,
+  },
+  file_partner_matching: {
+    icon: FileSearch,
   },
   receipt_search: {
     icon: Receipt,
@@ -47,6 +51,7 @@ function StatusIcon({ status }: { status?: string }) {
  * If there's a linked chat session, can navigate to it.
  */
 export function WorkerActivityCard({ notification }: WorkerActivityCardProps) {
+  const router = useRouter();
   const { loadSession, setActiveTab, markNotificationRead } = useChat();
 
   const workerType = notification.context.workerType as WorkerType;
@@ -56,11 +61,29 @@ export function WorkerActivityCard({ notification }: WorkerActivityCardProps) {
   // Check if this notification has a linked chat session
   const sessionId = notification.context.sessionId;
 
+  // Get file/transaction context for linking
+  const fileId = notification.context.fileId;
+  const fileName = notification.context.fileName;
+  const transactionId = notification.context.transactionId;
+  const transactionName = notification.context.transactionName;
+
   const handleViewInChat = async () => {
     if (sessionId) {
       await loadSession(sessionId);
       setActiveTab("chat");
       markNotificationRead(notification.id);
+    }
+  };
+
+  const handleViewFile = () => {
+    if (fileId) {
+      router.push(`/files?id=${fileId}`);
+    }
+  };
+
+  const handleViewTransaction = () => {
+    if (transactionId) {
+      router.push(`/transactions?id=${transactionId}`);
     }
   };
 
@@ -100,6 +123,34 @@ export function WorkerActivityCard({ notification }: WorkerActivityCardProps) {
         <p className="font-medium">{notification.title}</p>
         <p className="text-muted-foreground">{notification.message}</p>
       </div>
+
+      {/* While running - show clickable link to file/transaction */}
+      {status === "running" && (fileId || transactionId) && (
+        <div className="flex items-center gap-2">
+          {fileId && fileName && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-fit h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+              onClick={handleViewFile}
+            >
+              <ExternalLink className="h-3 w-3 mr-1" />
+              {fileName}
+            </Button>
+          )}
+          {transactionId && transactionName && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-fit h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+              onClick={handleViewTransaction}
+            >
+              <ExternalLink className="h-3 w-3 mr-1" />
+              {transactionName}
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* View in chat button - shows when there's a linked session */}
       {sessionId && status === "completed" && (

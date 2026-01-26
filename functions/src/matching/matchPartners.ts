@@ -1,5 +1,5 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import {
   matchTransaction,
   shouldAutoApply,
@@ -10,6 +10,61 @@ import { matchCategoriesForTransactions } from "./matchCategories";
 import { createLocalPartnerFromGlobal } from "./createLocalPartnerFromGlobal";
 
 const db = getFirestore();
+
+/**
+ * Queue an agentic partner search worker when rule-based matching finds suggestions
+ * but no confident auto-match. The agent can search for company info, check VAT registries,
+ * and make smarter partner assignments.
+ */
+async function queueAgenticPartnerSearch(
+  userId: string,
+  transactionId: string,
+  transactionData: TransactionData,
+  topSuggestionConfidence: number
+): Promise<void> {
+  const promptParts = [
+    `Find partner for transaction "${transactionData.name}"`,
+  ];
+
+  if (topSuggestionConfidence > 0) {
+    promptParts.push(`Rule-based matching found suggestions but no confident match (top: ${topSuggestionConfidence}%)`);
+  } else {
+    promptParts.push(`Rule-based matching found no suggestions - search broadly`);
+  }
+
+  if (transactionData.partner) {
+    promptParts.push(`Bank partner field: ${transactionData.partner}`);
+  }
+  if (transactionData.partnerIban) {
+    promptParts.push(`IBAN: ${transactionData.partnerIban}`);
+  }
+  if (transactionData.reference) {
+    promptParts.push(`Reference: ${transactionData.reference}`);
+  }
+
+  const initialPrompt = promptParts.join(". ");
+
+  // Create worker request for frontend/worker processor to pick up
+  const requestRef = db.collection(`users/${userId}/workerRequests`).doc();
+  await requestRef.set({
+    id: requestRef.id,
+    workerType: "partner_matching",
+    initialPrompt,
+    triggerContext: {
+      transactionId,
+      topSuggestionConfidence,
+      triggeredAfterRuleBasedMatch: true,
+    },
+    triggeredBy: "auto",
+    status: "pending",
+    createdAt: Timestamp.now(),
+  });
+
+  console.log(
+    `[PartnerMatch] Queued agentic search for transaction ${transactionId} (worker request ${requestRef.id}, ` +
+    `top suggestion: ${topSuggestionConfidence}%)`
+  );
+}
 
 interface MatchPartnersRequest {
   transactionIds?: string[];
@@ -137,6 +192,8 @@ export const matchPartners = onCall<MatchPartnersRequest>(
     let withSuggestions = 0;
     const processedTransactionIds: string[] = [];
     const autoMatchedPartnerIds = new Set<string>(); // Track partners for file matching
+    // Track transactions for agentic fallback: { transactionId, transactionData, topConfidence }
+    const noAutoMatchTransactions: { id: string; data: TransactionData; topConfidence: number }[] = [];
 
     let batch = db.batch();
     let batchCount = 0;
@@ -220,6 +277,12 @@ export const matchPartners = onCall<MatchPartnersRequest>(
           }
         } else {
           withSuggestions++;
+          // Track for potential agentic fallback - has suggestions but not confident enough
+          noAutoMatchTransactions.push({
+            id: txDoc.id,
+            data: transaction,
+            topConfidence: topMatch.confidence,
+          });
         }
 
         batch.update(txDoc.ref, updates);
@@ -303,6 +366,25 @@ export const matchPartners = onCall<MatchPartnersRequest>(
       } catch (err) {
         console.error("Failed to import matchFilesForPartnerInternal:", err);
       }
+    }
+
+    // Queue agentic partner search for transactions with suggestions but no auto-match
+    // Limit to 5 transactions to avoid flooding the worker queue
+    if (noAutoMatchTransactions.length > 0 && noAutoMatchTransactions.length <= 5) {
+      console.log(`Queueing agentic partner search for ${noAutoMatchTransactions.length} transactions without confident match`);
+
+      for (const { id: txId, data: txData, topConfidence } of noAutoMatchTransactions) {
+        try {
+          await queueAgenticPartnerSearch(userId, txId, txData, topConfidence);
+        } catch (err) {
+          console.error(`Failed to queue agentic search for transaction ${txId}:`, err);
+        }
+      }
+    } else if (noAutoMatchTransactions.length > 5) {
+      console.log(
+        `[PartnerMatch] ${noAutoMatchTransactions.length} transactions without confident match - ` +
+        `skipping agentic fallback (batch too large, user should review manually)`
+      );
     }
 
     return {

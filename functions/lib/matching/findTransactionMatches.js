@@ -65,6 +65,11 @@ exports.findTransactionMatchesForFile = (0, https_1.onCall)({
         if (docData.userId !== userId) {
             throw new https_1.HttpsError("permission-denied", "Cannot access this file");
         }
+        // Skip "Not Invoice" files - return empty matches
+        if (docData.isNotInvoice === true) {
+            console.log(`[FindMatches] File ${fileId} is not an invoice, returning empty`);
+            return { matches: [], totalCandidates: 0 };
+        }
         fileData = {
             extractedAmount: docData.extractedAmount,
             extractedCurrency: docData.extractedCurrency,
@@ -93,8 +98,21 @@ exports.findTransactionMatchesForFile = (0, https_1.onCall)({
     // === Query Candidate Transactions ===
     let transactions = [];
     let dateRangeStr = "";
-    if (fileData.extractedDate) {
-        // Query within date range
+    // When user provides a search query, don't filter by date - they want to find specific transactions
+    // This allows finding transactions from months before/after the invoice date
+    if (searchQuery) {
+        // User searching - query all transactions without date filter
+        dateRangeStr = "all (user search)";
+        const snapshot = await db
+            .collection("transactions")
+            .where("userId", "==", userId)
+            .orderBy("date", "desc")
+            .limit(1000) // Higher limit for search
+            .get();
+        transactions = snapshot.docs;
+    }
+    else if (fileData.extractedDate) {
+        // Auto-matching - query within date range
         const centerDate = fileData.extractedDate.toDate();
         const startDate = new Date(centerDate);
         startDate.setDate(startDate.getDate() - transactionScoring_1.SCORING_CONFIG.DATE_RANGE_DAYS);

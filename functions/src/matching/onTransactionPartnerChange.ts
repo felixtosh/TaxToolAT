@@ -27,20 +27,53 @@ export const onTransactionPartnerChange = onDocumentUpdated(
     if (!before || !after) return;
 
     // Only trigger when partnerId is newly assigned (was null, now has value)
+    // OR when partnerId changed to a different partner
     const partnerWasAssigned = !before.partnerId && after.partnerId;
+    const partnerChanged = before.partnerId !== after.partnerId && after.partnerId;
 
-    // Also skip if transaction already has a category or files
-    const hasCategory = !!after.noReceiptCategoryId;
-    const hasFiles = after.fileIds && after.fileIds.length > 0;
-
-    if (!partnerWasAssigned || hasCategory || hasFiles) {
+    if (!partnerWasAssigned && !partnerChanged) {
       return;
     }
 
     const userId = after.userId;
+    const hasFiles = after.fileIds && after.fileIds.length > 0;
+    const hasCategory = !!after.noReceiptCategoryId;
+
     console.log(
-      `Partner ${after.partnerId} assigned to transaction ${transactionId}, re-matching categories`
+      `Partner ${after.partnerId} assigned to transaction ${transactionId}, triggering automations`
     );
+
+    // Queue receipt search if transaction has no files
+    if (!hasFiles) {
+      try {
+        const { queueReceiptSearchForTransaction } = await import(
+          "../workers/runReceiptSearchForTransaction"
+        );
+
+        queueReceiptSearchForTransaction({
+          transactionId,
+          userId,
+          partnerId: after.partnerId,
+        })
+          .then((result) => {
+            if (result.skipped) {
+              console.log(`[onTransactionPartnerChange] Receipt search skipped: ${result.skipReason}`);
+            } else {
+              console.log(`[onTransactionPartnerChange] Receipt search queued for ${transactionId}`);
+            }
+          })
+          .catch((err) => {
+            console.error(`[onTransactionPartnerChange] Failed to queue receipt search:`, err);
+          });
+      } catch (err) {
+        console.error(`[onTransactionPartnerChange] Failed to import receipt search module:`, err);
+      }
+    }
+
+    // Skip category matching if already has category or files
+    if (hasCategory || hasFiles) {
+      return;
+    }
 
     try {
       // Get all active categories for this user

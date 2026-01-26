@@ -10,7 +10,7 @@ export type FirestoreTimestamp = Timestamp | AdminTimestamp;
 /**
  * Supported worker types for automation tasks
  */
-export type WorkerType = "file_matching" | "partner_matching" | "receipt_search";
+export type WorkerType = "file_matching" | "partner_matching" | "file_partner_matching" | "receipt_search";
 
 /**
  * Status of a worker run
@@ -32,6 +32,8 @@ export interface WorkerConfig {
   toolNames: string[];
   systemPromptKey: string;
   maxMessages: number;
+  /** Max individual tool calls before stopping (prevents runaway workers) */
+  maxToolCalls: number;
   timeoutSeconds: number;
 }
 

@@ -5,7 +5,8 @@ import { format } from "date-fns";
 import { Upload, Mail, Loader2 } from "lucide-react";
 import { TaxFile } from "@/types/file";
 import { UserPartner, GlobalPartner } from "@/types/partner";
-import { SortableHeader } from "@/components/ui/data-table";
+import { PipelineId } from "@/types/automation";
+import { SortableHeader, AutomationHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { cn } from "@/lib/utils";
@@ -42,7 +43,9 @@ function normalizeCurrency(currency: string | null | undefined): string {
 export function getFileColumns(
   userPartners: UserPartner[] = [],
   globalPartners: GlobalPartner[] = [],
-  transactionAmountsMap?: Map<string, TransactionAmountInfo[]>
+  transactionAmountsMap?: Map<string, TransactionAmountInfo[]>,
+  onAutomationClick?: (pipelineId: PipelineId) => void,
+  searchingFileIds?: Set<string>
 ): ColumnDef<TaxFile>[] {
   const userPartnerMap = new Map(userPartners.map((p) => [p.id, p]));
   const globalPartnerMap = new Map(globalPartners.map((p) => [p.id, p]));
@@ -227,9 +230,19 @@ export function getFileColumns(
     },
     {
       id: "assignedPartner",
-      header: "Partner",
+      header: () =>
+        onAutomationClick ? (
+          <AutomationHeader
+            label="Partner"
+            pipelineId="file-find-partner"
+            onAutomationClick={onAutomationClick}
+          />
+        ) : (
+          "Partner"
+        ),
       cell: ({ row }) => {
         const {
+          id: fileId,
           partnerId,
           partnerType,
           partnerMatchConfidence,
@@ -238,6 +251,16 @@ export function getFileColumns(
           partnerMatchComplete,
           isNotInvoice,
         } = row.original;
+
+        // Show searching state when AI search is in progress
+        if (searchingFileIds?.has(fileId)) {
+          return (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Searching...
+            </span>
+          );
+        }
 
         // Show assigned partner if exists
         if (partnerId) {
@@ -273,7 +296,16 @@ export function getFileColumns(
     {
       id: "connections",
       size: 140,
-      header: "Transactions",
+      header: () =>
+        onAutomationClick ? (
+          <AutomationHeader
+            label="Transactions"
+            pipelineId="file-find-tx"
+            onAutomationClick={onAutomationClick}
+          />
+        ) : (
+          "Transactions"
+        ),
       cell: ({ row }) => {
         const {
           id: fileId,
@@ -285,6 +317,16 @@ export function getFileColumns(
           isNotInvoice,
         } = row.original;
         const count = transactionIds.length;
+
+        // Show searching state when AI search is in progress (only when no transactions connected yet)
+        if (searchingFileIds?.has(fileId) && count === 0) {
+          return (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Searching...
+            </span>
+          );
+        }
 
         // Show connected count with amount matching info
         if (count > 0) {

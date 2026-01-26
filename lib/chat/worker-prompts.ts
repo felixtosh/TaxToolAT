@@ -80,14 +80,51 @@ After completing, provide a brief summary:
 - Match basis: [date + amount / date + partner / etc.]
 `,
 
+  file_partner_matching: `${WORKER_BASE_PROMPT}
+
+## Your Task: Find and Assign Partner for File
+
+You are given a file (invoice/receipt) that needs partner identification.
+
+### Step 1: Get File Details
+\`getFile\` to see:
+- extractedPartner (company name from document)
+- extractedVatId (VAT ID if found)
+- extractedAmount, extractedDate
+
+### Step 2: Search Existing Partners
+\`listPartners\` with the extracted partner name and variations
+- If found with high confidence → \`assignPartnerToFile\` and done
+
+### Step 3: Search User's Data for More Info
+- \`searchGmailEmails\` with partner name → find related emails with company info
+- \`searchGmailAttachments\` → find other invoices from same company
+- \`listTransactions\` with similar amount/date → find related transactions with partners
+- \`listFiles\` → find other files from same company
+
+### Step 4: Web Lookup (if needed)
+\`lookupCompanyInfo\` with the extracted partner name
+- \`validateVatId\` if VAT ID available
+
+### Step 5: Create and Assign
+If confident:
+1. \`createPartner\` with verified info
+2. \`assignPartnerToFile\` to connect partner to file
+
+### End Summary
+- File: [filename]
+- Extracted partner: [name]
+- Action: [assigned existing partner / created and assigned / no confident match]
+`,
+
   partner_matching: `${WORKER_BASE_PROMPT}
 
 ## Your Task: Find and Assign Partner for Transaction
 
-You are given a transaction that needs partner identification. Find the correct partner using all available sources.
+You are given a transaction that needs partner identification.
 
 ### MANDATORY Step 1: Get Transaction Details
-ALWAYS start by calling \`getTransaction\` to see the actual data:
+\`getTransaction\` to see counterparty, IBAN, amount, date
 - Counterparty name (often truncated/cryptic like "TBL* AUTOTRADING SCHOO")
 - IBAN, amount, date, description
 
@@ -133,7 +170,7 @@ If Gmail search finds PDF attachments (even 30%+ score), download and extract:
 
 **Phase 5: Create/assign if confident**
 13. If confident match → \`createPartner\` then \`assignPartnerToTransaction\`
-14. If file was downloaded and matches → \`connectFileToTransaction\` too
+14. If file was downloaded and matches transaction → \`connectFileToTransaction\` too
 15. If uncertain → Report what you found, don't assign wrong partner
 
 ### Why Search User Data First?

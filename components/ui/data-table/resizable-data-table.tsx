@@ -46,6 +46,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
     minColumnWidth = DEFAULT_MIN_COLUMN_WIDTH,
     getRowClassName,
     getRowDataAttributes,
+    getRowStateKey,
     estimateRowSize = DEFAULT_ESTIMATE_ROW_SIZE,
     sectionHeaderHeight = DEFAULT_SECTION_HEADER_HEIGHT,
     overscan = DEFAULT_OVERSCAN,
@@ -659,6 +660,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
                   columnSizes={columnSizes}
                   className={combinedClassName}
                   dataAttributes={dataAttributes}
+                  rowStateKey={getRowStateKey?.(original)}
                 />
               );
             })

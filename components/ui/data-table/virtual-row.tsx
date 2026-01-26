@@ -16,6 +16,7 @@ function VirtualRowInner<TData extends { id: string }>({
   columnSizes,
   className,
   dataAttributes = {},
+  rowStateKey,
 }: VirtualRowProps<TData>) {
   const handleClick = React.useCallback(
     (e: React.MouseEvent) => {
@@ -79,6 +80,11 @@ function VirtualRowInner<TData extends { id: string }>({
 export const VirtualRow = memo(
   VirtualRowInner,
   (prevProps, nextProps) => {
+    // Check if row-specific state changed (e.g., searching state for this row)
+    if (prevProps.rowStateKey !== nextProps.rowStateKey) {
+      return false; // Row state changed, re-render
+    }
+
     // Check if updatedAt changed (if field exists) - lightweight way to detect data changes
     const prevUpdatedAt = (prevProps.row.original as Record<string, unknown>).updatedAt;
     const nextUpdatedAt = (nextProps.row.original as Record<string, unknown>).updatedAt;

@@ -330,6 +330,7 @@ export function TransactionTable({
             onRowClick={handleRowClick}
             selectedRowId={selectedTransactionId}
             emptyState={emptyState}
+            searchingTransactionIds={searchingTransactions}
           />
         </TooltipProvider>
       </div>

@@ -494,8 +494,79 @@ export const TRIGGER_BASED_PIPELINE: AutomationPipeline = {
   steps: TRIGGER_BASED_AUTOMATIONS,
 };
 
+// ============================================================================
+// FILE-CENTRIC PIPELINES (from file perspective)
+// ============================================================================
+
+export const FILE_FIND_PARTNER_PIPELINE: AutomationPipeline = {
+  id: "file-find-partner",
+  name: "Find Partner for File",
+  description:
+    `Identifies which company or person an invoice/receipt belongs to. ` +
+    `Uses extracted data like company name, IBAN, VAT ID, email domain to match against known partners. ` +
+    `Matches with ${PARTNER_MATCH_CONFIG.AUTO_APPLY_THRESHOLD}%+ confidence are auto-applied.`,
+  icon: "Building2",
+  triggers: [
+    {
+      type: "on_extraction_complete",
+      description: "Runs after invoice data is extracted from uploaded file",
+    },
+  ],
+  // Reuse partner matching automations since the logic is similar
+  steps: [
+    {
+      id: "file-partner-extraction",
+      name: "Extract Partner Info",
+      shortDescription: "Parse invoice for company/vendor information",
+      longDescription:
+        "Extracts company name, IBAN, VAT ID, address, email domain and other identifying information " +
+        "from the uploaded invoice or receipt using AI document extraction.",
+      icon: "FileText",
+      integrationId: null,
+      affectedFields: ["extractedPartner", "extractedVatId", "extractedIban"],
+      order: 1,
+      trigger: "always",
+      category: "ai",
+      exposure: { ui: ["/files"], mcp: true, chat: true },
+    },
+    ...PARTNER_MATCHING_AUTOMATIONS.slice(0, 6), // Reuse IBAN, Pattern, VAT, Website, Alias, Fuzzy matching
+    {
+      ...PARTNER_MATCHING_AUTOMATIONS[6], // AI Company Lookup
+      longDescription:
+        "When no match is found but the invoice appears to be from a real company, AI searches for company information online. " +
+        "If found, it can automatically create a new partner with verified details like VAT ID and address.",
+    },
+  ],
+};
+
+export const FILE_FIND_TX_PIPELINE: AutomationPipeline = {
+  id: "file-find-tx",
+  name: "Find Transaction for File",
+  description:
+    `Matches an invoice/receipt to its corresponding bank transaction. ` +
+    `Uses amount, date proximity, and partner overlap for scoring. ` +
+    `Matches scoring ${TRANSACTION_MATCH_CONFIG.AUTO_MATCH_THRESHOLD}+ points are auto-connected.`,
+  icon: "FileSearch",
+  triggers: [
+    {
+      type: "on_extraction_complete",
+      description: "Runs after invoice data is extracted from uploaded file",
+    },
+    {
+      type: "chained",
+      description: "Re-runs after partner is assigned to the file",
+    },
+  ],
+  steps: [
+    FILE_MATCHING_AUTOMATIONS[1], // file-transaction-matching
+    FILE_MATCHING_AUTOMATIONS[2], // partner-batch-matching
+  ],
+};
+
 export const ALL_PIPELINES: AutomationPipeline[] = [
   FIND_PARTNER_PIPELINE,
   FIND_FILE_PIPELINE,
+  FILE_FIND_PARTNER_PIPELINE,
+  FILE_FIND_TX_PIPELINE,
   TRIGGER_BASED_PIPELINE,
 ];

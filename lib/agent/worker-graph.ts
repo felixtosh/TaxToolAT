@@ -57,6 +57,10 @@ const WorkerStateAnnotation = Annotation.Root({
     reducer: (_, next) => next,
     default: () => 0,
   }),
+  toolCallCount: Annotation<number>({
+    reducer: (_, next) => next,
+    default: () => 0,
+  }),
   shouldContinue: Annotation<boolean>({
     reducer: (_, next) => next,
     default: () => true,
@@ -174,7 +178,7 @@ function createToolsNode(workerType: WorkerType) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     config?: any
   ): Promise<Partial<WorkerState>> {
-    const { userId, authHeader } = state;
+    const { userId, authHeader, toolCallCount } = state;
 
     const toolConfig = {
       ...config,
@@ -187,8 +191,14 @@ function createToolsNode(workerType: WorkerType) {
 
     try {
       const result = await rawToolsNode.invoke(state, toolConfig);
-      console.log(`[Worker:${workerType}] Tools executed, got ${result.messages?.length} messages`);
-      return result;
+      // Count individual tool calls (each tool result is a message)
+      const newToolCalls = result.messages?.length || 0;
+      const newToolCallCount = toolCallCount + newToolCalls;
+      console.log(`[Worker:${workerType}] Tools executed: ${newToolCalls} calls (total: ${newToolCallCount})`);
+      return {
+        ...result,
+        toolCallCount: newToolCallCount,
+      };
     } catch (error) {
       console.error(`[Worker:${workerType}] Tool execution error:`, error);
       throw error;
@@ -213,13 +223,19 @@ async function respondNode(state: WorkerState): Promise<Partial<WorkerState>> {
  * Route after agent node
  */
 function routeAfterAgent(state: WorkerState): "tools" | "respond" {
-  const { messages, messageCount, workerType } = state;
+  const { messages, messageCount, toolCallCount, workerType } = state;
   const config = getWorkerConfig(workerType);
   const lastMessage = messages[messages.length - 1];
 
-  // Check for runaway prevention
+  // Check for runaway prevention - max messages
   if (messageCount >= config.maxMessages) {
     console.log(`[Worker:${workerType}] Max messages (${config.maxMessages}) reached, stopping`);
+    return "respond";
+  }
+
+  // Check for runaway prevention - max tool calls
+  if (toolCallCount >= config.maxToolCalls) {
+    console.log(`[Worker:${workerType}] Max tool calls (${config.maxToolCalls}) reached, stopping`);
     return "respond";
   }
 
@@ -240,13 +256,19 @@ function routeAfterAgent(state: WorkerState): "tools" | "respond" {
  * Route after tools node
  */
 function routeAfterTools(state: WorkerState): "agent" | "respond" {
-  const { messages, messageCount, workerType } = state;
+  const { messages, messageCount, toolCallCount, workerType } = state;
   const config = getWorkerConfig(workerType);
   const lastMessage = messages[messages.length - 1];
 
-  // Check for runaway prevention
+  // Check for runaway prevention - max messages
   if (messageCount >= config.maxMessages) {
     console.log(`[Worker:${workerType}] Max messages reached after tools, stopping`);
+    return "respond";
+  }
+
+  // Check for runaway prevention - max tool calls
+  if (toolCallCount >= config.maxToolCalls) {
+    console.log(`[Worker:${workerType}] Max tool calls (${config.maxToolCalls}) reached after tools, stopping`);
     return "respond";
   }
 
@@ -325,6 +347,7 @@ export async function runWorkerGraph(input: RunWorkerInput): Promise<RunWorkerOu
       runId: input.runId,
       modelProvider: input.modelProvider || "gemini",
       messageCount: 0,
+      toolCallCount: 0,
       shouldContinue: true,
       actionsPerformed: [],
     },
@@ -356,6 +379,7 @@ export async function* streamWorkerGraph(input: RunWorkerInput) {
       runId: input.runId,
       modelProvider: input.modelProvider || "gemini",
       messageCount: 0,
+      toolCallCount: 0,
       shouldContinue: true,
       actionsPerformed: [],
     },

@@ -27,19 +27,21 @@ When asked to find partner for a **transaction ID**:
    - Try each company name variant from suggestions
    - If found → assign and done!
 
-**Only if no existing partner match, search user's data for clues:**
-4. \`searchGmailEmails\` with suggestions - use the generated queries, don't invent email addresses
-5. \`listFiles\` with date/amount filters - uploaded invoices have proper company names
-6. \`listTransactions\` with similar name - find past transactions with partners assigned
+**Only if no existing partner match, ALWAYS verify before creating:**
+4. \`lookupCompanyInfo\` with the company name - **MANDATORY before createPartner!**
+   - This uses Gemini + Google Search to verify the company exists
+   - Returns official name, VAT ID, website, address
+   - **NEVER create a partner without lookupCompanyInfo first!**
+   - Example: "Billa" → lookupCompanyInfo reveals it's "BILLA AG" part of REWE Group
+5. If VAT found: \`validateVatId\` to verify (may fail if EU VIES is down - that's ok)
+6. **Only if lookupCompanyInfo succeeds**: \`createPartner\` with verified data
+7. Then \`assignPartnerToTransaction\`
+8. If lookupCompanyInfo returns null/nothing → DON'T create partner, skip with message
 
-**Use clues found to identify the real company:**
-7. If Gmail shows emails from a domain (e.g., "info@autotrading-school.com") → use that domain
-8. If files show a proper company name → use that name
-9. If similar transactions have a partner → suggest using that partner
-10. \`lookupCompanyInfo\` with the best lead (domain or company name found)
-11. If VAT found: \`validateVatId\` to verify (may fail if EU VIES is down - that's ok)
-12. Only assign if confident: \`createPartner\` then \`assignPartnerToTransaction\`
-13. Skip if uncertain - better to skip than assign wrong
+**Optional extra searches for clues:**
+- \`searchGmailEmails\` - find emails from this company for domain hints
+- \`listFiles\` - check if uploaded invoices have the company
+- \`listTransactions\` - find similar transactions with partners assigned
 
 **Why search user data first?** Bank transaction names like "TBL* AUTOTRADING SCHOO" are truncated and cryptic. But the user's Gmail and invoices likely have the full company name!
 
@@ -53,8 +55,8 @@ When asked to find partner for a **file ID**:
 5. If gmailSenderEmail exists: extract domain, use for \`lookupCompanyInfo\`
 6. If extractedIban exists: \`listPartners\` or \`listTransactions\` to find partners with same IBAN
 7. \`lookupCompanyInfo\` with the best lead (extractedPartner name or domain)
-8. If confident and partner found/created: report the match (UI will handle assignment)
-   - **Note:** Direct file-partner assignment requires connecting via transaction first
+8. If confident: \`createPartner\` (if needed) → \`assignPartnerToFile\` to assign!
+   - **IMPORTANT:** Always assign the partner after finding/creating it - don't leave the user hanging!
 
 Do NOT use \`findOrCreatePartner\` for ID-based requests - use step-by-step for transparency.
 
@@ -70,10 +72,14 @@ When asked to find transaction for a file ID:
      - Use \`listTransactions\` with \`minAmount\`/\`maxAmount\` wide range (±25%)
      - Example: 690 USD (~630 EUR) → minAmount=470, maxAmount=790
      - **NEVER search for the foreign currency amount directly**
-4. **Search strategy** (invoice dates often differ from payment dates!):
-   - First try: \`listTransactions\` with amount range + partner name (NO date filter)
-   - If no results: try with just amount range (no date, no partner)
-   - If too many results: add date filter ±60 days around file date
+4. **Search strategy** (invoice dates often differ from payment dates by MONTHS!):
+   - **Use \`search\` parameter with partner NAME, NOT \`partnerId\`!**
+     - Transactions may only have partner as suggestion, not assigned
+     - partnerId filter only finds assigned partners
+   - First try: \`listTransactions\` with \`search: "partner name"\` + amount range (NO date filter)
+   - Invoice date can be months AFTER payment (e.g., quarterly assessments)
+   - If no results: try with just amount range
+   - If too many: add date filter, but make it WIDE (±90 days or more)
 5. Match by: amount in range + partner similarity + reasonable date proximity
 6. If confident match: \`connectFileToTransaction\`
 

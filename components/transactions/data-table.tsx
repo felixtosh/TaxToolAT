@@ -16,6 +16,8 @@ interface DataTableProps<TData> {
   selectedRowId?: string | null;
   /** Custom empty state component */
   emptyState?: ReactNode;
+  /** Set of transaction IDs that are currently being searched - used to bust row memo cache */
+  searchingTransactionIds?: Set<string>;
 }
 
 export type { DataTableHandle };
@@ -34,7 +36,7 @@ const DEFAULT_TRANSACTION_COLUMN_SIZES: Record<string, number> = {
 const DEFAULT_SORTING: SortingState = [{ id: "date", desc: true }];
 
 function DataTableInner<TData extends { id: string }>(
-  { columns, data, onRowClick, selectedRowId, emptyState }: DataTableProps<TData>,
+  { columns, data, onRowClick, selectedRowId, emptyState, searchingTransactionIds }: DataTableProps<TData>,
   ref: React.ForwardedRef<DataTableHandle>
 ) {
   // Type guard to check if row is a transaction
@@ -63,6 +65,15 @@ function DataTableInner<TData extends { id: string }>(
     return { "transaction-id": row.id };
   }, []);
 
+  // Get row state key - used to bust memo cache when searching state changes
+  const getRowStateKey = React.useCallback(
+    (row: TData) => {
+      // Return whether this row is being searched - changes to this trigger re-render
+      return searchingTransactionIds?.has(row.id) ?? false;
+    },
+    [searchingTransactionIds]
+  );
+
   return (
     <ResizableDataTable
       ref={ref}
@@ -74,6 +85,7 @@ function DataTableInner<TData extends { id: string }>(
       initialSorting={DEFAULT_SORTING}
       getRowClassName={getRowClassName}
       getRowDataAttributes={getRowDataAttributes}
+      getRowStateKey={getRowStateKey}
       emptyState={emptyState}
       emptyMessage="No transactions found."
     />

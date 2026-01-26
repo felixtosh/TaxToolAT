@@ -36,6 +36,8 @@ export interface ResizableDataTableProps<TData extends { id: string }> {
   minColumnWidth?: number;
   getRowClassName?: (row: TData, isSelected: boolean) => string;
   getRowDataAttributes?: (row: TData) => Record<string, string>;
+  /** Get row-specific state key - changes to this value trigger row re-render (e.g., searching state) */
+  getRowStateKey?: (row: TData) => string | number | boolean | undefined;
   estimateRowSize?: number;
   /** Height for section header rows (default: 48) */
   sectionHeaderHeight?: number;
@@ -72,4 +74,6 @@ export interface VirtualRowProps<TData extends { id: string }> {
   columnSizes: number[];
   className?: string;
   dataAttributes?: Record<string, string>;
+  /** Row-specific state that should trigger re-render when changed (e.g., searching state) */
+  rowStateKey?: string | number | boolean;
 }

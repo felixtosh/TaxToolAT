@@ -949,10 +949,34 @@ Partner: ${fileInfo.partner}` : ""}`;
 
         // Handle messages loaded from Firestore
         // Check if we have stored parts with chronological order
-        const storedParts = m.parts as Array<{ type: string; text?: string; toolCallId?: string; toolName?: string }> | undefined;
+        const storedParts = m.parts as Array<{ type: string; text?: string; toolCallId?: string; toolName?: string; toolCall?: ToolCall }> | undefined;
         const hasStoredParts = storedParts && storedParts.length > 0 && storedParts.some((p) => p.type === "tool" && p.toolCallId);
 
-        if (hasStoredParts && m.toolInvocations && m.toolInvocations.length > 0) {
+        // Check for worker-saved format: parts with full toolCall objects (from worker-graph transcript)
+        const hasWorkerParts = storedParts && storedParts.length > 0 && storedParts.some((p) => p.type === "tool" && (p as { toolCall?: unknown }).toolCall);
+
+        if (hasWorkerParts) {
+          // Worker transcript format: parts already have full toolCall objects
+          for (const p of storedParts) {
+            if (p.type === "text" && p.text) {
+              fullTextContent += p.text;
+              orderedParts.push({ type: "text", text: p.text });
+            } else if (p.type === "tool" && (p as { toolCall?: ToolCall }).toolCall) {
+              const toolCall = (p as { toolCall: ToolCall }).toolCall;
+              orderedParts.push({
+                type: "tool",
+                toolCall: {
+                  id: toolCall.id,
+                  name: toolCall.name,
+                  args: toolCall.args || {},
+                  result: toolCall.result,
+                  status: toolCall.status || "executed",
+                  requiresConfirmation: toolCall.requiresConfirmation ?? false,
+                },
+              });
+            }
+          }
+        } else if (hasStoredParts && m.toolInvocations && m.toolInvocations.length > 0) {
           // Use stored parts for chronological order, with tool data from toolInvocations
           for (const p of storedParts) {
             if (p.type === "text" && p.text) {

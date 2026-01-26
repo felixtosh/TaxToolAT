@@ -39,6 +39,45 @@ interface WorkerRequest {
 // ============================================================================
 
 /**
+ * Truncate large values in tool results to prevent Firestore size limit errors
+ * Max document size is 1MB, so we truncate individual results to ~50KB
+ */
+function truncateLargeResults(value: unknown, maxSize = 50000): unknown {
+  if (value === null || value === undefined) return value;
+
+  if (typeof value === "string") {
+    if (value.length > maxSize) {
+      return value.slice(0, maxSize) + `... [truncated, ${value.length - maxSize} chars removed]`;
+    }
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    // For arrays, truncate if too many items or items are large
+    const truncated = value.slice(0, 20).map(item => truncateLargeResults(item, maxSize / 10));
+    if (value.length > 20) {
+      return [...truncated, `... and ${value.length - 20} more items`];
+    }
+    return truncated;
+  }
+
+  if (typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      // Skip very large nested objects like extractedText
+      if (k === "extractedText" && typeof v === "string" && v.length > 1000) {
+        result[k] = v.slice(0, 1000) + "... [truncated]";
+      } else {
+        result[k] = truncateLargeResults(v, maxSize / 5);
+      }
+    }
+    return result;
+  }
+
+  return value;
+}
+
+/**
  * Convert LangChain messages to WorkerMessages for storage
  * Properly matches tool calls with their results from ToolMessages
  */
@@ -73,8 +112,9 @@ function convertToWorkerMessages(
   for (const msg of messages) {
     const msgType = msg._getType?.() || msg.type;
 
-    // Skip system and tool messages (tool results are embedded in tool calls)
-    if (msgType === "system" || msgType === "tool") {
+    // Skip system, tool, and human messages
+    // (tool results are embedded in tool calls, human prompt is added separately)
+    if (msgType === "system" || msgType === "tool" || msgType === "human") {
       continue;
     }
 
@@ -100,7 +140,7 @@ function convertToWorkerMessages(
       parts.push({ type: "text", text: content });
     }
 
-    // Add tool call parts with their results
+    // Add tool call parts with their results (truncate to prevent Firestore size limits)
     const toolCalls = msg.tool_calls || msg.additional_kwargs?.tool_calls || [];
     for (const tc of toolCalls) {
       const toolResult = toolResults.get(tc.id);
@@ -109,8 +149,8 @@ function convertToWorkerMessages(
         toolCall: {
           id: tc.id,
           name: tc.name,
-          args: tc.args,
-          result: toolResult,
+          args: truncateLargeResults(tc.args) as Record<string, unknown>,
+          result: truncateLargeResults(toolResult),
           status: "executed",
           requiresConfirmation: false,
         },
@@ -165,7 +205,7 @@ async function createChatSessionFromTranscript(
     createdAt: FieldValue.serverTimestamp(),
   });
 
-  // Add transcript messages
+  // Add transcript messages (assistant responses only, user prompt already added above)
   for (const msg of transcript) {
     // Filter out undefined values from parts
     const cleanParts = msg.parts?.map(part => {
@@ -201,11 +241,31 @@ async function createStartingNotification(
     workerType: workerRun.workerType,
     workerStatus: "running",
   };
+
+  // Fetch file/transaction name for display during processing
   if (workerRun.triggerContext?.fileId) {
     notificationContext.fileId = workerRun.triggerContext.fileId;
+    try {
+      const fileDoc = await db.collection("files").doc(workerRun.triggerContext.fileId).get();
+      if (fileDoc.exists) {
+        const fileData = fileDoc.data()!;
+        notificationContext.fileName = fileData.extractedPartner || fileData.fileName || "Invoice";
+      }
+    } catch (err) {
+      console.warn("[Worker API] Failed to fetch file name:", err);
+    }
   }
   if (workerRun.triggerContext?.transactionId) {
     notificationContext.transactionId = workerRun.triggerContext.transactionId;
+    try {
+      const txDoc = await db.collection("transactions").doc(workerRun.triggerContext.transactionId).get();
+      if (txDoc.exists) {
+        const txData = txDoc.data()!;
+        notificationContext.transactionName = txData.name || "Transaction";
+      }
+    } catch (err) {
+      console.warn("[Worker API] Failed to fetch transaction name:", err);
+    }
   }
 
   const notificationRef = db.collection(`users/${userId}/notifications`).doc();

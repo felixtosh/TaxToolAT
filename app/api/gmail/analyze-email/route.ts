@@ -247,9 +247,9 @@ async function analyzeEmailWithGemini(
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ")
-      .trim()
-      .substring(0, 5000);
+      .trim();
   }
+  bodyContent = bodyContent.substring(0, 3000);
 
   // Extract links from HTML for better link detection
   let linksFromHtml: Array<{ url: string; anchorText: string }> = [];
@@ -266,7 +266,7 @@ async function analyzeEmailWithGemini(
 Email:
 From: ${emailContent.from}
 Subject: ${emailContent.subject}
-Body (excerpt): ${bodyContent.substring(0, 3000)}
+Body (excerpt): ${bodyContent}
 
 ${linksFromHtml.length > 0 ? `
 Links found in email:

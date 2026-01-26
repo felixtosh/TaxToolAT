@@ -551,6 +551,49 @@ async function createUserPartnerFromLookup(userId, companyInfo, originalExtracte
     console.log(`[PartnerMatch] Created new partner ${docRef.id} from lookup for "${originalExtractedName}"`);
     return docRef.id;
 }
+/**
+ * Queue agentic partner search for a file when rule-based matching fails.
+ * Creates a worker request that the frontend will process.
+ */
+async function queueAgenticPartnerSearchForFile(userId, fileId, fileData, topSuggestionConfidence) {
+    const promptParts = [
+        `Find partner for file "${fileData.fileName || fileId}"`,
+    ];
+    if (fileData.extractedPartner) {
+        promptParts.push(`Extracted partner name: ${fileData.extractedPartner}`);
+    }
+    if (topSuggestionConfidence > 0) {
+        promptParts.push(`Rule-based matching found suggestions but no confident match (top: ${topSuggestionConfidence}%)`);
+    }
+    else {
+        promptParts.push(`Rule-based matching found no suggestions`);
+    }
+    if (fileData.extractedAmount) {
+        promptParts.push(`Amount: ${(fileData.extractedAmount / 100).toFixed(2)} EUR`);
+    }
+    if (fileData.extractedDate) {
+        promptParts.push(`Date: ${fileData.extractedDate}`);
+    }
+    if (fileData.extractedVatId) {
+        promptParts.push(`VAT ID: ${fileData.extractedVatId}`);
+    }
+    if (fileData.gmailSenderDomain) {
+        promptParts.push(`Email domain: ${fileData.gmailSenderDomain}`);
+    }
+    const initialPrompt = promptParts.join(". ");
+    // Create worker request for frontend/worker processor to pick up
+    const requestRef = db.collection(`users/${userId}/workerRequests`).doc();
+    await requestRef.set({
+        id: requestRef.id,
+        workerType: "file_partner_matching",
+        initialPrompt,
+        triggerContext: { fileId },
+        triggeredBy: "auto",
+        status: "pending",
+        createdAt: firestore_2.Timestamp.now(),
+    });
+    console.log(`[PartnerMatch] Queued agentic partner search for file ${fileId} (worker request: ${requestRef.id})`);
+}
 // === Main Matching Logic ===
 async function runPartnerMatching(fileId, fileData) {
     const userId = fileData.userId;
@@ -819,9 +862,27 @@ async function runPartnerMatching(fileId, fileData) {
             return;
         }
     }
-    // No match found and couldn't create - store suggestions only
+    // No match found and couldn't create - store suggestions and queue agentic search
     console.log(`[PartnerMatch] Partner matching complete for file ${fileId}: ${suggestions.length} suggestions, no auto-match`);
     await markPartnerMatchComplete(fileId, null, null, null, null, suggestions);
+    // Queue agentic partner search as fallback
+    // Only if we have an extracted partner name to search for
+    if (extractedPartner) {
+        const topConfidence = suggestions.length > 0 ? suggestions[0].confidence : 0;
+        try {
+            await queueAgenticPartnerSearchForFile(userId, fileId, {
+                fileName: fileData.fileName,
+                extractedPartner,
+                extractedAmount: fileData.extractedAmount,
+                extractedDate: fileData.extractedDate?.toDate().toISOString().split("T")[0],
+                extractedVatId,
+                gmailSenderDomain,
+            }, topConfidence);
+        }
+        catch (err) {
+            console.error(`[PartnerMatch] Failed to queue agentic partner search for file ${fileId}:`, err);
+        }
+    }
 }
 // === Firestore Trigger ===
 /**
@@ -864,6 +925,17 @@ exports.matchFilePartner = (0, firestore_1.onDocumentUpdated)({
             !extractionJustCompleted) {
             await syncPartnerToConnectedTransactions(fileId, after);
         }
+        return;
+    }
+    // Skip "Not Invoice" files - no partner matching needed
+    if (after.isNotInvoice === true) {
+        console.log(`[PartnerMatch] File ${fileId} is not an invoice, skipping partner matching`);
+        await db.collection("files").doc(fileId).update({
+            partnerMatchComplete: true,
+            partnerMatchedAt: firestore_2.Timestamp.now(),
+            partnerSuggestions: [],
+            updatedAt: firestore_2.Timestamp.now(),
+        });
         return;
     }
     // Skip if partner already manually assigned

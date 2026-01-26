@@ -14,6 +14,8 @@ interface PrecisionSearchContextValue {
   runningFileSearchTransactionIds: Set<string>;
   /** Set of transactionIds with partner matching workers running (from notifications) */
   runningPartnerSearchTransactionIds: Set<string>;
+  /** Set of fileIds with any running worker (file_matching, file_partner_matching) */
+  runningFileIds: Set<string>;
 }
 
 const PrecisionSearchContext = createContext<PrecisionSearchContextValue | null>(null);
@@ -23,7 +25,7 @@ export function PrecisionSearchProvider({ children }: { children: ReactNode }) {
   const [manualSearchingTransactions, setManualSearchingTransactions] = useState<Set<string>>(new Set());
 
   // Running workers from notifications (real-time via Firestore)
-  const { runningFileSearchTransactionIds, runningPartnerSearchTransactionIds } = useRunningWorkers();
+  const { runningFileSearchTransactionIds, runningPartnerSearchTransactionIds, runningFileIds } = useRunningWorkers();
 
   // Combine manual searches and worker file searches for the unified searchingTransactions
   const searchingTransactions = useMemo(() => {
@@ -59,6 +61,7 @@ export function PrecisionSearchProvider({ children }: { children: ReactNode }) {
         isSearchingTransaction,
         runningFileSearchTransactionIds,
         runningPartnerSearchTransactionIds,
+        runningFileIds,
       }}
     >
       {children}

@@ -40,8 +40,10 @@ export interface NotificationContext {
   workerStatus?: WorkerRunStatus;
   actionsPerformed?: number;
   fileId?: string;
+  fileName?: string; // Display name for file link during processing
   sessionId?: string; // Link to chat session for user-triggered searches
   transactionId?: string;
+  transactionName?: string; // Display name for transaction link during processing
 }
 
 /**
