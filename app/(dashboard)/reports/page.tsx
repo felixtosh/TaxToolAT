@@ -288,7 +288,7 @@ export default function ReportsPage() {
             <CardTitle className="text-base">Reporting Period</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4 pb-4">
               {/* Period Type */}
               <Select value={periodType} onValueChange={(v) => handlePeriodTypeChange(v as "monthly" | "quarterly")}>
                 <SelectTrigger className="w-32">
@@ -377,7 +377,8 @@ export default function ReportsPage() {
 
             {/* Timeline Chart */}
             {userId && (
-              <div className="pt-4 border-t -mx-[25px] -mb-[25px]">
+              <div className="-mx-6 -mb-6">
+                <div className="border-t" />
                 <PeriodTimeline
                   userId={userId}
                   periodType={periodType}

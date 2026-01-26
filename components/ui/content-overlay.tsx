@@ -29,6 +29,7 @@ interface ContentOverlayProps {
  * Used for file viewers, connect dialogs, etc.
  *
  * Should be placed inside a relative-positioned container.
+ * Has a minimum width of 600px to prevent content from being squished.
  */
 export function ContentOverlay({
   open,
@@ -69,7 +70,7 @@ export function ContentOverlay({
       {/* Overlay container */}
       <div
         className={cn(
-          "relative bg-background rounded-lg shadow-2xl flex flex-col max-w-[95%] max-h-[95%] w-full h-full overflow-hidden",
+          "relative bg-background rounded-lg shadow-2xl flex flex-col max-w-[95%] max-h-[95%] min-w-[480px] w-full h-full overflow-hidden",
           className
         )}
       >

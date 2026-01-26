@@ -146,12 +146,20 @@ export const connectFileToTransactionCallable = createCallable<
       updatedAt: now,
     };
 
-    // 4. Partner sync logic - higher confidence wins
-    // Files typically have better confidence since they extract partner names exactly from invoices
+    // 4. Partner sync logic - FILE TAKES PRECEDENCE (it's the actual document)
+    // Exception: Manual assignments on transaction are respected
+    //
+    // Priority (highest to lowest):
+    // 1. Manual assignment on transaction (user explicitly chose) - always respected
+    // 2. File's partner (actual document with extracted company name)
+    // 3. Transaction's auto-matched partner (bank data guessing)
+    //
+    // We store the original transaction partner as bankPartnerId for audit trail
     const filePartnerId = fileData.partnerId;
     const filePartnerConfidence = fileData.partnerMatchConfidence ?? 0;
     const transactionPartnerId = transactionData.partnerId;
-    const transactionPartnerConfidence = transactionData.partnerMatchConfidence ?? 0;
+    const transactionPartnerMatchedBy = transactionData.partnerMatchedBy;
+    const transactionWasManual = transactionPartnerMatchedBy === "manual";
 
     if (filePartnerId && !transactionPartnerId) {
       // File has partner, transaction doesn't -> sync to transaction
@@ -164,24 +172,29 @@ export const connectFileToTransactionCallable = createCallable<
       // Transaction has partner, file doesn't -> sync to file
       fileUpdate.partnerId = transactionPartnerId;
       fileUpdate.partnerType = transactionData.partnerType ?? "user";
-      fileUpdate.partnerMatchConfidence = transactionPartnerConfidence;
+      fileUpdate.partnerMatchConfidence = transactionData.partnerMatchConfidence ?? 0;
       console.log(`[connectFileToTransaction] Synced partner ${transactionPartnerId} from transaction to file`);
     } else if (filePartnerId && transactionPartnerId && filePartnerId !== transactionPartnerId) {
-      // Both have different partners -> higher confidence wins
-      // Files typically have exact extracted names, so they often win
-      if (filePartnerConfidence > transactionPartnerConfidence) {
+      // Both have different partners - FILE WINS unless transaction was manual
+      if (transactionWasManual) {
+        // Respect manual assignment - sync transaction's partner to file instead
+        fileUpdate.partnerId = transactionPartnerId;
+        fileUpdate.partnerType = transactionData.partnerType ?? "user";
+        fileUpdate.partnerMatchConfidence = transactionData.partnerMatchConfidence ?? 0;
+        console.log(`[connectFileToTransaction] Transaction partner ${transactionPartnerId} (manual) respected, synced to file`);
+      } else {
+        // File wins - store original as bankPartnerId for audit trail
+        transactionUpdate.bankPartnerId = transactionPartnerId;
+        transactionUpdate.bankPartnerType = transactionData.partnerType ?? null;
+        transactionUpdate.bankPartnerMatchedBy = transactionPartnerMatchedBy ?? null;
+        transactionUpdate.bankPartnerMatchConfidence = transactionData.partnerMatchConfidence ?? null;
+        // Override with file's partner
         transactionUpdate.partnerId = filePartnerId;
         transactionUpdate.partnerType = fileData.partnerType ?? "user";
         transactionUpdate.partnerMatchConfidence = filePartnerConfidence;
-        transactionUpdate.partnerMatchedBy = "auto"; // Override with higher confidence
-        console.log(`[connectFileToTransaction] File partner ${filePartnerId} (${filePartnerConfidence}%) wins over transaction partner ${transactionPartnerId} (${transactionPartnerConfidence}%)`);
-      } else if (transactionPartnerConfidence > filePartnerConfidence) {
-        fileUpdate.partnerId = transactionPartnerId;
-        fileUpdate.partnerType = transactionData.partnerType ?? "user";
-        fileUpdate.partnerMatchConfidence = transactionPartnerConfidence;
-        console.log(`[connectFileToTransaction] Transaction partner ${transactionPartnerId} (${transactionPartnerConfidence}%) wins over file partner ${filePartnerId} (${filePartnerConfidence}%)`);
+        transactionUpdate.partnerMatchedBy = "auto"; // Synced from file
+        console.log(`[connectFileToTransaction] File partner ${filePartnerId} wins over transaction partner ${transactionPartnerId} (stored as bankPartnerId)`);
       }
-      // If equal confidence, keep both unchanged
     }
 
     batch.update(fileRef, fileUpdate);
@@ -191,6 +204,71 @@ export const connectFileToTransactionCallable = createCallable<
 
     console.log(`[connectFileToTransaction] Connected file ${fileId} to transaction ${transactionId}`);
 
+    // === LEARN GMAIL PATTERNS ON PARTNER ===
+    // After successful connection, store Gmail source patterns on the partner for future matching
+    const finalPartnerId = (transactionUpdate.partnerId as string | undefined) || transactionPartnerId || filePartnerId;
+
+    if (finalPartnerId && sourceInfo?.gmailMessageFrom) {
+      const senderDomain = extractEmailDomain(sourceInfo.gmailMessageFrom);
+
+      if (senderDomain) {
+        try {
+          const partnerRef = ctx.db.collection("partners").doc(finalPartnerId);
+          const partnerSnap = await partnerRef.get();
+
+          if (partnerSnap.exists && partnerSnap.data()?.userId === ctx.userId) {
+            const partnerData = partnerSnap.data()!;
+            const existingDomains: string[] = partnerData.emailDomains || [];
+
+            // Add domain if not already present
+            if (!existingDomains.includes(senderDomain)) {
+              await partnerRef.update({
+                emailDomains: FieldValue.arrayUnion(senderDomain),
+                emailDomainsUpdatedAt: Timestamp.now(),
+                updatedAt: Timestamp.now(),
+              });
+              console.log(`[connectFileToTransaction] Learned email domain "${senderDomain}" for partner ${finalPartnerId}`);
+            }
+
+            // Also update fileSourcePatterns if we have Gmail integration info
+            if (sourceInfo.gmailIntegrationId) {
+              const existingPatterns: Array<{sourceType: string; integrationId?: string; fromDomain?: string}> =
+                partnerData.fileSourcePatterns || [];
+
+              // Check if this exact pattern already exists
+              const patternExists = existingPatterns.some(
+                (p) =>
+                  p.sourceType === "gmail" &&
+                  p.integrationId === sourceInfo.gmailIntegrationId &&
+                  p.fromDomain === senderDomain
+              );
+
+              if (!patternExists) {
+                await partnerRef.update({
+                  fileSourcePatterns: FieldValue.arrayUnion({
+                    sourceType: "gmail",
+                    integrationId: sourceInfo.gmailIntegrationId,
+                    fromDomain: senderDomain,
+                    pattern: `from:${senderDomain}`,
+                    confidence: 80,
+                    usageCount: 1,
+                    sourceTransactionIds: [transactionId],
+                    createdAt: Timestamp.now(),
+                    lastUsedAt: Timestamp.now(),
+                  }),
+                  fileSourcePatternsUpdatedAt: Timestamp.now(),
+                });
+                console.log(`[connectFileToTransaction] Learned Gmail pattern for partner ${finalPartnerId}: from:${senderDomain}`);
+              }
+            }
+          }
+        } catch (learnErr) {
+          // Don't fail the connection if pattern learning fails
+          console.error(`[connectFileToTransaction] Failed to learn Gmail patterns:`, learnErr);
+        }
+      }
+    }
+
     return {
       success: true,
       connectionId: connectionRef.id,
@@ -198,3 +276,12 @@ export const connectFileToTransactionCallable = createCallable<
     };
   }
 );
+
+/**
+ * Extract domain from email address
+ */
+function extractEmailDomain(email: string): string | null {
+  if (!email) return null;
+  const match = email.toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
+  return match ? match[1] : null;
+}

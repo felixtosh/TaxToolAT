@@ -100,7 +100,7 @@ export function TransactionListResult({
             <span
               className={cn(
                 "text-right tabular-nums w-[80px]",
-                t.amount < 0 ? "text-red-600" : "text-green-600"
+                t.amount < 0 ? "text-amount-negative" : "text-amount-positive"
               )}
             >
               {formatAmount(t.amount)}

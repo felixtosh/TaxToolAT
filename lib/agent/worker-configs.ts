@@ -63,6 +63,34 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
     maxMessages: 25, // More messages needed for multi-source search
     timeoutSeconds: 120,
   },
+
+  receipt_search: {
+    type: "receipt_search",
+    name: "Receipt Finder",
+    description: "Searches for receipts/invoices for transactions",
+    toolNames: [
+      // AI-generated search queries
+      "generateSearchSuggestions",
+      // Search tools
+      "searchLocalFiles",
+      "searchGmailAttachments",
+      "searchGmailEmails",
+      "analyzeEmail",
+      // Connection tool
+      "connectFileToTransaction",
+      // Download tools
+      "downloadGmailAttachment",
+      "convertEmailToPdf",
+      // Read tools (for context)
+      "getTransaction",
+      "listFiles",
+      "getFile",
+      "waitForFileExtraction",
+    ],
+    systemPromptKey: "receipt_search",
+    maxMessages: 30, // Increased - needs room for search, download, wait, verify cycles
+    timeoutSeconds: 120,
+  },
 };
 
 /**

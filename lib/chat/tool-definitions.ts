@@ -362,6 +362,58 @@ export const SEARCH_TOOLS: ChatToolDefinition[] = [
     ],
     relatedTools: ["searchGmailAttachments", "executeNominatedDownloads"],
   },
+  {
+    id: "searchGmailEmails",
+    name: "Search Gmail Emails",
+    description:
+      "Search Gmail for emails matching a query. Use this to find emails that might contain invoices in the body or have invoice download links. Returns emails with classification (mail invoice, invoice link, has attachments). Good for finding order confirmations, booking receipts, or emails with 'download invoice' links.",
+    category: "search",
+    requiresConfirmation: false,
+    inputSchema: {
+      required: ["query"],
+      optional: ["transactionId", "dateFrom", "dateTo", "from", "limit"],
+    },
+    outputFields: [
+      "searchType",
+      "query",
+      "emails[]",
+      "totalFound",
+      "integrationCount",
+    ],
+    relatedTools: ["analyzeEmail", "searchGmailAttachments", "convertEmailToPdf"],
+    examples: [
+      "Search Gmail for 'Netflix receipt'",
+      "Find emails from amazon.de",
+      "Search for booking confirmation emails",
+    ],
+  },
+  {
+    id: "analyzeEmail",
+    name: "Analyze Email for Invoice",
+    description:
+      "Use AI to deeply analyze an email's content. Determines: (1) if the email body IS an invoice/receipt, (2) if it contains links to download an invoice. Returns extracted invoice URLs and confidence scores. Use when keyword classification shows 'possibleInvoiceLink' or when you need to verify if an email is a valid invoice.",
+    category: "search",
+    requiresConfirmation: false,
+    inputSchema: {
+      required: ["integrationId", "messageId"],
+      optional: ["transactionId"],
+    },
+    outputFields: [
+      "messageId",
+      "subject",
+      "from",
+      "hasInvoiceLink",
+      "invoiceLinks[]",
+      "isMailInvoice",
+      "mailInvoiceConfidence",
+      "reasoning",
+    ],
+    relatedTools: ["searchGmailEmails", "convertEmailToPdf", "executeNominatedDownloads"],
+    examples: [
+      "Analyze this email to find invoice download links",
+      "Check if this email body is an invoice",
+    ],
+  },
 ];
 
 // ============================================================================

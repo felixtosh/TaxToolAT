@@ -17,6 +17,56 @@ import { OperationsContext } from "./types";
 
 const CHAT_SESSIONS_COLLECTION = "chatSessions";
 
+// Max size for tool results to avoid Firestore rules memory limits
+const MAX_TOOL_RESULT_SIZE = 50000; // ~50KB per result
+
+/**
+ * Truncate large tool results to prevent Firestore rules memory overflow
+ */
+/**
+ * Remove undefined values from an object (Firestore doesn't accept undefined)
+ */
+function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      result[key] = value;
+    }
+  }
+  return result as T;
+}
+
+function sanitizeMessageForStorage(message: Omit<ChatMessage, "id" | "createdAt">): Omit<ChatMessage, "id" | "createdAt"> {
+  // First strip undefined values to prevent Firestore errors
+  let sanitized = stripUndefined(message as Record<string, unknown>) as Omit<ChatMessage, "id" | "createdAt">;
+
+  if (!sanitized.toolResults || sanitized.toolResults.length === 0) {
+    return sanitized;
+  }
+
+  const sanitizedResults = sanitized.toolResults.map((result) => {
+    const resultStr = JSON.stringify(result.result);
+    if (resultStr.length > MAX_TOOL_RESULT_SIZE) {
+      console.warn(`[chat-ops] Truncating large tool result for ${result.toolCallId} (${resultStr.length} bytes)`);
+      return {
+        ...result,
+        result: {
+          truncated: true,
+          originalSize: resultStr.length,
+          preview: resultStr.slice(0, 1000) + "...",
+          message: "Result truncated due to size limits",
+        },
+      };
+    }
+    return result;
+  });
+
+  return {
+    ...sanitized,
+    toolResults: sanitizedResults,
+  };
+}
+
 function getMessagesCollection(userId: string, sessionId: string) {
   return `users/${userId}/chatSessions/${sessionId}/messages`;
 }
@@ -174,8 +224,11 @@ export async function addChatMessage(
     newCount = (sessionData.messageCount || 0) + 1;
   }
 
+  // Sanitize large tool results to prevent Firestore rules memory overflow
+  const sanitizedMessage = sanitizeMessageForStorage(message);
+
   const newMessage = {
-    ...message,
+    ...sanitizedMessage,
     createdAt: now,
     sequence: newCount, // Use message count as sequence for deterministic ordering
   };
@@ -233,16 +286,19 @@ export async function upsertChatMessage(
   const docRef = doc(ctx.db, messagesPath, messageId);
   const docSnap = await getDoc(docRef);
 
+  // Sanitize large tool results to prevent Firestore rules memory overflow
+  const sanitizedMessage = sanitizeMessageForStorage(message);
+
   if (docSnap.exists()) {
     // Update existing
     await updateDoc(docRef, {
-      ...message,
+      ...sanitizedMessage,
       updatedAt: Timestamp.now(),
     });
   } else {
     // Create new
     await addDoc(collection(ctx.db, messagesPath), {
-      ...message,
+      ...sanitizedMessage,
       createdAt: Timestamp.now(),
     });
 
@@ -291,6 +347,7 @@ export async function getOrCreateActiveSession(
 /**
  * Helper to serialize messages for the AI SDK format
  * Includes toolInvocations for proper restoration of chat history
+ * Includes parts for chronological ordering when available
  */
 export function serializeMessagesForSDK(
   messages: ChatMessage[]
@@ -299,6 +356,7 @@ export function serializeMessagesForSDK(
   role: "user" | "assistant" | "system";
   content: string;
   createdAt?: Date;
+  parts?: Array<{ type: "text"; text: string } | { type: "tool"; toolCallId: string; toolName: string }>;
   toolInvocations?: Array<{
     toolCallId: string;
     toolName: string;
@@ -317,7 +375,16 @@ export function serializeMessagesForSDK(
 
     // Include tool invocations if present
     if (m.toolCalls && m.toolCalls.length > 0) {
-      return {
+      const result: typeof base & {
+        parts?: Array<{ type: "text"; text: string } | { type: "tool"; toolCallId: string; toolName: string }>;
+        toolInvocations: Array<{
+          toolCallId: string;
+          toolName: string;
+          args: Record<string, unknown>;
+          state: "result";
+          result?: unknown;
+        }>;
+      } = {
         ...base,
         toolInvocations: m.toolCalls.map((tc) => ({
           toolCallId: tc.id,
@@ -327,6 +394,29 @@ export function serializeMessagesForSDK(
           result: tc.result ?? m.toolResults?.find((tr) => tr.toolCallId === tc.id)?.result,
         })),
       };
+
+      // Include parts for chronological ordering if available
+      // Handle both stored format (toolCallId/toolName) and TypeScript type format (toolCall object)
+      if (m.parts && m.parts.length > 0) {
+        result.parts = m.parts.map((p) => {
+          if (p.type === "text") {
+            return { type: "text" as const, text: p.text };
+          }
+          // Handle stored format (from Firestore)
+          const storedPart = p as unknown as { type: "tool"; toolCallId?: string; toolName?: string; toolCall?: { id: string; name: string } };
+          if (storedPart.toolCallId && storedPart.toolName) {
+            return { type: "tool" as const, toolCallId: storedPart.toolCallId, toolName: storedPart.toolName };
+          }
+          // Handle TypeScript type format (toolCall object)
+          if (storedPart.toolCall) {
+            return { type: "tool" as const, toolCallId: storedPart.toolCall.id, toolName: storedPart.toolCall.name };
+          }
+          // Fallback - shouldn't happen
+          return { type: "text" as const, text: "" };
+        });
+      }
+
+      return result;
     }
 
     return base;

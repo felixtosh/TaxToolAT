@@ -78,19 +78,21 @@ export const onGmailConnected = onDocumentCreated(
 
       console.log(`[GmailSync] Date range: ${dateFrom.toISOString()} to ${dateTo.toISOString()}`);
 
-      // Mark initial sync as started
+      // Mark initial sync as ready but paused (user must manually start)
+      const now = Timestamp.now();
       await event.data?.ref.update({
-        initialSyncStartedAt: Timestamp.now(),
-        updatedAt: Timestamp.now(),
+        initialSyncStartedAt: now,
+        isPaused: true,
+        pausedAt: now,
+        updatedAt: now,
       });
 
-      // Create sync queue item
-      const now = Timestamp.now();
+      // Create sync queue item (paused - user must manually resume)
       await db.collection("gmailSyncQueue").add({
         userId,
         integrationId,
         type: "initial",
-        status: "pending",
+        status: "paused",
         dateFrom: Timestamp.fromDate(dateFrom),
         dateTo: Timestamp.fromDate(dateTo),
         emailsProcessed: 0,
@@ -103,14 +105,14 @@ export const onGmailConnected = onDocumentCreated(
         createdAt: now,
       });
 
-      console.log(`[GmailSync] Queued initial sync for ${data.email}`);
+      console.log(`[GmailSync] Gmail integration ready (paused): ${data.email}`);
 
       // Create notification for user
       await db.collection("notifications").add({
         userId,
-        type: "gmail_sync_started",
-        title: "Gmail Sync Started",
-        message: `Scanning ${data.email} for invoices. This may take a few minutes.`,
+        type: "gmail_sync_ready",
+        title: "Gmail Connected",
+        message: `${data.email} is ready. Start syncing from the Integrations page when you're ready.`,
         read: false,
         createdAt: now,
       });

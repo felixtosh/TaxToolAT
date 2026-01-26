@@ -25,10 +25,15 @@ export interface LocalFileCandidate {
   score: number;
   scoreLabel?: "Strong" | "Likely" | null;
   scoreReasons?: string[];
+  /** Amount in currency units (NOT cents) - already divided by 100 */
   extractedAmount?: number;
+  /** Currency code (e.g., "EUR", "USD") */
+  extractedCurrency?: string;
   extractedDate?: string;
   extractedPartner?: string;
   scoreDetails?: string;
+  /** True if this file was rejected for the searched transaction */
+  isRejected?: boolean;
 }
 
 /**
@@ -87,6 +92,52 @@ export interface GmailAttachmentsSearchResult {
   candidates: GmailAttachmentCandidate[];
   totalFound: number;
   integrationCount: number;
+  /** True when user has no Gmail integrations connected */
+  gmailNotConnected?: boolean;
+  /** Integrations that need reauth or are paused */
+  integrationsNeedingReauth?: IntegrationNeedingReauth[];
+  error?: string;
+}
+
+/**
+ * Gmail email search candidate (for mail invoices / invoice links)
+ */
+export interface GmailEmailCandidate {
+  messageId: string;
+  threadId: string;
+  subject: string;
+  from: string;
+  fromName?: string | null;
+  date: string;
+  snippet: string;
+  integrationId: string;
+  integrationEmail?: string;
+  attachmentCount: number;
+  classification: {
+    hasPdfAttachment: boolean;
+    possibleMailInvoice: boolean;
+    possibleInvoiceLink: boolean;
+    confidence: number;
+    matchedKeywords?: string[];
+  };
+  /** Server-computed match score (when transactionId provided) */
+  score?: number;
+  /** Score label ("Strong" | "Likely") */
+  scoreLabel?: "Strong" | "Likely" | null;
+  /** Reasons for the score */
+  scoreReasons?: string[];
+}
+
+/**
+ * Result from searchGmailEmails tool
+ */
+export interface GmailEmailsSearchResult {
+  searchType: "gmail_emails";
+  query: string;
+  emails: GmailEmailCandidate[];
+  totalFound: number;
+  integrationCount: number;
+  summary?: string;
   /** True when user has no Gmail integrations connected */
   gmailNotConnected?: boolean;
   /** Integrations that need reauth or are paused */
@@ -174,4 +225,74 @@ export interface ToolResultUIActions {
   openTransactionSheet?: (id: string) => void;
   openFile?: (fileId: string) => void;
   previewFile?: (fileId: string) => void;
+}
+
+// ============================================================================
+// Partner Results
+// ============================================================================
+
+/**
+ * Partner result from listPartners/getPartner
+ */
+export interface PartnerResult {
+  id: string;
+  name: string;
+  aliases?: string[];
+  vatId?: string | null;
+  website?: string | null;
+  country?: string | null;
+  ibans?: string[];
+  emailDomains?: string[];
+  address?: string | null;
+}
+
+/**
+ * Result from listPartners tool
+ */
+export interface PartnerListResult {
+  partners: PartnerResult[];
+  total: number;
+}
+
+// ============================================================================
+// Company Lookup Results
+// ============================================================================
+
+/**
+ * Result from lookupCompanyInfo tool
+ */
+export interface CompanyLookupResult {
+  success: boolean;
+  searchTerm: string;
+  name?: string | null;
+  aliases?: string[];
+  vatId?: string | null;
+  website?: string | null;
+  country?: string | null;
+  address?: {
+    street?: string;
+    city?: string;
+    postalCode?: string;
+    country?: string;
+  } | null;
+  error?: string;
+  message: string;
+}
+
+// ============================================================================
+// VAT Validation Results
+// ============================================================================
+
+/**
+ * Result from validateVatId tool
+ */
+export interface VatValidationResult {
+  success: boolean;
+  vatId: string;
+  isValid: boolean;
+  name?: string | null;
+  address?: string | { street?: string; postalCode?: string; city?: string; country?: string } | null;
+  country?: string | null;
+  error?: string | null;
+  message: string;
 }

@@ -1,14 +1,22 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.matchColumns = void 0;
 const https_1 = require("firebase-functions/v2/https");
-const params_1 = require("firebase-functions/params");
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const vertexai_1 = require("@google-cloud/vertexai");
 const ai_usage_logger_1 = require("../utils/ai-usage-logger");
-const anthropicApiKey = (0, params_1.defineSecret)("ANTHROPIC_API_KEY");
+// Using Gemini Flash Lite for maximum speed and lowest cost
+const GEMINI_MODEL = "gemini-2.0-flash-lite-001";
+// Get project ID from environment (Firebase sets this automatically)
+function getProjectId() {
+    const projectId = process.env.GCLOUD_PROJECT ||
+        process.env.GCP_PROJECT ||
+        process.env.GOOGLE_CLOUD_PROJECT;
+    if (!projectId) {
+        throw new Error("Could not determine Google Cloud project ID");
+    }
+    return projectId;
+}
+const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 const TRANSACTION_FIELDS = [
     {
         key: "date",
@@ -226,7 +234,6 @@ exports.matchColumns = (0, https_1.onCall)({
     region: "europe-west1",
     memory: "256MiB",
     timeoutSeconds: 60,
-    secrets: [anthropicApiKey],
 }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
@@ -242,27 +249,39 @@ exports.matchColumns = (0, https_1.onCall)({
     }
     console.log(`Matching ${headers.length} columns with ${sampleRows.length} sample rows`);
     try {
-        const client = new sdk_1.default({ apiKey: anthropicApiKey.value() });
+        const projectId = getProjectId();
+        const vertexAI = new vertexai_1.VertexAI({ project: projectId, location: VERTEX_LOCATION });
+        const model = vertexAI.getGenerativeModel({ model: GEMINI_MODEL });
         const prompt = buildPrompt(headers, sampleRows);
-        const response = await client.messages.create({
-            model: "claude-3-5-haiku-20241022",
-            max_tokens: 1024,
-            messages: [{ role: "user", content: prompt }],
+        const response = await model.generateContent({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
         });
+        const responseData = response.response;
         // Log AI usage
+        const usageMetadata = responseData.usageMetadata;
         await (0, ai_usage_logger_1.logAIUsage)(userId, {
             function: "columnMatching",
-            model: "claude-3-5-haiku-20241022",
-            inputTokens: response.usage.input_tokens,
-            outputTokens: response.usage.output_tokens,
+            model: GEMINI_MODEL,
+            inputTokens: usageMetadata?.promptTokenCount || 0,
+            outputTokens: usageMetadata?.candidatesTokenCount || 0,
         });
         // Extract text from response
-        const textBlock = response.content.find((block) => block.type === "text");
-        if (!textBlock || textBlock.type !== "text") {
+        const text = responseData.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!text) {
             throw new https_1.HttpsError("internal", "No text response from AI");
         }
-        // Parse JSON response
-        const jsonText = textBlock.text.trim();
+        // Parse JSON response - handle markdown code blocks
+        let jsonText = text.trim();
+        if (jsonText.startsWith("```json")) {
+            jsonText = jsonText.slice(7);
+        }
+        else if (jsonText.startsWith("```")) {
+            jsonText = jsonText.slice(3);
+        }
+        if (jsonText.endsWith("```")) {
+            jsonText = jsonText.slice(0, -3);
+        }
+        jsonText = jsonText.trim();
         let result;
         try {
             result = JSON.parse(jsonText);
@@ -326,7 +345,7 @@ exports.matchColumns = (0, https_1.onCall)({
     catch (error) {
         if (error instanceof https_1.HttpsError)
             throw error;
-        console.error("Error calling Claude API:", error);
+        console.error("Error calling Gemini API:", error);
         throw new https_1.HttpsError("internal", `AI matching failed: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
 });

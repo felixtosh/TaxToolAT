@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.matchPartners = void 0;
 const https_1 = require("firebase-functions/v2/https");
@@ -99,6 +132,7 @@ exports.matchPartners = (0, https_1.onCall)({
     let autoMatched = 0;
     let withSuggestions = 0;
     const processedTransactionIds = [];
+    const autoMatchedPartnerIds = new Set(); // Track partners for file matching
     let batch = db.batch();
     let batchCount = 0;
     for (const txDoc of transactions) {
@@ -162,6 +196,10 @@ exports.matchPartners = (0, https_1.onCall)({
                 updates.partnerMatchConfidence = topMatch.confidence;
                 updates.partnerMatchedBy = "auto";
                 autoMatched++;
+                // Track partner for file matching (only user partners can have files)
+                if (assignedPartnerType === "user") {
+                    autoMatchedPartnerIds.add(assignedPartnerId);
+                }
             }
             else {
                 withSuggestions++;
@@ -211,6 +249,28 @@ exports.matchPartners = (0, https_1.onCall)({
         }
         catch (err) {
             console.error("Failed to chain category matching:", err);
+        }
+    }
+    // Chain file matching for auto-matched partners
+    // This finds receipts/files for transactions that just got partner-matched
+    if (autoMatchedPartnerIds.size > 0) {
+        console.log(`Chaining file matching for ${autoMatchedPartnerIds.size} partners`);
+        try {
+            const { matchFilesForPartnerInternal } = await Promise.resolve().then(() => __importStar(require("./matchFilesForPartner")));
+            for (const partnerId of autoMatchedPartnerIds) {
+                try {
+                    const fileResult = await matchFilesForPartnerInternal(userId, partnerId);
+                    if (fileResult.autoMatched > 0 || fileResult.suggested > 0) {
+                        console.log(`File matching for partner ${partnerId}: ${fileResult.autoMatched} auto-matched, ${fileResult.suggested} suggested`);
+                    }
+                }
+                catch (err) {
+                    console.error(`Failed to chain file matching for partner ${partnerId}:`, err);
+                }
+            }
+        }
+        catch (err) {
+            console.error("Failed to import matchFilesForPartnerInternal:", err);
         }
     }
     return {

@@ -1,6 +1,13 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { VertexAI } from "@google-cloud/vertexai";
+import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { logAIUsage } from "../utils/ai-usage-logger";
+
+const db = getFirestore();
+
+// VIES cache settings
+const VIES_CACHE_COLLECTION = "viesCache";
+const VIES_CACHE_DAYS = 30;
 
 // Get project ID from environment (Firebase sets this automatically)
 function getProjectId(): string {
@@ -163,14 +170,19 @@ async function searchByUrl(
     contents: [{
       role: "user",
       parts: [{
-        text: `Search for the official company information for: ${normalizedUrl}
+        text: `Find the company that OWNS and OPERATES the website: ${normalizedUrl}
 
-Search for "${domain} impressum" or "${domain} imprint" to find official company info.
+IMPORTANT: I need the company behind THIS SPECIFIC WEBSITE, not companies with similar names.
 
-Extract:
-- Official registered company name (not marketing names)
-- Any trade names or aliases
-- VAT ID / UID number (format: ATU12345678, DE123456789, etc.)
+Search strategy:
+1. Search "site:${domain} impressum" or "site:${domain} imprint"
+2. Search "${domain} who owns" or "${domain} company behind"
+3. Look for legal/about pages on ${domain} itself
+
+Extract ONLY if the company actually owns/operates ${domain}:
+- Official registered company name
+- Trade names or aliases
+- VAT ID / UID number
 - Registered address
 - Country (ISO 2-letter code)
 
@@ -188,7 +200,7 @@ Return ONLY a JSON object:
   }
 }
 
-Include only fields you found from official sources. If nothing found, return {}.
+If you cannot verify the company actually owns ${domain}, return {}.
 Return ONLY the JSON, no explanation.`
       }]
     }],
@@ -564,6 +576,7 @@ interface LookupByVatIdResponse extends CompanyInfo {
 /**
  * Look up company information by EU VAT ID using the VIES service.
  * This is the official EU VAT validation service - results are authoritative.
+ * Results are cached for 30 days to reduce VIES API load and improve reliability.
  */
 export const lookupByVatId = onCall<LookupByVatIdRequest>(
   {
@@ -584,7 +597,23 @@ export const lookupByVatId = onCall<LookupByVatIdRequest>(
       throw new HttpsError("invalid-argument", "Invalid VAT ID format. Expected EU format like ATU12345678");
     }
 
-    console.log(`[VIES] Looking up VAT ID: ${parsed.countryCode}${parsed.vatNumber}`);
+    const cacheKey = `${parsed.countryCode}${parsed.vatNumber}`;
+    const cacheRef = db.collection(VIES_CACHE_COLLECTION).doc(cacheKey);
+
+    // Check cache first
+    const cachedDoc = await cacheRef.get();
+    if (cachedDoc.exists) {
+      const cached = cachedDoc.data()!;
+      const age = Date.now() - (cached.timestamp as Timestamp).toMillis();
+      const maxAge = VIES_CACHE_DAYS * 24 * 60 * 60 * 1000;
+
+      if (age < maxAge) {
+        console.log(`[VIES] Cache hit for ${cacheKey} (age: ${Math.round(age / 86400000)}d)`);
+        return cached.result as LookupByVatIdResponse;
+      }
+    }
+
+    console.log(`[VIES] Looking up VAT ID: ${cacheKey}`);
 
     // Query VIES API
     const viesResult = await queryViesApi(parsed.countryCode, parsed.vatNumber);
@@ -593,9 +622,15 @@ export const lookupByVatId = onCall<LookupByVatIdRequest>(
     if ("code" in viesResult) {
       console.warn(`[VIES] API error: ${viesResult.code} - ${viesResult.message}`);
 
+      // On VIES timeout/error, return stale cache if available
+      if (cachedDoc.exists) {
+        console.log(`[VIES] Returning stale cache for ${cacheKey} due to API error`);
+        return cachedDoc.data()!.result as LookupByVatIdResponse;
+      }
+
       // Return partial info for known errors (still return the formatted VAT ID)
       return {
-        vatId: `${parsed.countryCode}${parsed.vatNumber}`,
+        vatId: cacheKey,
         country: parsed.countryCode,
         viesValid: false,
         viesError: viesResult.message,
@@ -604,17 +639,26 @@ export const lookupByVatId = onCall<LookupByVatIdRequest>(
 
     // VAT is invalid
     if (!viesResult.valid) {
-      return {
-        vatId: `${parsed.countryCode}${parsed.vatNumber}`,
+      const result: LookupByVatIdResponse = {
+        vatId: cacheKey,
         country: parsed.countryCode,
         viesValid: false,
         viesError: "VAT ID not valid according to VIES",
       };
+
+      // Cache invalid results too (VAT status doesn't change often)
+      await cacheRef.set({
+        vatId: cacheKey,
+        result,
+        timestamp: FieldValue.serverTimestamp(),
+      });
+
+      return result;
     }
 
     // VIES returned valid + data
     const result: LookupByVatIdResponse = {
-      vatId: `${parsed.countryCode}${parsed.vatNumber}`,
+      vatId: cacheKey,
       country: parsed.countryCode,
       viesValid: true,
     };
@@ -627,7 +671,14 @@ export const lookupByVatId = onCall<LookupByVatIdRequest>(
       result.address = parseViesAddress(viesResult.address, parsed.countryCode);
     }
 
-    console.log(`[VIES] Found: name="${result.name || "none"}", country=${result.country}`);
+    // Cache the successful result
+    await cacheRef.set({
+      vatId: cacheKey,
+      result,
+      timestamp: FieldValue.serverTimestamp(),
+    });
+
+    console.log(`[VIES] Found and cached: name="${result.name || "none"}", country=${result.country}`);
 
     return result;
   }

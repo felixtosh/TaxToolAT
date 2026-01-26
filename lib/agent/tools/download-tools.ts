@@ -27,6 +27,8 @@ export const downloadGmailAttachmentTool = tool(
       success: boolean;
       fileId?: string;
       error?: string;
+      alreadyExists?: boolean;
+      wasRestored?: boolean;
     }> = [];
 
     for (const attachment of attachments) {
@@ -64,6 +66,8 @@ export const downloadGmailAttachmentTool = tool(
           filename: attachment.filename,
           success: true,
           fileId: data.fileId,
+          alreadyExists: data.alreadyExists,
+          wasRestored: data.wasRestored,
         });
       } catch (error) {
         results.push({
@@ -76,16 +80,34 @@ export const downloadGmailAttachmentTool = tool(
 
     const successCount = results.filter((r) => r.success).length;
     const failCount = results.filter((r) => !r.success).length;
+    const duplicateCount = results.filter((r) => r.alreadyExists).length;
+    const restoredCount = results.filter((r) => r.wasRestored).length;
+
+    let message: string;
+    if (successCount === 0) {
+      message = "All downloads failed.";
+    } else if (duplicateCount === successCount) {
+      // All were duplicates
+      message = restoredCount > 0
+        ? `All ${duplicateCount} file(s) already existed. ${restoredCount} restored from deleted.`
+        : `All ${duplicateCount} file(s) already existed - no new downloads needed.`;
+    } else if (duplicateCount > 0) {
+      // Mix of new and duplicates
+      const newCount = successCount - duplicateCount;
+      message = `Downloaded ${newCount} new file(s), ${duplicateCount} already existed.`;
+    } else {
+      // All new
+      message = `Downloaded ${successCount} file(s). Automation will extract and match to transactions.${failCount > 0 ? ` ${failCount} failed.` : ""}`;
+    }
 
     return {
       success: successCount > 0,
       downloaded: successCount,
       failed: failCount,
+      duplicates: duplicateCount,
+      restored: restoredCount,
       results,
-      message:
-        successCount > 0
-          ? `Downloaded ${successCount} file(s). Automation will extract and match to transactions.${failCount > 0 ? ` ${failCount} failed.` : ""}`
-          : "All downloads failed.",
+      message,
     };
   },
   {

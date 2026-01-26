@@ -8,7 +8,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
-import { lookupCompany, lookupByVatId } from "@/lib/api/firebase-callable";
+import { lookupCompany, lookupByVatId, callFirebaseFunction } from "@/lib/api/firebase-callable";
 
 const db = getAdminDb();
 
@@ -214,53 +214,53 @@ export const rollbackTransactionTool = tool(
 
 export const assignPartnerToTransactionTool = tool(
   async ({ transactionId, partnerId }, config) => {
-    const userId = config?.configurable?.userId;
-    if (!userId) {
-      return { error: "User ID not provided" };
+    const authHeader = config?.configurable?.authHeader;
+    if (!authHeader) {
+      return { error: "Auth header not provided" };
     }
 
-    // Verify transaction ownership
-    const txRef = db.collection("transactions").doc(transactionId);
-    const txDoc = await txRef.get();
+    try {
+      // Call Cloud Function - handles validation, pattern learning, and receipt search
+      const result = await callFirebaseFunction<
+        { transactionId: string; partnerId: string; partnerType: "user"; matchedBy: "ai" },
+        { success: boolean }
+      >(
+        "assignPartnerToTransaction",
+        {
+          transactionId,
+          partnerId,
+          partnerType: "user",
+          matchedBy: "ai",
+        },
+        authHeader
+      );
 
-    if (!txDoc.exists) {
-      return { error: "Transaction not found" };
+      if (!result.success) {
+        return { error: "Failed to assign partner" };
+      }
+
+      // Get partner name for response
+      const partnerDoc = await db.collection("partners").doc(partnerId).get();
+      const partnerName = partnerDoc.exists ? partnerDoc.data()?.name : "Unknown";
+
+      return {
+        success: true,
+        transactionId,
+        partnerId,
+        partnerName,
+        message: `Assigned partner "${partnerName}" to transaction`,
+      };
+    } catch (err) {
+      const error = err as Error;
+      // Check for rejection error from Cloud Function
+      if (error.message?.includes("rejected") || error.message?.includes("removed")) {
+        return {
+          error: error.message,
+          wasRejected: true,
+        };
+      }
+      return { error: error.message || "Failed to assign partner" };
     }
-
-    const txData = txDoc.data()!;
-    if (txData.userId !== userId) {
-      return { error: "Transaction not found" };
-    }
-
-    // Verify partner ownership
-    const partnerRef = db.collection("partners").doc(partnerId);
-    const partnerDoc = await partnerRef.get();
-
-    if (!partnerDoc.exists) {
-      return { error: "Partner not found" };
-    }
-
-    const partnerData = partnerDoc.data()!;
-    if (partnerData.userId !== userId) {
-      return { error: "Partner not found" };
-    }
-
-    // Update transaction with partner assignment (AI-assigned)
-    await txRef.update({
-      partnerId: partnerId,
-      partnerType: "user",
-      partnerMatchedBy: "ai",
-      partnerMatchConfidence: 100,
-      updatedAt: Timestamp.now(),
-    });
-
-    return {
-      success: true,
-      transactionId,
-      partnerId,
-      partnerName: partnerData.name,
-      message: `Assigned partner "${partnerData.name}" to transaction`,
-    };
   },
   {
     name: "assignPartnerToTransaction",
@@ -279,39 +279,40 @@ export const assignPartnerToTransactionTool = tool(
 
 export const createPartnerTool = tool(
   async ({ name, aliases, vatId, website, country }, config) => {
-    const userId = config?.configurable?.userId;
-    if (!userId) {
-      return { error: "User ID not provided" };
+    const authHeader = config?.configurable?.authHeader;
+    if (!authHeader) {
+      return { error: "Auth header not provided" };
     }
 
-    const now = Timestamp.now();
+    try {
+      // Call Cloud Function
+      const result = await callFirebaseFunction<
+        { data: { name: string; aliases?: string[]; vatId?: string; website?: string; country?: string } },
+        { success: boolean; partnerId: string }
+      >(
+        "createUserPartner",
+        {
+          data: {
+            name: name.trim(),
+            aliases: aliases || [],
+            vatId: vatId || undefined,
+            website: website || undefined,
+            country: country || undefined,
+          },
+        },
+        authHeader
+      );
 
-    const newPartner: Record<string, unknown> = {
-      userId,
-      name: name.trim(),
-      aliases: (aliases || []).map((a: string) => a.trim()).filter(Boolean),
-      address: null,
-      country: country || null,
-      vatId: vatId?.toUpperCase().replace(/\s/g, "") || null,
-      ibans: [],
-      website: website || null,
-      notes: null,
-      defaultCategoryId: null,
-      emailDomains: [],
-      fileSourcePatterns: [],
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const docRef = await db.collection("partners").add(newPartner);
-
-    return {
-      success: true,
-      partnerId: docRef.id,
-      name: name.trim(),
-      message: `Created partner "${name.trim()}"`,
-    };
+      return {
+        success: true,
+        partnerId: result.partnerId,
+        name: name.trim(),
+        message: `Created partner "${name.trim()}"`,
+      };
+    } catch (err) {
+      const error = err as Error;
+      return { error: error.message || "Failed to create partner" };
+    }
   },
   {
     name: "createPartner",
@@ -335,13 +336,12 @@ export const updatePartnerTool = tool(
   async ({ partnerId, name, aliases, vatId, website, country }, config) => {
     const userId = config?.configurable?.userId;
     const authHeader = config?.configurable?.authHeader;
-    if (!userId) {
-      return { error: "User ID not provided" };
+    if (!authHeader) {
+      return { error: "Auth header not provided" };
     }
 
-    const partnerRef = db.collection("partners").doc(partnerId);
-    const partnerDoc = await partnerRef.get();
-
+    // Get current partner for comparison (read-only)
+    const partnerDoc = await db.collection("partners").doc(partnerId).get();
     if (!partnerDoc.exists) {
       return { error: "Partner not found" };
     }
@@ -351,66 +351,55 @@ export const updatePartnerTool = tool(
       return { error: "Partner not found" };
     }
 
-    // Build update object with only provided fields
-    const updates: Record<string, unknown> = {
-      updatedAt: Timestamp.now(),
-    };
-
+    // Build update object and track changes
+    const updateData: Record<string, unknown> = {};
     const changes: string[] = [];
 
     if (name !== undefined && name !== partnerData.name) {
-      updates.name = name.trim();
+      updateData.name = name.trim();
       changes.push(`name: "${partnerData.name}" → "${name.trim()}"`);
     }
 
     if (aliases !== undefined) {
-      const newAliases = aliases.map((a: string) => a.trim()).filter(Boolean);
-      updates.aliases = newAliases;
+      updateData.aliases = aliases.map((a: string) => a.trim()).filter(Boolean);
       changes.push(`aliases updated`);
     }
 
     if (vatId !== undefined && vatId !== partnerData.vatId) {
-      // Validate VAT if provided
       const normalizedVat = vatId ? vatId.toUpperCase().replace(/\s/g, "") : null;
 
       if (normalizedVat) {
         try {
           const validation = await lookupByVatId(normalizedVat, authHeader);
           if (validation.viesValid) {
-            updates.vatId = normalizedVat;
+            updateData.vatId = normalizedVat;
             changes.push(`vatId: "${partnerData.vatId || "none"}" → "${normalizedVat}" (✓ valid)`);
-
-            // Also update name from VIES if we got one and name wasn't explicitly set
             if (validation.name && name === undefined && !partnerData.name) {
-              updates.name = validation.name;
+              updateData.name = validation.name;
               changes.push(`name set from VIES: "${validation.name}"`);
             }
           } else {
             changes.push(`vatId: "${normalizedVat}" (⚠ invalid: ${validation.viesError})`);
-            // Still update it but note it's invalid
-            updates.vatId = normalizedVat;
+            updateData.vatId = normalizedVat;
           }
         } catch (error) {
           console.error("[updatePartner] VAT validation failed:", error);
-          updates.vatId = normalizedVat;
+          updateData.vatId = normalizedVat;
           changes.push(`vatId: "${normalizedVat}" (validation failed)`);
         }
       } else {
-        updates.vatId = null;
+        updateData.vatId = null;
         changes.push(`vatId removed`);
       }
     }
 
     if (website !== undefined && website !== partnerData.website) {
-      const normalizedWebsite = website
-        ? website.trim().replace(/^https?:\/\//, "").split("/")[0]
-        : null;
-      updates.website = normalizedWebsite;
-      changes.push(`website: "${partnerData.website || "none"}" → "${normalizedWebsite || "none"}"`);
+      updateData.website = website || null;
+      changes.push(`website: "${partnerData.website || "none"}" → "${website || "none"}"`);
     }
 
     if (country !== undefined && country !== partnerData.country) {
-      updates.country = country || null;
+      updateData.country = country || null;
       changes.push(`country: "${partnerData.country || "none"}" → "${country || "none"}"`);
     }
 
@@ -423,15 +412,28 @@ export const updatePartnerTool = tool(
       };
     }
 
-    await partnerRef.update(updates);
+    // Call Cloud Function to update
+    try {
+      await callFirebaseFunction<
+        { partnerId: string; data: Record<string, unknown> },
+        { success: boolean }
+      >(
+        "updateUserPartner",
+        { partnerId, data: updateData },
+        authHeader
+      );
 
-    return {
-      success: true,
-      partnerId,
-      partnerName: updates.name || partnerData.name,
-      changes,
-      message: `Updated partner "${updates.name || partnerData.name}"`,
-    };
+      return {
+        success: true,
+        partnerId,
+        partnerName: (updateData.name as string) || partnerData.name,
+        changes,
+        message: `Updated partner "${(updateData.name as string) || partnerData.name}"`,
+      };
+    } catch (err) {
+      const error = err as Error;
+      return { error: error.message || "Failed to update partner" };
+    }
   },
   {
     name: "updatePartner",
@@ -454,77 +456,53 @@ Use this to correct partner information like name, VAT ID, website, or country.`
 
 export const bulkAssignPartnerToTransactionsTool = tool(
   async ({ transactionIds, partnerId }, config) => {
-    const userId = config?.configurable?.userId;
-    if (!userId) {
-      return { error: "User ID not provided" };
+    const authHeader = config?.configurable?.authHeader;
+    if (!authHeader) {
+      return { error: "Auth header not provided" };
     }
 
     if (!transactionIds || transactionIds.length === 0) {
       return { error: "No transaction IDs provided" };
     }
 
-    // Verify partner ownership
-    const partnerRef = db.collection("partners").doc(partnerId);
-    const partnerDoc = await partnerRef.get();
-
+    // Get partner name for response
+    const partnerDoc = await db.collection("partners").doc(partnerId).get();
     if (!partnerDoc.exists) {
       return { error: "Partner not found" };
     }
+    const partnerName = partnerDoc.data()?.name || "Unknown";
 
-    const partnerData = partnerDoc.data()!;
-    if (partnerData.userId !== userId) {
-      return { error: "Partner not found" };
-    }
-
-    // Process all transactions in batches of 500 (Firestore limit)
+    // Call Cloud Function for each transaction (ensures pattern learning + receipt search triggers)
     const results = {
       success: [] as string[],
       failed: [] as { id: string; reason: string }[],
     };
 
-    const batchSize = 500;
-    const now = Timestamp.now();
-
-    for (let i = 0; i < transactionIds.length; i += batchSize) {
-      const batchIds = transactionIds.slice(i, i + batchSize);
-      const batch = db.batch();
-
-      for (const txId of batchIds) {
-        const txRef = db.collection("transactions").doc(txId);
-        const txDoc = await txRef.get();
-
-        if (!txDoc.exists) {
-          results.failed.push({ id: txId, reason: "not found" });
-          continue;
-        }
-
-        const txData = txDoc.data()!;
-        if (txData.userId !== userId) {
-          results.failed.push({ id: txId, reason: "not found" });
-          continue;
-        }
-
-        batch.update(txRef, {
-          partnerId: partnerId,
-          partnerType: "user",
-          partnerMatchedBy: "ai",
-          partnerMatchConfidence: 100,
-          updatedAt: now,
-        });
+    for (const txId of transactionIds) {
+      try {
+        await callFirebaseFunction<
+          { transactionId: string; partnerId: string; partnerType: "user"; matchedBy: "ai" },
+          { success: boolean }
+        >(
+          "assignPartnerToTransaction",
+          { transactionId: txId, partnerId, partnerType: "user", matchedBy: "ai" },
+          authHeader
+        );
         results.success.push(txId);
+      } catch (err) {
+        const error = err as Error;
+        results.failed.push({ id: txId, reason: error.message || "unknown error" });
       }
-
-      await batch.commit();
     }
 
     return {
       success: true,
       partnerId,
-      partnerName: partnerData.name,
+      partnerName,
       assignedCount: results.success.length,
       failedCount: results.failed.length,
       failed: results.failed.length > 0 ? results.failed : undefined,
-      message: `Assigned partner "${partnerData.name}" to ${results.success.length} transaction(s)`,
+      message: `Assigned partner "${partnerName}" to ${results.success.length} transaction(s)`,
     };
   },
   {
@@ -546,8 +524,8 @@ export const findOrCreatePartnerTool = tool(
   async ({ nameOrUrl, transactionId }, config) => {
     const userId = config?.configurable?.userId;
     const authHeader = config?.configurable?.authHeader;
-    if (!userId) {
-      return { error: "User ID not provided" };
+    if (!userId || !authHeader) {
+      return { error: "User ID or auth header not provided" };
     }
 
     const searchTerm = nameOrUrl.trim();
@@ -555,7 +533,7 @@ export const findOrCreatePartnerTool = tool(
 
     console.log(`[findOrCreatePartner] Searching for: ${searchTerm} (isUrl: ${isUrl})`);
 
-    // Step 1: Search existing partners first
+    // Step 1: Search existing partners first (read-only, direct Firestore is fine)
     const searchLower = searchTerm.toLowerCase();
     const domain = isUrl ? searchTerm.replace(/^https?:\/\//, "").split("/")[0] : null;
 
@@ -576,19 +554,17 @@ export const findOrCreatePartnerTool = tool(
       if (nameMatch || aliasMatch || websiteMatch || vatMatch) {
         console.log(`[findOrCreatePartner] Found existing partner: ${p.name}`);
 
-        // Optionally assign to transaction
+        // Optionally assign to transaction via Cloud Function
         if (transactionId) {
-          const txRef = db.collection("transactions").doc(transactionId);
-          const txDoc = await txRef.get();
-
-          if (txDoc.exists && txDoc.data()?.userId === userId) {
-            await txRef.update({
-              partnerId: doc.id,
-              partnerType: "user",
-              partnerMatchedBy: "ai",
-              partnerMatchConfidence: 100,
-              updatedAt: Timestamp.now(),
-            });
+          try {
+            await callFirebaseFunction<
+              { transactionId: string; partnerId: string; partnerType: "user"; matchedBy: "ai" },
+              { success: boolean }
+            >(
+              "assignPartnerToTransaction",
+              { transactionId, partnerId: doc.id, partnerType: "user", matchedBy: "ai" },
+              authHeader
+            );
 
             return {
               success: true,
@@ -598,6 +574,8 @@ export const findOrCreatePartnerTool = tool(
               transactionId,
               message: `Found existing partner "${p.name}" and assigned to transaction`,
             };
+          } catch (err) {
+            console.error("[findOrCreatePartner] Assignment failed:", err);
           }
         }
 
@@ -627,7 +605,6 @@ export const findOrCreatePartnerTool = tool(
       console.log(`[findOrCreatePartner] AI lookup result:`, companyInfo);
     } catch (error) {
       console.error(`[findOrCreatePartner] AI lookup failed:`, error);
-      // Continue with just the name if lookup fails
       companyInfo = { name: searchTerm };
     }
 
@@ -640,86 +617,91 @@ export const findOrCreatePartnerTool = tool(
         vatValidation = await lookupByVatId(vatId, authHeader);
         console.log(`[findOrCreatePartner] VAT validation result:`, vatValidation);
 
-        // Merge VIES data if valid (VIES is authoritative)
         if (vatValidation.viesValid) {
-          if (vatValidation.name && !companyInfo.name) {
-            companyInfo.name = vatValidation.name;
-          }
-          if (vatValidation.address && !companyInfo.address) {
-            companyInfo.address = vatValidation.address;
-          }
-          if (vatValidation.country && !companyInfo.country) {
-            companyInfo.country = vatValidation.country;
-          }
+          if (vatValidation.name && !companyInfo.name) companyInfo.name = vatValidation.name;
+          if (vatValidation.address && !companyInfo.address) companyInfo.address = vatValidation.address;
+          if (vatValidation.country && !companyInfo.country) companyInfo.country = vatValidation.country;
         }
       } catch (error) {
         console.error(`[findOrCreatePartner] VAT validation failed:`, error);
       }
     }
 
-    // Step 4: Create the partner
+    // Step 4: Create the partner via Cloud Function
     const partnerName = companyInfo.name || searchTerm;
-    const now = Timestamp.now();
 
-    const newPartner: Record<string, unknown> = {
-      userId,
-      name: partnerName.trim(),
-      aliases: companyInfo.aliases || [],
-      address: companyInfo.address || null,
-      country: companyInfo.country || null,
-      vatId: companyInfo.vatId?.toUpperCase().replace(/\s/g, "") || null,
-      ibans: [],
-      website: companyInfo.website || (isUrl ? domain : null),
-      notes: null,
-      defaultCategoryId: null,
-      emailDomains: [],
-      fileSourcePatterns: [],
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    };
+    let partnerId: string;
+    try {
+      // Format address object into string
+    const addressStr = companyInfo.address
+      ? [companyInfo.address.street, companyInfo.address.postalCode, companyInfo.address.city, companyInfo.address.country]
+          .filter(Boolean)
+          .join(", ")
+      : undefined;
 
-    const partnerRef = await db.collection("partners").add(newPartner);
-    console.log(`[findOrCreatePartner] Created partner: ${partnerName} (${partnerRef.id})`);
+    const createResult = await callFirebaseFunction<
+        { data: { name: string; aliases?: string[]; vatId?: string; website?: string; country?: string; address?: string } },
+        { success: boolean; partnerId: string }
+      >(
+        "createUserPartner",
+        {
+          data: {
+            name: partnerName.trim(),
+            aliases: companyInfo.aliases || [],
+            vatId: companyInfo.vatId || undefined,
+            website: companyInfo.website || (isUrl ? domain : undefined) || undefined,
+            country: companyInfo.country || undefined,
+            address: addressStr || undefined,
+          },
+        },
+        authHeader
+      );
+      partnerId = createResult.partnerId;
+      console.log(`[findOrCreatePartner] Created partner: ${partnerName} (${partnerId})`);
+    } catch (err) {
+      const error = err as Error;
+      return { error: error.message || "Failed to create partner" };
+    }
 
-    // Step 5: Optionally assign to transaction
+    // Step 5: Optionally assign to transaction via Cloud Function
     if (transactionId) {
-      const txRef = db.collection("transactions").doc(transactionId);
-      const txDoc = await txRef.get();
-
-      if (txDoc.exists && txDoc.data()?.userId === userId) {
-        await txRef.update({
-          partnerId: partnerRef.id,
-          partnerType: "user",
-          partnerMatchedBy: "ai",
-          partnerMatchConfidence: 100,
-          updatedAt: Timestamp.now(),
-        });
+      try {
+        await callFirebaseFunction<
+          { transactionId: string; partnerId: string; partnerType: "user"; matchedBy: "ai" },
+          { success: boolean }
+        >(
+          "assignPartnerToTransaction",
+          { transactionId, partnerId, partnerType: "user", matchedBy: "ai" },
+          authHeader
+        );
 
         return {
           success: true,
           action: "created_and_assigned",
-          partnerId: partnerRef.id,
+          partnerId,
           partnerName: partnerName.trim(),
-          vatId: newPartner.vatId || null,
+          vatId: companyInfo.vatId || null,
           vatValid: vatValidation?.viesValid || null,
-          website: newPartner.website || null,
-          country: newPartner.country || null,
+          website: companyInfo.website || (isUrl ? domain : null),
+          country: companyInfo.country || null,
           transactionId,
           message: `Created partner "${partnerName.trim()}" and assigned to transaction`,
         };
+      } catch (err) {
+        console.error("[findOrCreatePartner] Assignment failed:", err);
+        // Partner was created but assignment failed - still return success with partner info
       }
     }
 
     return {
       success: true,
       action: "created",
-      partnerId: partnerRef.id,
+      partnerId,
       partnerName: partnerName.trim(),
-      vatId: newPartner.vatId || null,
+      vatId: companyInfo.vatId || null,
       vatValid: vatValidation?.viesValid || null,
-      website: newPartner.website || null,
-      country: newPartner.country || null,
+      website: companyInfo.website || (isUrl ? domain : null),
+      country: companyInfo.country || null,
       message: `Created partner "${partnerName.trim()}"`,
     };
   },

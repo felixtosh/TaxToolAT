@@ -42,9 +42,12 @@ export function usePrecisionSearch({ transactionId, onComplete }: UsePrecisionSe
 
   // Get context to share searching state across components (optional - works without provider)
   let setSearchingInContext: ((id: string, searching: boolean) => void) | null = null;
+  let isSearchingInContext = false;
   try {
     const ctx = usePrecisionSearchContext();
     setSearchingInContext = ctx.setSearching;
+    // Check if transaction has any active search (manual precision search OR worker automation)
+    isSearchingInContext = ctx.isSearchingTransaction(transactionId);
   } catch {
     // Context not available, that's fine
   }
@@ -183,9 +186,17 @@ export function usePrecisionSearch({ transactionId, onComplete }: UsePrecisionSe
     };
   }, [stopPolling, transactionId, setSearchingInContext]);
 
+  // Combine local API search state with worker activity from context
+  // This ensures the detail panel shows spinner for both manual searches and worker automations
+  const combinedIsSearching = status.isSearching || isSearchingInContext;
+
   return {
     ...status,
+    // Override isSearching to include worker activity
+    isSearching: combinedIsSearching,
     triggerSearch,
-    strategyLabel: getStrategyLabel(status.currentStrategy),
+    strategyLabel: combinedIsSearching && !status.isSearching
+      ? "Running automation..."  // Worker is running, not a manual search
+      : getStrategyLabel(status.currentStrategy),
   };
 }

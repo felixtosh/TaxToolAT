@@ -28,7 +28,7 @@ export function formatDate(date: Date, locale: string = "de-DE"): string {
  * Get the color class for an amount (red for negative, green for positive)
  */
 export function getAmountColorClass(amount: number): string {
-  return amount < 0 ? "text-red-600" : "text-green-600";
+  return amount < 0 ? "text-amount-negative" : "text-amount-positive";
 }
 
 /**

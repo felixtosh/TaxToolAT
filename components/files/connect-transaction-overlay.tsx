@@ -262,7 +262,7 @@ export function ConnectTransactionOverlay({
       {file.extractedAmount != null && (
         <>
           {" "}&middot;{" "}
-          <span className={file.extractedAmount < 0 ? "text-red-600" : "text-green-600"}>
+          <span className={file.extractedAmount < 0 ? "text-amount-negative" : "text-amount-positive"}>
             {formatFileAmount(file.extractedAmount, file.extractedCurrency)}
           </span>
         </>
@@ -280,7 +280,7 @@ export function ConnectTransactionOverlay({
       >
         <div className="flex h-full">
           {/* Left sidebar: Search + Results */}
-          <div className="w-[35%] min-w-[280px] max-w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
+          <div className="w-[35%] min-w-[200px] max-w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
             {/* Search section */}
             <div className="p-4 border-b space-y-3">
               <div className="relative flex gap-1.5">
@@ -371,7 +371,7 @@ export function ConnectTransactionOverlay({
                         <p
                           className={cn(
                             "font-medium text-lg",
-                            previewTransaction.amount < 0 ? "text-red-600" : "text-green-600"
+                            previewTransaction.amount < 0 ? "text-amount-negative" : "text-amount-positive"
                           )}
                         >
                           {formatAmount(previewTransaction.amount, previewTransaction.currency)}

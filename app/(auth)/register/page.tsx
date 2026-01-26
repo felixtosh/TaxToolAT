@@ -19,6 +19,7 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, Loader2, CheckCircle } from "lucide-react";
 import { FibukiMascot } from "@/components/ui/fibuki-mascot";
+import { logoFont } from "@/app/fonts";
 
 export default function RegisterPage() {
   const [email, setEmail] = useState("");
@@ -95,7 +96,9 @@ export default function RegisterPage() {
             )}
           >
             <FibukiMascot size={32} isJumping={isLogoJumping} />
-            <span className="font-bold text-2xl mascot-text">FiBuKI</span>
+            <span className={cn("font-bold text-2xl mascot-text", logoFont.className)}>
+              FiBuKI
+            </span>
           </button>
         </div>
         <CardTitle className="text-2xl">Create an account</CardTitle>

@@ -1,6 +1,25 @@
 import { Timestamp } from "firebase/firestore";
 
 /**
+ * Entry in the automation history for a transaction.
+ * Tracks what automated actions were performed and when.
+ */
+export interface AutomationHistoryEntry {
+  /** Type of automation that ran */
+  type: "file_matching" | "partner_matching";
+  /** When it ran */
+  ranAt: Timestamp;
+  /** Partner ID at time of run (to detect if partner changed) */
+  forPartnerId?: string | null;
+  /** Worker run ID for linking to full transcript */
+  workerRunId?: string;
+  /** Status of the run */
+  status: "completed" | "failed" | "no_match";
+  /** Brief summary of what happened */
+  summary?: string;
+}
+
+/**
  * A financial transaction imported from a bank account.
  * All transactions must be associated with a source (bank account).
  */
@@ -135,6 +154,14 @@ export interface Transaction {
 
   /** Receipt lost entry (only for "receipt-lost" category) */
   receiptLostEntry?: import("./no-receipt-category").ReceiptLostEntry | null;
+
+  // === Automation History ===
+
+  /**
+   * History of automated actions run on this transaction.
+   * Prevents re-running the same automation and tracks what was done.
+   */
+  automationHistory?: AutomationHistoryEntry[];
 
   // === AI Search Queries (cached) ===
 

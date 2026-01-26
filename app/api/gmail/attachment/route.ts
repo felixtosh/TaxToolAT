@@ -233,6 +233,7 @@ export async function POST(request: NextRequest) {
     const fileHash = createHash("sha256").update(attachment.data).digest("hex");
 
     // Check for existing file with same Gmail message + attachment ID
+    // Query without deletedAt filter to catch soft-deleted files too
     const existingByGmail = await db
       .collection(FILES_COLLECTION)
       .where("userId", "==", userId)
@@ -241,13 +242,42 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .get();
 
-    if (!existingByGmail.empty) {
-      const existingFile = existingByGmail.docs[0];
+    // Fallback: check by file hash (catches duplicates from older uploads or different sources)
+    let existingByHash: FirebaseFirestore.QuerySnapshot | null = null;
+    if (existingByGmail.empty) {
+      existingByHash = await db
+        .collection(FILES_COLLECTION)
+        .where("userId", "==", userId)
+        .where("fileHash", "==", fileHash)
+        .limit(1)
+        .get();
+    }
+
+    const existingDoc = !existingByGmail.empty ? existingByGmail.docs[0] : existingByHash?.docs[0];
+    if (existingDoc) {
+      const existingFile = existingDoc;
       const existingData = existingFile.data();
+      const now = Timestamp.now();
+
+      // Check if file was soft-deleted
+      const wasSoftDeleted = !!existingData.deletedAt;
+
+      const foundBy = !existingByGmail.empty ? "gmailId" : "fileHash";
+      console.log(`[Gmail Attachment] Found duplicate by ${foundBy}: ${existingFile.id}`);
+
+      if (wasSoftDeleted) {
+        // Restore the soft-deleted file
+        await existingFile.ref.update({
+          deletedAt: FieldValue.delete(),
+          restoredAt: now,
+          restoredReason: "re-downloaded_from_gmail",
+          updatedAt: now,
+        });
+        console.log(`[Gmail Attachment] Restored soft-deleted file ${existingFile.id}`);
+      }
 
       // If transactionId provided, connect existing file to transaction
       if (transactionId) {
-        const now = Timestamp.now();
         await db.collection(TRANSACTIONS_COLLECTION).doc(transactionId).update({
           fileIds: FieldValue.arrayUnion(existingFile.id),
           isComplete: true,
@@ -277,6 +307,7 @@ export async function POST(request: NextRequest) {
         downloadUrl: existingData.downloadUrl,
         connectedToTransaction: !!transactionId,
         alreadyExists: true,
+        wasRestored: wasSoftDeleted,
       });
     }
 

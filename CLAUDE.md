@@ -237,6 +237,51 @@ When modifying transaction-related types, also update the test data generator:
 - User authentication via Firebase Auth (email/password + Google Sign-In)
 - User ID obtained from `useAuth()` hook in client components or `getServerUserIdWithFallback()` in API routes
 
+## AI Models
+
+### Model Selection by Use Case
+
+| Use Case | Model | Reason |
+|----------|-------|--------|
+| CSV column matching | `gemini-2.0-flash-lite-001` | Fast, cheap, good enough for structured mapping |
+| Document extraction | `gemini-2.0-flash-lite-001` | Native PDF/image support via Vertex AI |
+| Partner matching | `gemini-2.0-flash-lite-001` | Simple text matching task |
+| Chat/Agent | Anthropic Claude | Complex reasoning, multi-step tasks |
+
+### Gemini via Vertex AI (Cloud Functions)
+
+All Gemini calls use **Vertex AI** (not Google AI Studio). This provides:
+- Service account auth (no API keys needed)
+- Region: `europe-west1` (matches Firebase region)
+- Project ID auto-detected from environment
+
+**Pattern for new Gemini functions:**
+```typescript
+import { VertexAI } from "@google-cloud/vertexai";
+
+const GEMINI_MODEL = "gemini-2.0-flash-lite-001";
+const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
+
+function getProjectId(): string {
+  return process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "";
+}
+
+// Usage
+const vertexAI = new VertexAI({ project: getProjectId(), location: VERTEX_LOCATION });
+const model = vertexAI.getGenerativeModel({ model: GEMINI_MODEL });
+const response = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
+```
+
+**Key files using Gemini:**
+- `functions/src/import/matchColumns.ts` - CSV column matching
+- `functions/src/extraction/geminiParser.ts` - Document extraction
+- `functions/src/precision-search/geminiSearchHelper.ts` - Email search queries
+- `functions/src/matching/matchFilePartner.ts` - Partner matching
+
+### Anthropic Claude (Chat/Agent)
+
+Used for the main chat interface and LangGraph agent. Requires `ANTHROPIC_API_KEY`.
+
 ## Authentication
 - Firebase Auth with email/password and Google Sign-In
 - Invite-only registration (admin must add email to `allowedEmails` collection)

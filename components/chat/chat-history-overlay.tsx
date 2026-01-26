@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { de } from "date-fns/locale";
-import { History, MessageSquare, Trash2, X, Loader2, Search } from "lucide-react";
+import { History, MessageSquare, Trash2, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -22,19 +22,15 @@ import { ChatSession } from "@/types/chat";
 import { useChatSessions } from "@/hooks/use-chat-sessions";
 import { Timestamp } from "firebase/firestore";
 
-interface ChatHistoryOverlayProps {
-  isOpen: boolean;
-  onClose: () => void;
+interface ChatHistoryPanelProps {
   onSelectSession: (sessionId: string) => void;
   currentSessionId?: string | null;
 }
 
-export function ChatHistoryOverlay({
-  isOpen,
-  onClose,
+export function ChatHistoryPanel({
   onSelectSession,
   currentSessionId,
-}: ChatHistoryOverlayProps) {
+}: ChatHistoryPanelProps) {
   const { sessions, isLoading, deleteSession } = useChatSessions();
   const [searchQuery, setSearchQuery] = useState("");
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
@@ -59,7 +55,6 @@ export function ChatHistoryOverlay({
   // Handle session selection
   const handleSelectSession = (sessionId: string) => {
     onSelectSession(sessionId);
-    onClose();
   };
 
   // Handle delete confirmation
@@ -83,109 +78,93 @@ export function ChatHistoryOverlay({
     }
   };
 
-  if (!isOpen) return null;
-
   return (
     <>
-      {/* Overlay backdrop */}
-      <div
-        className="fixed inset-0 z-[60] bg-black/20"
-        onClick={onClose}
-      />
+      <div className="flex h-full flex-col">
+        {/* Header */}
+        <div className="flex items-center gap-2 border-b px-4 h-14">
+          <History className="h-5 w-5" />
+          <span className="font-semibold">Chat History</span>
+        </div>
 
-      {/* History panel */}
-      <div className="fixed left-0 top-0 z-[70] h-full w-80 bg-background border-r shadow-lg animate-in slide-in-from-left-full duration-200">
-        <div className="flex h-full flex-col">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b px-4 h-14">
-            <div className="flex items-center gap-2">
-              <History className="h-5 w-5" />
-              <span className="font-semibold">Chat History</span>
-            </div>
-            <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
-              <X className="h-4 w-4" />
-            </Button>
+        {/* Search */}
+        <div className="p-3 border-b">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search conversations..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9"
+            />
           </div>
+        </div>
 
-          {/* Search */}
-          <div className="p-3 border-b">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search conversations..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
-              />
+        {/* Sessions list */}
+        <ScrollArea className="flex-1">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          </div>
-
-          {/* Sessions list */}
-          <ScrollArea className="flex-1">
-            {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-              </div>
-            ) : filteredSessions.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground px-4">
-                <MessageSquare className="mb-4 h-10 w-10 opacity-20" />
-                {searchQuery ? (
-                  <p className="text-sm">No conversations found matching "{searchQuery}"</p>
-                ) : (
-                  <p className="text-sm">No conversation history yet</p>
-                )}
-              </div>
-            ) : (
-              <div className="py-2">
-                {filteredSessions.map((session) => (
-                  <div
-                    key={session.id}
-                    onClick={() => handleSelectSession(session.id)}
-                    className={cn(
-                      "group flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-muted/50 transition-colors",
-                      currentSessionId === session.id && "bg-muted"
+          ) : filteredSessions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground px-4">
+              <MessageSquare className="mb-4 h-10 w-10 opacity-20" />
+              {searchQuery ? (
+                <p className="text-sm">No conversations found matching "{searchQuery}"</p>
+              ) : (
+                <p className="text-sm">No conversation history yet</p>
+              )}
+            </div>
+          ) : (
+            <div className="py-2">
+              {filteredSessions.map((session) => (
+                <div
+                  key={session.id}
+                  onClick={() => handleSelectSession(session.id)}
+                  className={cn(
+                    "group flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-muted/50 transition-colors",
+                    currentSessionId === session.id && "bg-muted"
+                  )}
+                >
+                  <MessageSquare className="h-4 w-4 mt-1 text-muted-foreground flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-sm truncate">
+                        {session.title}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                        onClick={(e) => handleDeleteClick(e, session)}
+                        disabled={deletingSessionId === session.id}
+                      >
+                        {deletingSessionId === session.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                        )}
+                      </Button>
+                    </div>
+                    {session.lastMessagePreview && (
+                      <p className="text-xs text-muted-foreground truncate mt-0.5">
+                        {session.lastMessagePreview}
+                      </p>
                     )}
-                  >
-                    <MessageSquare className="h-4 w-4 mt-1 text-muted-foreground flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-sm truncate">
-                          {session.title}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                          onClick={(e) => handleDeleteClick(e, session)}
-                          disabled={deletingSessionId === session.id}
-                        >
-                          {deletingSessionId === session.id ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-                          )}
-                        </Button>
-                      </div>
-                      {session.lastMessagePreview && (
-                        <p className="text-xs text-muted-foreground truncate mt-0.5">
-                          {session.lastMessagePreview}
-                        </p>
-                      )}
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xs text-muted-foreground">
-                          {formatTime(session.updatedAt)}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          · {session.messageCount} messages
-                        </span>
-                      </div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs text-muted-foreground">
+                        {formatTime(session.updatedAt)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        · {session.messageCount} messages
+                      </span>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </ScrollArea>
-        </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ScrollArea>
       </div>
 
       {/* Delete confirmation dialog */}

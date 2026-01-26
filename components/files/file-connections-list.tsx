@@ -315,6 +315,10 @@ interface FileConnectionsListProps {
   onTriggerRematch?: () => Promise<void>;
   /** Whether re-matching is in progress */
   isRematching?: boolean;
+  /** Trigger AI-powered transaction search */
+  onAiSearch?: () => void;
+  /** Whether AI search is in progress */
+  isAiSearching?: boolean;
 }
 
 export function FileConnectionsList({
@@ -327,6 +331,8 @@ export function FileConnectionsList({
   onDismissSuggestion,
   onTriggerRematch,
   isRematching = false,
+  onAiSearch,
+  isAiSearching = false,
 }: FileConnectionsListProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -426,18 +432,18 @@ export function FileConnectionsList({
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium">Transaction</h3>
           <div className="flex items-center gap-1">
-            {/* Search button to trigger re-matching */}
-            {onTriggerRematch && !hasTransactions && (
+            {/* Search button to trigger AI transaction search */}
+            {onAiSearch && !hasTransactions && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6"
-                    onClick={onTriggerRematch}
-                    disabled={isRematching}
+                    onClick={onAiSearch}
+                    disabled={isAiSearching}
                   >
-                    {isRematching ? (
+                    {isAiSearching ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
                       <Search className="h-3.5 w-3.5" />

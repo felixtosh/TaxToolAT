@@ -54,18 +54,20 @@ exports.onGmailConnected = (0, firestore_1.onDocumentCreated)({
             dateFrom.setDate(dateFrom.getDate() - 90);
         }
         console.log(`[GmailSync] Date range: ${dateFrom.toISOString()} to ${dateTo.toISOString()}`);
-        // Mark initial sync as started
-        await event.data?.ref.update({
-            initialSyncStartedAt: firestore_2.Timestamp.now(),
-            updatedAt: firestore_2.Timestamp.now(),
-        });
-        // Create sync queue item
+        // Mark initial sync as ready but paused (user must manually start)
         const now = firestore_2.Timestamp.now();
+        await event.data?.ref.update({
+            initialSyncStartedAt: now,
+            isPaused: true,
+            pausedAt: now,
+            updatedAt: now,
+        });
+        // Create sync queue item (paused - user must manually resume)
         await db.collection("gmailSyncQueue").add({
             userId,
             integrationId,
             type: "initial",
-            status: "pending",
+            status: "paused",
             dateFrom: firestore_2.Timestamp.fromDate(dateFrom),
             dateTo: firestore_2.Timestamp.fromDate(dateTo),
             emailsProcessed: 0,
@@ -77,13 +79,13 @@ exports.onGmailConnected = (0, firestore_1.onDocumentCreated)({
             processedMessageIds: [],
             createdAt: now,
         });
-        console.log(`[GmailSync] Queued initial sync for ${data.email}`);
+        console.log(`[GmailSync] Gmail integration ready (paused): ${data.email}`);
         // Create notification for user
         await db.collection("notifications").add({
             userId,
-            type: "gmail_sync_started",
-            title: "Gmail Sync Started",
-            message: `Scanning ${data.email} for invoices. This may take a few minutes.`,
+            type: "gmail_sync_ready",
+            title: "Gmail Connected",
+            message: `${data.email} is ready. Start syncing from the Integrations page when you're ready.`,
             read: false,
             createdAt: now,
         });

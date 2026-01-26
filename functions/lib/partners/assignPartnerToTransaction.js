@@ -2,6 +2,39 @@
 /**
  * Assign a partner to a transaction
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.assignPartnerToTransactionCallable = void 0;
 const firestore_1 = require("firebase-admin/firestore");
@@ -54,6 +87,49 @@ exports.assignPartnerToTransactionCallable = (0, createCallable_1.createCallable
         partnerType,
         matchedBy,
     });
+    // Trigger pattern learning for user/AI assignments
+    // Manual, suggestion clicks, and AI assignments should inform pattern learning
+    if ((matchedBy === "manual" || matchedBy === "suggestion" || matchedBy === "ai") && partnerType === "user") {
+        try {
+            const { learnPatternsForPartnersBatch } = await Promise.resolve().then(() => __importStar(require("../matching/learnPartnerPatterns")));
+            // Run pattern learning in background (don't await)
+            learnPatternsForPartnersBatch(ctx.userId, [partnerId])
+                .then((results) => {
+                console.log(`[assignPartnerToTransaction] Pattern learning completed:`, results);
+            })
+                .catch((err) => {
+                console.error(`[assignPartnerToTransaction] Pattern learning failed:`, err);
+            });
+        }
+        catch (err) {
+            console.error(`[assignPartnerToTransaction] Failed to start pattern learning:`, err);
+        }
+    }
+    // Trigger receipt search if transaction has no files attached
+    // This runs in background and creates a worker request for the frontend to process
+    const hasFiles = txData.fileIds && txData.fileIds.length > 0;
+    const previousPartnerId = txData.partnerId;
+    const partnerChanged = previousPartnerId !== partnerId;
+    if (!hasFiles && (partnerChanged || !previousPartnerId)) {
+        try {
+            const { queueReceiptSearchForTransaction } = await Promise.resolve().then(() => __importStar(require("../workers/runReceiptSearchForTransaction")));
+            // Queue receipt search in background (don't await)
+            queueReceiptSearchForTransaction({
+                transactionId,
+                userId: ctx.userId,
+                partnerId,
+            })
+                .then((result) => {
+                console.log(`[assignPartnerToTransaction] Receipt search queued:`, result);
+            })
+                .catch((err) => {
+                console.error(`[assignPartnerToTransaction] Receipt search queue failed:`, err);
+            });
+        }
+        catch (err) {
+            console.error(`[assignPartnerToTransaction] Failed to queue receipt search:`, err);
+        }
+    }
     return { success: true };
 });
 //# sourceMappingURL=assignPartnerToTransaction.js.map

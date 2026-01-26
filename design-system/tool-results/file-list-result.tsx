@@ -85,7 +85,7 @@ export function FileListResult({
               className={cn(
                 "text-right tabular-nums",
                 f.amount
-                  ? (f.amount < 0 ? "text-red-600" : "text-green-600")
+                  ? (f.amount < 0 ? "text-amount-negative" : "text-amount-positive")
                   : "text-muted-foreground"
               )}
             >

@@ -23,6 +23,7 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { FibukiMascot } from "@/components/ui/fibuki-mascot";
+import { logoFont } from "@/app/fonts";
 
 export default function ResetPasswordPage() {
   const [email, setEmail] = useState("");
@@ -71,7 +72,9 @@ export default function ResetPasswordPage() {
             )}
           >
             <FibukiMascot size={32} isJumping={isLogoJumping} />
-            <span className="font-bold text-2xl mascot-text">FiBuKI</span>
+            <span className={cn("font-bold text-2xl mascot-text", logoFont.className)}>
+              FiBuKI
+            </span>
           </button>
         </div>
         <CardTitle className="text-2xl">Reset password</CardTitle>

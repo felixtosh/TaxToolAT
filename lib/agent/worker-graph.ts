@@ -134,12 +134,24 @@ async function agentNode(state: WorkerState): Promise<Partial<WorkerState>> {
   console.log(`[Worker:${workerType}] Agent node, ${messagesWithSystem.length} messages`);
 
   // Call the model
-  const response = await model.invoke(messagesWithSystem, {
-    configurable: {
-      userId: state.userId,
-      authHeader: state.authHeader,
-    },
-  });
+  let response;
+  try {
+    response = await model.invoke(messagesWithSystem, {
+      configurable: {
+        userId: state.userId,
+        authHeader: state.authHeader,
+      },
+    });
+  } catch (error) {
+    console.error(`[Worker:${workerType}] Model invoke failed:`, error);
+    // Log the last few messages for debugging
+    const lastMessages = messagesWithSystem.slice(-3);
+    console.error(`[Worker:${workerType}] Last messages:`, JSON.stringify(lastMessages.map(m => ({
+      type: m.constructor.name,
+      content: typeof m.content === 'string' ? m.content.slice(0, 200) : m.content,
+    })), null, 2));
+    throw error;
+  }
 
   // Count messages for runaway prevention
   const newMessageCount = state.messageCount + 1;
@@ -299,18 +311,27 @@ export interface RunWorkerOutput {
  */
 export async function runWorkerGraph(input: RunWorkerInput): Promise<RunWorkerOutput> {
   const graph = buildWorkerGraph(input.workerType);
+  const config = getWorkerConfig(input.workerType);
 
-  const result = await graph.invoke({
-    messages: input.messages,
-    userId: input.userId,
-    authHeader: input.authHeader,
-    workerType: input.workerType,
-    runId: input.runId,
-    modelProvider: input.modelProvider || "gemini",
-    messageCount: 0,
-    shouldContinue: true,
-    actionsPerformed: [],
-  });
+  // Set recursion limit based on worker config (each agent->tools cycle is ~2 steps)
+  const recursionLimit = (config.maxMessages * 2) + 5;
+
+  const result = await graph.invoke(
+    {
+      messages: input.messages,
+      userId: input.userId,
+      authHeader: input.authHeader,
+      workerType: input.workerType,
+      runId: input.runId,
+      modelProvider: input.modelProvider || "gemini",
+      messageCount: 0,
+      shouldContinue: true,
+      actionsPerformed: [],
+    },
+    {
+      recursionLimit,
+    }
+  );
 
   return {
     messages: result.messages,
@@ -323,6 +344,8 @@ export async function runWorkerGraph(input: RunWorkerInput): Promise<RunWorkerOu
  */
 export async function* streamWorkerGraph(input: RunWorkerInput) {
   const graph = buildWorkerGraph(input.workerType);
+  const config = getWorkerConfig(input.workerType);
+  const recursionLimit = (config.maxMessages * 2) + 5;
 
   const stream = await graph.stream(
     {
@@ -338,6 +361,7 @@ export async function* streamWorkerGraph(input: RunWorkerInput) {
     },
     {
       streamMode: "messages",
+      recursionLimit,
     }
   );
 

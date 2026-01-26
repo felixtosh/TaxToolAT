@@ -99,7 +99,7 @@ function SuggestionRow({
           <span
             className={cn(
               "text-sm font-medium tabular-nums",
-              preview.amount < 0 ? "text-red-600" : "text-green-600"
+              preview.amount < 0 ? "text-amount-negative" : "text-amount-positive"
             )}
           >
             {formatAmount(preview.amount, preview.currency)}

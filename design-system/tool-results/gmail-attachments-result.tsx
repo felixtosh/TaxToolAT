@@ -4,13 +4,9 @@ import { Mail, Paperclip, Check, AlertCircle, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { IntegrationStatusBanner } from "@/components/automations/integration-status-banner";
 import { GmailAttachmentsSearchResult, GmailAttachmentCandidate, ToolResultUIActions } from "./types";
+import { ScoreBadge } from "./classification-badges";
 
 interface GmailAttachmentsResultProps {
   result: GmailAttachmentsSearchResult;
@@ -47,18 +43,6 @@ export function GmailAttachmentsResult({
     });
   };
 
-  const formatFileSize = (bytes?: number) => {
-    if (!bytes) return null;
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
-  const getScoreColor = (score: number) => {
-    if (score >= 85) return "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/50 dark:text-green-200";
-    if (score >= 70) return "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200";
-    return "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300";
-  };
 
   const truncateEmail = (email?: string) => {
     if (!email) return null;
@@ -140,7 +124,11 @@ export function GmailAttachmentsResult({
                     className="h-6 px-2 text-[10px] border-amber-300 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/40"
                     asChild
                   >
-                    <a href={`/integrations/${integration.integrationId}?toggleReconnect=true`}>
+                    <a
+                      href={`/integrations/${integration.integrationId}?toggleReconnect=true`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
                       <RefreshCw className="h-3 w-3 mr-1" />
                       Gmail: {integration.email}
                     </a>
@@ -208,7 +196,11 @@ export function GmailAttachmentsResult({
                   className="h-6 px-2 text-[10px] border-amber-300 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/40"
                   asChild
                 >
-                  <a href={`/integrations/${integration.integrationId}?toggleReconnect=true`}>
+                  <a
+                    href={`/integrations/${integration.integrationId}?toggleReconnect=true`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
                     <RefreshCw className="h-3 w-3 mr-1" />
                     Gmail: {integration.email}
                   </a>
@@ -254,31 +246,13 @@ export function GmailAttachmentsResult({
             )}
 
             {/* Score badge */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant="outline"
-                  className={cn("text-[10px] py-0 h-4 cursor-help shrink-0", getScoreColor(candidate.score))}
-                >
-                  {candidate.score}%
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent side="left" className="max-w-[240px] text-xs">
-                <div className="font-medium mb-1">Match signals</div>
-                {candidate.emailSubject && (
-                  <div className="text-muted-foreground mb-1 truncate">{candidate.emailSubject}</div>
-                )}
-                <div className="space-y-0.5">
-                  {candidate.scoreReasons && candidate.scoreReasons.length > 0 ? (
-                    candidate.scoreReasons.map((reason, idx) => (
-                      <div key={idx} className="text-muted-foreground">{reason}</div>
-                    ))
-                  ) : (
-                    <div className="text-muted-foreground">No specific signals</div>
-                  )}
-                </div>
-              </TooltipContent>
-            </Tooltip>
+            <ScoreBadge
+              score={candidate.score}
+              size="sm"
+              showTooltip
+              tooltipReasons={candidate.scoreReasons}
+              className="shrink-0"
+            />
           </button>
         ))}
       </div>

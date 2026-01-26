@@ -157,20 +157,20 @@ const sections = [
 // Color palette from globals.css
 const colorPalette = [
   { name: "Background", var: "--color-background", value: "hsl(0 0% 100%)", className: "bg-background" },
-  { name: "Foreground", var: "--color-foreground", value: "hsl(222.2 84% 4.9%)", className: "bg-foreground" },
+  { name: "Foreground", var: "--color-foreground", value: "hsl(20 15% 10%)", className: "bg-foreground" },
   { name: "Card", var: "--color-card", value: "hsl(0 0% 100%)", className: "bg-card" },
-  { name: "Primary", var: "--color-primary", value: "hsl(222.2 47.4% 11.2%)", className: "bg-primary" },
-  { name: "Primary Foreground", var: "--color-primary-foreground", value: "hsl(210 40% 98%)", className: "bg-primary-foreground" },
-  { name: "Secondary", var: "--color-secondary", value: "hsl(210 40% 96.1%)", className: "bg-secondary" },
-  { name: "Muted", var: "--color-muted", value: "hsl(210 40% 96.1%)", className: "bg-muted" },
-  { name: "Muted Foreground", var: "--color-muted-foreground", value: "hsl(215.4 16.3% 46.9%)", className: "bg-muted-foreground" },
-  { name: "Accent", var: "--color-accent", value: "hsl(210 40% 96.1%)", className: "bg-accent" },
+  { name: "Primary", var: "--color-primary", value: "hsl(20 20% 14%)", className: "bg-primary" },
+  { name: "Primary Foreground", var: "--color-primary-foreground", value: "hsl(30 25% 98%)", className: "bg-primary-foreground" },
+  { name: "Secondary", var: "--color-secondary", value: "hsl(28 18% 95%)", className: "bg-secondary" },
+  { name: "Muted", var: "--color-muted", value: "hsl(28 16% 95%)", className: "bg-muted" },
+  { name: "Muted Foreground", var: "--color-muted-foreground", value: "hsl(20 10% 40%)", className: "bg-muted-foreground" },
+  { name: "Accent", var: "--color-accent", value: "hsl(28 18% 95%)", className: "bg-accent" },
   { name: "Destructive", var: "--color-destructive", value: "hsl(0 84.2% 60.2%)", className: "bg-destructive" },
   { name: "Info", var: "--color-info", value: "hsl(45 93% 94%)", className: "bg-info" },
   { name: "Info Foreground", var: "--color-info-foreground", value: "hsl(32 81% 29%)", className: "bg-info-foreground" },
-  { name: "Border", var: "--color-border", value: "hsl(214.3 31.8% 91.4%)", className: "bg-border" },
-  { name: "Input", var: "--color-input", value: "hsl(214.3 31.8% 91.4%)", className: "bg-input" },
-  { name: "Ring", var: "--color-ring", value: "hsl(222.2 84% 4.9%)", className: "bg-ring" },
+  { name: "Border", var: "--color-border", value: "hsl(24 18% 85%)", className: "bg-border" },
+  { name: "Input", var: "--color-input", value: "hsl(24 18% 92%)", className: "bg-input" },
+  { name: "Ring", var: "--color-ring", value: "hsl(20 20% 14%)", className: "bg-ring" },
 ];
 
 function SectionHeader({ id, title }: { id: string; title: string }) {
@@ -694,7 +694,7 @@ export default function DesignSystemPage() {
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Amount</p>
-                    <p className="text-lg font-semibold text-red-600">-245.00</p>
+                    <p className="text-lg font-semibold text-amount-negative">-245.00</p>
                   </div>
                   <Separator />
                   <div>
@@ -777,13 +777,13 @@ export default function DesignSystemPage() {
                 {/* Amount Cell - Negative */}
                 <div className="border rounded-lg p-3">
                   <p className="text-xs text-muted-foreground mb-2 uppercase">Amount (Expense)</p>
-                  <span className="text-sm tabular-nums whitespace-nowrap text-red-600">-€125,50</span>
+                  <span className="text-sm tabular-nums whitespace-nowrap text-amount-negative">-€125,50</span>
                 </div>
 
                 {/* Amount Cell - Positive */}
                 <div className="border rounded-lg p-3">
                   <p className="text-xs text-muted-foreground mb-2 uppercase">Amount (Income)</p>
-                  <span className="text-sm tabular-nums whitespace-nowrap text-green-600">+€2.500,00</span>
+                  <span className="text-sm tabular-nums whitespace-nowrap text-amount-positive">+€2.500,00</span>
                 </div>
 
                 {/* Description Cell */}
@@ -902,7 +902,7 @@ export default function DesignSystemPage() {
                 </div>
                 <div className="p-3 border rounded flex items-center gap-4">
                   <span className="text-sm w-28 shrink-0">Completed</span>
-                  <div className="flex-1 h-12 border rounded bg-green-50/70 dark:bg-green-950/20 flex items-center px-3 text-sm">bg-green-50/70</div>
+                  <div className="flex-1 h-12 border rounded bg-[#d9ffb2] dark:bg-green-950/20 flex items-center px-3 text-sm">bg-[#d9ffb2]</div>
                 </div>
                 <div className="p-3 border rounded flex items-center gap-4">
                   <span className="text-sm w-28 shrink-0">Highlight</span>
@@ -930,7 +930,7 @@ export default function DesignSystemPage() {
                   </TableHeader>
                   <TableBody>
                     {/* Completed transaction (green background) */}
-                    <TableRow className="bg-green-50/70 hover:bg-green-100/70 dark:bg-green-950/20">
+                    <TableRow className="bg-[#d9ffb2] hover:bg-[#c9f59f] dark:bg-green-950/20">
                       <TableCell>
                         <div>
                           <p className="text-sm whitespace-nowrap">Jan 15, 2024</p>
@@ -938,7 +938,7 @@ export default function DesignSystemPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <span className="text-sm tabular-nums whitespace-nowrap text-red-600">-€125,50</span>
+                        <span className="text-sm tabular-nums whitespace-nowrap text-amount-negative">-€125,50</span>
                       </TableCell>
                       <TableCell>
                         <div className="min-w-0">
@@ -970,7 +970,7 @@ export default function DesignSystemPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <span className="text-sm tabular-nums whitespace-nowrap text-green-600">+€2.500,00</span>
+                        <span className="text-sm tabular-nums whitespace-nowrap text-amount-positive">+€2.500,00</span>
                       </TableCell>
                       <TableCell>
                         <div className="min-w-0">
@@ -996,7 +996,7 @@ export default function DesignSystemPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <span className="text-sm tabular-nums whitespace-nowrap text-red-600">-€15,99</span>
+                        <span className="text-sm tabular-nums whitespace-nowrap text-amount-negative">-€15,99</span>
                       </TableCell>
                       <TableCell>
                         <div className="min-w-0">
@@ -1036,7 +1036,7 @@ export default function DesignSystemPage() {
                 <div className="p-4 space-y-4">
                   {/* Amount display */}
                   <div className="text-center py-2">
-                    <p className="text-3xl font-bold text-red-600">-€125,50</p>
+                    <p className="text-3xl font-bold text-amount-negative">-€125,50</p>
                     <p className="text-sm text-muted-foreground">EUR</p>
                   </div>
 
@@ -1046,7 +1046,7 @@ export default function DesignSystemPage() {
                   <div className="space-y-3">
                     <FieldRow label="Date" labelWidth="w-32">Jan 15, 2024 14:30</FieldRow>
                     <FieldRow label="Amount" labelWidth="w-32">
-                      <span className="tabular-nums text-red-600">-€125,50</span>
+                      <span className="tabular-nums text-amount-negative">-€125,50</span>
                     </FieldRow>
                     <FieldRow label="Counterparty" labelWidth="w-32">Amazon Marketplace</FieldRow>
                     <FieldRow label="IBAN" labelWidth="w-32">
@@ -1110,7 +1110,7 @@ export default function DesignSystemPage() {
                       <Separator />
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Difference</span>
-                        <span className="tabular-nums font-medium text-green-600">€0,00 ✓</span>
+                        <span className="tabular-nums font-medium text-amount-positive">€0,00 ✓</span>
                       </div>
                     </div>
 

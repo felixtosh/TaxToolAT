@@ -5,6 +5,7 @@ type AIFunction =
   | "companyLookup"
   | "companyLookupSearch"
   | "patternLearning"
+  | "patternVerification"
   | "columnMatching"
   | "extraction"
   | "classification"

@@ -1,9 +1,10 @@
 "use client";
 
-import { Package, Link2, Sparkles, Eraser } from "lucide-react";
+import { Package, Link2, Sparkles, Eraser, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AutoActionNotification, NotificationType } from "@/types/notification";
 import { useChat } from "./chat-provider";
+import { WorkerActivityCard } from "./worker-activity-card";
 
 interface NotificationCardProps {
   notification: AutoActionNotification;
@@ -29,11 +30,20 @@ const typeConfig: Record<
     icon: Eraser,
     color: "text-orange-500",
   },
+  worker_activity: {
+    icon: Bot,
+    color: "text-blue-500",
+  },
 };
 
 export function NotificationCard({
   notification,
 }: NotificationCardProps) {
+  // Route worker_activity to specialized card
+  if (notification.type === "worker_activity") {
+    return <WorkerActivityCard notification={notification} />;
+  }
+
   const config = typeConfig[notification.type] ?? {
     icon: Sparkles,
     color: "text-muted-foreground",
@@ -132,7 +142,7 @@ function TransactionMiniTable({ transactions }: { transactions: TransactionPrevi
               <td
                 className={cn(
                   "px-2 py-1 text-right tabular-nums",
-                  t.amount < 0 ? "text-red-600" : "text-green-600"
+                  t.amount < 0 ? "text-amount-negative" : "text-amount-positive"
                 )}
               >
                 {formatAmount(t.amount)}

@@ -15,27 +15,94 @@ exports.isLikelyReceiptMimeType = isLikelyReceiptMimeType;
 // ============================================================================
 /**
  * Keywords indicating the email body IS an invoice/receipt (German + English)
+ * Ordered by specificity - more specific patterns first
  */
 exports.MAIL_INVOICE_KEYWORDS = [
-    // English
+    // English - Subject line patterns
     "order confirmation",
     "payment received",
     "payment confirmation",
-    "your purchase",
-    "order summary",
-    "receipt for your",
-    "thank you for your order",
-    "your order has been",
     "purchase confirmation",
-    // German
+    "your receipt",
+    "your invoice",
+    "receipt for", // Catches "Receipt for AutoTrading", "Receipt for your order"
+    "invoice for",
+    "thank you for your order",
+    "thank you for your purchase",
+    "your order has been",
+    "order summary",
+    "your purchase",
+    // English - Body content patterns (structural indicators)
+    "order number:",
+    "order number",
+    "order #",
+    "order id:",
+    "invoice number:",
+    "invoice number",
+    "invoice #",
+    "transaction id:",
+    "transaction id",
+    "billing info",
+    "billing address",
+    "payment method:",
+    "payment method",
+    "subtotal",
+    "sub-total",
+    "total amount",
+    "amount paid",
+    "amount charged",
+    // VAT indicators (strong invoice signal)
+    "vat number",
+    "vat id",
+    "vat:",
+    "vat de", // VAT DE123456789
+    "vat at", // VAT AT...
+    "vat gb", // VAT GB...
+    "vat fr", // VAT FR...
+    "vat nl", // VAT NL...
+    "vat be", // VAT BE...
+    "vat it", // VAT IT...
+    "vat es", // VAT ES...
+    "tax id",
+    "tax number",
+    // German - Subject line patterns
     "bestellbestätigung",
     "zahlungsbestätigung",
     "zahlungseingang",
     "ihre bestellung",
     "kaufbestätigung",
     "vielen dank für ihre bestellung",
+    "vielen dank für ihren einkauf",
     "ihre zahlung",
     "buchungsbestätigung",
+    "ihre rechnung",
+    "rechnung für",
+    "quittung für",
+    // German - Body content patterns
+    "bestellnummer:",
+    "bestellnummer",
+    "bestell-nr",
+    "rechnungsnummer:",
+    "rechnungsnummer",
+    "rechnungs-nr",
+    "transaktions-id",
+    "zahlungsmethode:",
+    "zahlungsmethode",
+    "rechnungsadresse",
+    "zwischensumme",
+    "gesamtbetrag",
+    "endbetrag",
+    "bezahlter betrag",
+    // German VAT indicators
+    "ust-idnr",
+    "ust-id",
+    "ust id",
+    "umsatzsteuer-id",
+    "umsatzsteuer id",
+    "mwst",
+    "mehrwertsteuer",
+    "steuernummer",
+    "steuer-nr",
 ];
 /**
  * Keywords indicating the email contains a link to download invoice (German + English)
@@ -51,6 +118,16 @@ exports.INVOICE_LINK_KEYWORDS = [
     "get your receipt",
     "download pdf",
     "download receipt",
+    "view your receipt",
+    "download your receipt",
+    "see invoice",
+    "view receipt",
+    "print invoice",
+    "print receipt",
+    "invoice attached",
+    "attached invoice",
+    "find attached",
+    "see attached",
     // German
     "rechnung herunterladen",
     "rechnung anzeigen",
@@ -60,12 +137,18 @@ exports.INVOICE_LINK_KEYWORDS = [
     "beleg herunterladen",
     "rechnung ansehen",
     "zum download",
+    "quittung herunterladen",
+    "quittung anzeigen",
+    "rechnung im anhang",
+    "im anhang finden",
+    "anbei ihre rechnung",
+    "anbei finden sie",
 ];
 // ============================================================================
 // Classification Function
 // ============================================================================
 /**
- * Classify an email based on subject, snippet, and attachments.
+ * Classify an email based on subject, snippet, body text, and attachments.
  * Used to prioritize which emails to process and how.
  *
  * Classification types:
@@ -76,10 +159,12 @@ exports.INVOICE_LINK_KEYWORDS = [
  * @param subject - Email subject line
  * @param snippet - Email snippet/preview text
  * @param attachments - Array of attachments
+ * @param bodyText - Optional full email body text (for better classification)
  * @returns Classification result with confidence score
  */
-function classifyEmail(subject, snippet, attachments) {
-    const combined = `${subject} ${snippet}`.toLowerCase();
+function classifyEmail(subject, snippet, attachments, bodyText) {
+    // Include bodyText for more comprehensive keyword matching
+    const combined = `${subject} ${snippet} ${bodyText || ""}`.toLowerCase();
     const matchedKeywords = [];
     // Check for PDF attachments
     const hasPdfAttachment = attachments.some((a) => a.mimeType === "application/pdf" ||

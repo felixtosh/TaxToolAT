@@ -44,7 +44,6 @@ exports.runExtraction = runExtraction;
 const firestore_1 = require("firebase-admin/firestore");
 const storage_1 = require("firebase-admin/storage");
 const documentExtractor_1 = require("./documentExtractor");
-const boundingBoxMapper_1 = require("./boundingBoxMapper");
 const ai_usage_logger_1 = require("../utils/ai-usage-logger");
 const db = (0, firestore_1.getFirestore)();
 /**
@@ -366,30 +365,6 @@ async function runExtraction(fileId, fileData, options) {
             metadata: { fileId },
         });
     }
-    // Map extracted fields to bounding boxes (for legacy support)
-    const t5 = Date.now();
-    let fieldsWithLocations;
-    if (result.geminiBoundingBoxes && result.geminiBoundingBoxes.length > 0) {
-        // Use Gemini's native bounding boxes
-        fieldsWithLocations = result.geminiBoundingBoxes.map((box) => ({
-            field: box.field,
-            value: box.value,
-            confidence: result.extracted.confidence,
-            boundingBox: {
-                vertices: box.vertices,
-                pageIndex: box.pageIndex,
-            },
-        }));
-        console.log(`[+${Date.now() - t0}ms] Using ${fieldsWithLocations.length} Gemini bounding boxes (took ${Date.now() - t5}ms)`);
-    }
-    else {
-        // Fall back to OCR block mapping
-        const blocksForMapping = result.blocks.length > 0
-            ? result.blocks
-            : (0, documentExtractor_1.generateTextBlocks)(result.text);
-        fieldsWithLocations = (0, boundingBoxMapper_1.mapFieldsToBoundingBoxes)(result.extracted, blocksForMapping);
-        console.log(`[+${Date.now() - t0}ms] Mapped ${fieldsWithLocations.length} fields from OCR (took ${Date.now() - t5}ms)`);
-    }
     // Determine counterparty and invoice direction based on user data
     let invoiceDirection = "unknown";
     let matchedUserAccount = null;
@@ -424,7 +399,7 @@ async function runExtraction(fileId, fileData, options) {
         extractionProvider: result.provider,
         extractionComplete: true,
         extractionError: null,
-        extractedFields: fieldsWithLocations,
+        extractedFields: [], // Bounding box overlays removed - using text search instead
         invoiceDirection,
         matchedUserAccount,
         // Store extracted entities for future re-calculation

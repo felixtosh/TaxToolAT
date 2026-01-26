@@ -1,4 +1,5 @@
 import { Timestamp } from "firebase/firestore";
+import { WorkerType, WorkerMessage, WorkerRunStatus } from "./worker";
 
 /**
  * Types of auto-action notifications
@@ -7,7 +8,8 @@ export type NotificationType =
   | "import_complete"
   | "partner_matching"
   | "pattern_learned"
-  | "patterns_cleared";
+  | "patterns_cleared"
+  | "worker_activity";
 
 /**
  * Context data for notifications (varies by type)
@@ -31,6 +33,15 @@ export interface NotificationContext {
 
   // For patterns_cleared
   unassignedCount?: number;
+
+  // For worker_activity
+  workerRunId?: string;
+  workerType?: WorkerType;
+  workerStatus?: WorkerRunStatus;
+  actionsPerformed?: number;
+  fileId?: string;
+  sessionId?: string; // Link to chat session for user-triggered searches
+  transactionId?: string;
 }
 
 /**
@@ -57,6 +68,9 @@ export interface AutoActionNotification {
   readAt?: Timestamp | null;
   context: NotificationContext;
   preview?: NotificationPreview;
+
+  /** Worker transcript for worker_activity notifications */
+  transcript?: WorkerMessage[];
 }
 
 /**

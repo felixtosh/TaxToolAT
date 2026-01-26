@@ -337,7 +337,7 @@ export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelPr
                       <div className="flex items-center gap-2 shrink-0">
                         <span
                           className={`text-sm font-medium tabular-nums ${
-                            tx.amount < 0 ? "text-red-600" : "text-green-600"
+                            tx.amount < 0 ? "text-amount-negative" : "text-amount-positive"
                           }`}
                         >
                           {new Intl.NumberFormat("de-DE", {
@@ -373,7 +373,7 @@ export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelPr
                       <div className="flex items-center gap-2 shrink-0">
                         <span
                           className={`text-sm font-medium tabular-nums ${
-                            tx.amount < 0 ? "text-red-600" : "text-green-600"
+                            tx.amount < 0 ? "text-amount-negative" : "text-amount-positive"
                           }`}
                         >
                           {new Intl.NumberFormat("de-DE", {
@@ -438,7 +438,7 @@ export function CategoryDetailPanel({ category, onClose }: CategoryDetailPanelPr
                       </Link>
                       <div className="flex items-center gap-2 shrink-0">
                         {tx && (
-                          <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-red-600" : "text-green-600"}`}>
+                          <span className={`text-sm font-medium tabular-nums ${tx.amount < 0 ? "text-amount-negative" : "text-amount-positive"}`}>
                             {new Intl.NumberFormat("de-DE", { style: "currency", currency: tx.currency || "EUR" }).format(tx.amount / 100)}
                           </span>
                         )}

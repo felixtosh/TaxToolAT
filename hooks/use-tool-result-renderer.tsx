@@ -4,15 +4,23 @@ import { ReactNode, useCallback, useMemo } from "react";
 import {
   LocalFilesResult,
   GmailAttachmentsResult,
+  GmailEmailsResult,
   SearchSuggestionsResult,
   TransactionListResult,
   FileListResult,
+  PartnerListResult,
+  CompanyLookupResultUI,
+  VatValidationResultUI,
   LocalFilesSearchResult,
   GmailAttachmentsSearchResult,
+  GmailEmailsSearchResult,
   SearchSuggestionsResultData,
   TransactionResult,
   FileResult,
   ToolResultUIActions,
+  PartnerResult,
+  CompanyLookupResult,
+  VatValidationResult,
 } from "@/design-system/tool-results";
 import { ToolCall } from "@/types/chat";
 
@@ -108,6 +116,17 @@ export function useToolResultRenderer(options: UseToolResultRendererOptions = {}
       );
     },
 
+    // Gmail emails search (mail invoices / invoice links)
+    searchGmailEmails: (result) => {
+      const typedResult = result as GmailEmailsSearchResult;
+      if (typedResult?.searchType !== "gmail_emails") return null;
+      return (
+        <GmailEmailsResult
+          result={typedResult}
+        />
+      );
+    },
+
     // Search suggestions
     generateSearchSuggestions: (result) => {
       const typedResult = result as SearchSuggestionsResultData;
@@ -147,6 +166,51 @@ export function useToolResultRenderer(options: UseToolResultRendererOptions = {}
           totalCount={totalCount}
         />
       );
+    },
+
+    // List partners
+    listPartners: (result, _actions, toolArgs) => {
+      // Handle both formats: {partners: [...], total: N} or direct array
+      let partners: PartnerResult[];
+      let totalCount: number | undefined;
+      if (Array.isArray(result)) {
+        partners = result;
+      } else if (result && typeof result === "object" && "partners" in result) {
+        const typedResult = result as { partners: PartnerResult[]; total?: number };
+        partners = typedResult.partners;
+        totalCount = typedResult.total;
+      } else {
+        return null;
+      }
+
+      // Extract search query from tool args if available
+      const searchQuery = toolArgs?.search as string | undefined;
+
+      return (
+        <PartnerListResult
+          partners={partners}
+          searchQuery={searchQuery}
+          totalCount={totalCount}
+        />
+      );
+    },
+
+    // Company lookup
+    lookupCompanyInfo: (result) => {
+      const typedResult = result as CompanyLookupResult;
+      if (!typedResult || typeof typedResult !== "object") return null;
+      // Must have searchTerm to be a valid result
+      if (!("searchTerm" in typedResult)) return null;
+      return <CompanyLookupResultUI result={typedResult} />;
+    },
+
+    // VAT validation
+    validateVatId: (result) => {
+      const typedResult = result as VatValidationResult;
+      if (!typedResult || typeof typedResult !== "object") return null;
+      // Must have vatId to be a valid result
+      if (!("vatId" in typedResult)) return null;
+      return <VatValidationResultUI result={typedResult} />;
     },
   }), []);
 

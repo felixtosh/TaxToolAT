@@ -3,6 +3,127 @@
  * Mirrors the client-side matching logic for Cloud Functions
  */
 
+// Import from pattern-utils for local use
+import { globMatch, matchPatternFlexible } from "./pattern-utils";
+import type { LearnedPattern, MatchPattern } from "./pattern-utils";
+
+// Re-export for backwards compatibility
+export { globMatch, matchPatternFlexible, LearnedPattern, MatchPattern } from "./pattern-utils";
+
+// ============ Cologne Phonetics ============
+
+/**
+ * Cologne Phonetics (Kölner Phonetik) implementation
+ * A phonetic algorithm optimized for German but works reasonably for other languages.
+ * Similar words sound alike and produce the same phonetic code.
+ */
+export function colognePhonetic(str: string): string {
+  if (!str) return "";
+
+  // Normalize: lowercase, remove non-letters, handle umlauts
+  let s = str.toLowerCase()
+    .replace(/ä/g, "a")
+    .replace(/ö/g, "o")
+    .replace(/ü/g, "u")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z]/g, "");
+
+  if (s.length === 0) return "";
+
+  const codes: string[] = [];
+
+  for (let i = 0; i < s.length; i++) {
+    const char = s[i];
+    const prev = i > 0 ? s[i - 1] : "";
+    const next = i < s.length - 1 ? s[i + 1] : "";
+
+    let code: string;
+
+    switch (char) {
+      case "a":
+      case "e":
+      case "i":
+      case "o":
+      case "u":
+        code = "0";
+        break;
+      case "h":
+        code = "";
+        break;
+      case "b":
+        code = "1";
+        break;
+      case "p":
+        code = next === "h" ? "3" : "1";
+        break;
+      case "d":
+      case "t":
+        code = ["c", "s", "z"].includes(next) ? "8" : "2";
+        break;
+      case "f":
+      case "v":
+      case "w":
+        code = "3";
+        break;
+      case "g":
+      case "k":
+      case "q":
+        code = "4";
+        break;
+      case "c":
+        if (i === 0) {
+          code = ["a", "h", "k", "l", "o", "q", "r", "u", "x"].includes(next) ? "4" : "8";
+        } else {
+          code = ["a", "h", "k", "o", "q", "u", "x"].includes(next) &&
+                 !["s", "z"].includes(prev) ? "4" : "8";
+        }
+        break;
+      case "x":
+        code = ["c", "k", "q"].includes(prev) ? "8" : "48";
+        break;
+      case "l":
+        code = "5";
+        break;
+      case "m":
+      case "n":
+        code = "6";
+        break;
+      case "r":
+        code = "7";
+        break;
+      case "s":
+      case "z":
+        code = "8";
+        break;
+      case "j":
+        code = "0";
+        break;
+      case "y":
+        code = "0";
+        break;
+      default:
+        code = "";
+    }
+
+    codes.push(code);
+  }
+
+  let result = "";
+  let lastCode = "";
+
+  for (const code of codes) {
+    for (const c of code) {
+      if (c !== lastCode) {
+        result += c;
+        lastCode = c;
+      }
+    }
+  }
+
+  const withoutZeros = result.replace(/0/g, "");
+  return withoutZeros || "0";
+}
+
 // ============ URL Normalization ============
 
 export function normalizeUrl(url: string): string {
@@ -117,6 +238,13 @@ export function calculateCompanyNameSimilarity(name1: string, name2: string): nu
 
   if (normalized1 === normalized2) return 100;
 
+  // Phonetic match (Cologne Phonetics) - "Müller" matches "Mueller" matches "MULLER"
+  const phonetic1 = colognePhonetic(normalized1);
+  const phonetic2 = colognePhonetic(normalized2);
+  if (phonetic1 && phonetic2 && phonetic1.length >= 2 && phonetic1 === phonetic2) {
+    return 92; // Strong phonetic match
+  }
+
   if (normalized1.includes(normalized2) || normalized2.includes(normalized1)) {
     const shorter = normalized1.length < normalized2.length ? normalized1 : normalized2;
     const longer = normalized1.length >= normalized2.length ? normalized1 : normalized2;
@@ -131,45 +259,7 @@ export function calculateCompanyNameSimilarity(name1: string, name2: string): nu
   return Math.round(((maxLen - distance) / maxLen) * 100);
 }
 
-// ============ Glob Pattern Matching ============
-
-export interface LearnedPattern {
-  pattern: string;
-  field: "partner" | "name";
-  confidence: number;
-}
-
-/**
- * Match a glob-style pattern against text
- * Supports * as wildcard (matches any characters)
- */
-export function globMatch(pattern: string, text: string): boolean {
-  if (!pattern || !text) return false;
-
-  const normalizedText = text.toLowerCase();
-  const normalizedPattern = pattern.toLowerCase();
-
-  // Convert glob to regex: escape special chars, then replace * with .*
-  const regexPattern = normalizedPattern
-    .replace(/[.+?^${}()|[\]\\]/g, "\\$&") // Escape regex special chars
-    .replace(/\*/g, ".*"); // * -> .*
-
-  try {
-    return new RegExp(`^${regexPattern}$`).test(normalizedText);
-  } catch {
-    return false;
-  }
-}
-
 // ============ Partner Matching ============
-
-/** Base pattern interface (used by both global and user partners) */
-export interface MatchPattern {
-  pattern: string;
-  /** DEPRECATED: field is ignored, patterns match all text fields combined */
-  field?: "partner" | "name";
-  confidence: number;
-}
 
 export interface PartnerData {
   id: string;
@@ -284,19 +374,29 @@ function matchSinglePartner(
   }
 
   // 2. Pattern match - works for both learnedPatterns (user) and patterns (global)
-  // Combine all text fields for matching (no field-specific penalties)
+  // Use flexible matching that tries multiple field combinations
   const allPatterns: MatchPattern[] = [
     ...(partner.learnedPatterns || []),
     ...(partner.patterns || []),
   ];
 
-  const textToMatch = [transaction.name, transaction.partner, transaction.reference]
+  const txName = transaction.name || null;
+  const txPartner = transaction.partner || null;
+  const txReference = transaction.reference || null;
+
+  // Combined text for exclusion checking
+  const combinedForExclusion = [txName, txPartner, txReference]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
 
   for (const p of allPatterns) {
-    if (globMatch(p.pattern, textToMatch)) {
+    // Use flexible matching that tries multiple field combinations
+    if (matchPatternFlexible(p.pattern, txName, txPartner, txReference)) {
+      // Check exclusions - if any exclusion pattern matches, skip this pattern
+      const excluded = p.exclude?.some(excl => combinedForExclusion && globMatch(excl, combinedForExclusion)) ?? false;
+      if (excluded) continue;
+
       candidates.push({
         partnerId: partner.id,
         partnerType,
@@ -323,44 +423,59 @@ function matchSinglePartner(
     }
   }
 
-  // 4. Name matching (60-90%)
-  if (transaction.partner) {
-    const namesToCheck = [partner.name, ...(partner.aliases || [])];
+  // 4. Name matching (60-90%, boosted if multiple match)
+  // Combine transaction text for matching
+  const txCombinedText = [transaction.name, transaction.partner, transaction.reference]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 
-    for (const name of namesToCheck) {
+  const namesToCheck = [partner.name, ...(partner.aliases || [])];
+  const matchedNames: { name: string; similarity: number; isAlias: boolean }[] = [];
+
+  for (let i = 0; i < namesToCheck.length; i++) {
+    const name = namesToCheck[i];
+    const isAlias = i > 0;
+    const normalizedName = normalizeCompanyName(name);
+
+    // Check if this name/alias appears in transaction text
+    if (txCombinedText.includes(normalizedName) && normalizedName.length >= 3) {
+      matchedNames.push({ name, similarity: 95, isAlias });
+    } else if (transaction.partner) {
       const similarity = calculateCompanyNameSimilarity(transaction.partner, name);
-
       if (similarity >= 60) {
-        const confidence = Math.min(90, 60 + ((similarity - 60) * 30) / 40);
-        candidates.push({
-          partnerId: partner.id,
-          partnerType,
-          partnerName: partner.name,
-          confidence: Math.round(confidence),
-          source: "name",
-        });
+        matchedNames.push({ name, similarity, isAlias });
+      }
+    } else if (transaction.name) {
+      const similarity = calculateCompanyNameSimilarity(transaction.name, name);
+      if (similarity >= 70) {
+        matchedNames.push({ name, similarity, isAlias });
       }
     }
   }
 
-  // Also check transaction.name if partner field is empty
-  if (!transaction.partner && transaction.name) {
-    const namesToCheck = [partner.name, ...(partner.aliases || [])];
+  if (matchedNames.length > 0) {
+    // Check if BOTH primary name AND an alias matched - strong signal
+    const hasNameMatch = matchedNames.some(m => !m.isAlias);
+    const hasAliasMatch = matchedNames.some(m => m.isAlias);
+    const bestSimilarity = Math.max(...matchedNames.map(m => m.similarity));
 
-    for (const name of namesToCheck) {
-      const similarity = calculateCompanyNameSimilarity(transaction.name, name);
-
-      if (similarity >= 70) {
-        const confidence = Math.min(85, 60 + ((similarity - 70) * 25) / 30);
-        candidates.push({
-          partnerId: partner.id,
-          partnerType,
-          partnerName: partner.name,
-          confidence: Math.round(confidence),
-          source: "name",
-        });
-      }
+    let confidence: number;
+    if (hasNameMatch && hasAliasMatch) {
+      // Both name and alias found - boost to 92-95%
+      confidence = Math.min(95, 92 + (bestSimilarity - 60) * 0.075);
+    } else {
+      // Single match - normal scoring (60-90%)
+      confidence = Math.min(90, 60 + ((bestSimilarity - 60) * 30) / 40);
     }
+
+    candidates.push({
+      partnerId: partner.id,
+      partnerType,
+      partnerName: partner.name,
+      confidence: Math.round(confidence),
+      source: "name",
+    });
   }
 
   // Return the best candidate

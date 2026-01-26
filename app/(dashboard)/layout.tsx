@@ -15,10 +15,11 @@ import { Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2
 import Link from "next/link";
 import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 import { cn } from "@/lib/utils";
-import { ChatProvider, ChatSidebar, useChat } from "@/components/chat";
+import { ChatProvider, ChatSidebar, useChat, WorkerQueueProcessor } from "@/components/chat";
 import { ProtectedRoute, useAuth } from "@/components/auth";
 import { OnboardingOverlay, OnboardingCompletion } from "@/components/onboarding";
 import { useOnboarding } from "@/hooks/use-onboarding";
+import { logoFont } from "@/app/fonts";
 
 const navItems = [
   { href: "/transactions", label: "Transactions", icon: Receipt },
@@ -96,10 +97,17 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     };
   }, [router]);
 
+  // Set CSS variable on document root for dialog centering
+  const sidebarOffset = isSidebarOpen ? sidebarWidth : 0;
+
+  useEffect(() => {
+    document.documentElement.style.setProperty("--sidebar-offset", `${sidebarOffset}px`);
+  }, [sidebarOffset]);
+
   return (
     <div
       className="h-screen bg-background transition-all duration-300 ease-in-out overflow-hidden"
-      style={{ marginLeft: isSidebarOpen ? sidebarWidth : 0 }}
+      style={{ marginLeft: sidebarOffset }}
     >
       {/* Header */}
       <header className="border-b bg-card sticky top-0 z-50 px-4 h-14 flex items-center justify-between">
@@ -112,7 +120,9 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               )}
             >
               <FibukiMascot size={28} className="-my-1" isJumping={isLogoJumping} />
-              <span className="font-semibold text-lg mascot-text">FiBuKI</span>
+              <span className={cn("font-semibold text-lg mascot-text", logoFont.className)}>
+                FiBuKI
+              </span>
             </button>
             <nav className="flex items-center gap-1">
               {navItems.map((item) => {
@@ -255,6 +265,7 @@ export default function DashboardLayout({
     <ProtectedRoute>
       <ChatProvider>
         <OnboardingController />
+        <WorkerQueueProcessor />
         <ChatSidebar />
         <DashboardContent>{children}</DashboardContent>
       </ChatProvider>

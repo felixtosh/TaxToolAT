@@ -3,13 +3,13 @@
 import { User, Wrench, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
-import { ChatMessage, MessagePart, ToolCall } from "@/types/chat";
+import { RuntimeChatMessage, MessagePart, ToolCall } from "@/types/chat";
 import { Badge } from "@/components/ui/badge";
 import { useChat } from "./chat-provider";
 import { useToolResultRenderer } from "@/hooks/use-tool-result-renderer";
 
 interface MessageBubbleProps {
-  message: ChatMessage;
+  message: RuntimeChatMessage;
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
@@ -95,13 +95,6 @@ function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
     executed: <CheckCircle className="h-3 w-3 text-green-500" />,
   };
 
-  const statusColors = {
-    pending: "bg-yellow-100 text-yellow-800 border-yellow-200",
-    approved: "bg-green-100 text-green-800 border-green-200",
-    rejected: "bg-red-100 text-red-800 border-red-200",
-    executed: "bg-blue-100 text-blue-800 border-blue-200",
-  };
-
   // Format tool name for display
   const formatToolName = (name: string) => {
     return name
@@ -115,14 +108,24 @@ function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
     ? renderToolResult(toolCall)
     : null;
 
+  if (toolCall.status === "executed") {
+    if (resultPreview) {
+      return <div className="flex flex-col gap-2">{resultPreview}</div>;
+    }
+
+    return (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <CheckCircle className="h-3.5 w-3.5 text-green-500" />
+        <span>{formatToolName(toolCall.name)} completed</span>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <Badge
-        variant="outline"
-        className={cn(
-          "flex items-center gap-1 text-xs w-fit",
-          statusColors[toolCall.status]
-        )}
+        variant="muted"
+        className="flex items-center gap-1 text-xs w-fit text-muted-foreground"
       >
         <Wrench className="h-3 w-3" />
         {formatToolName(toolCall.name)}
@@ -134,4 +137,3 @@ function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
     </div>
   );
 }
-

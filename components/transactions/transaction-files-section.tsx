@@ -60,14 +60,14 @@ function FieldRow({
   return (
     <div
       className={cn(
-        "flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4",
+        "flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4 min-w-0",
         className
       )}
     >
       <span className="text-sm text-muted-foreground shrink-0 sm:w-32">
         {label}
       </span>
-      <span className="text-sm">{children}</span>
+      <span className="text-sm flex-1 min-w-0">{children}</span>
     </div>
   );
 }
@@ -297,7 +297,7 @@ function SuggestedFileRow({
                   : "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600"
               )}
             >
-              {confidence}%
+              {Math.round(confidence)}%
             </Badge>
           </TooltipTrigger>
           <TooltipContent side="top" className="max-w-[220px] text-xs">
@@ -611,8 +611,8 @@ export function TransactionFilesSection({
               </TooltipTrigger>
               <TooltipContent>Automation history</TooltipContent>
             </Tooltip>
-            {/* Show search button for incomplete transactions without files */}
-            {!transaction.isComplete && !hasFiles && onTriggerSearch && (
+            {/* Show search button for incomplete transactions (no files AND no category) */}
+            {!hasFiles && !transaction.noReceiptCategoryId && onTriggerSearch && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -864,10 +864,10 @@ export function TransactionFilesSection({
           {hasCategory && assignedCategory ? (
             <Link
               href={`/categories?id=${assignedCategory.id}`}
-              className="inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm max-w-[280px] bg-background border-input cursor-pointer hover:bg-accent"
+              className="inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm max-w-full min-w-0 bg-background border-input cursor-pointer hover:bg-accent"
             >
               <Tag className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-              <span className="truncate flex-1">{assignedCategory.name}</span>
+              <span className="truncate">{assignedCategory.name}</span>
               {transaction.receiptLostEntry && (
                 <span className="text-xs text-muted-foreground flex-shrink-0">
                   ({transaction.receiptLostEntry.reason})
@@ -880,7 +880,7 @@ export function TransactionFilesSection({
                 </span>
               ) : transaction.noReceiptCategoryConfidence ? (
                 <span className="text-xs text-muted-foreground flex-shrink-0">
-                  {transaction.noReceiptCategoryConfidence}%
+                  {Math.round(transaction.noReceiptCategoryConfidence)}%
                 </span>
               ) : null}
               <button

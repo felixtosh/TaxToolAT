@@ -10,7 +10,7 @@ export type FirestoreTimestamp = Timestamp | AdminTimestamp;
 /**
  * Supported worker types for automation tasks
  */
-export type WorkerType = "file_matching" | "partner_matching";
+export type WorkerType = "file_matching" | "partner_matching" | "receipt_search";
 
 /**
  * Status of a worker run

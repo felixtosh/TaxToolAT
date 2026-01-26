@@ -73,7 +73,7 @@ function FilesDataTableInner(
       // Connected files - green highlight
       const hasConnections = row.transactionIds.length > 0;
       if (hasConnections && !isSelected) {
-        return "bg-green-50/70 hover:bg-green-100/70 dark:bg-green-950/20 dark:hover:bg-green-950/30";
+        return "bg-[#d9ffb2] hover:bg-[#c9f59f] dark:bg-green-950/20 dark:hover:bg-green-950/30";
       }
 
       return "";

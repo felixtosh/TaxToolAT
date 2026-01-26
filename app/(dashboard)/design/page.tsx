@@ -484,6 +484,7 @@ export default function DesignSystemPage() {
               <ComponentGroup title="Badge Variants" code="components/ui/badge.tsx">
                 <Badge>Default</Badge>
                 <Badge variant="secondary">Secondary</Badge>
+                <Badge variant="muted">Muted</Badge>
                 <Badge variant="outline">Outline</Badge>
                 <Badge variant="destructive">Destructive</Badge>
               </ComponentGroup>

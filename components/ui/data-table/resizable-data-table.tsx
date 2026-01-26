@@ -290,41 +290,77 @@ function ResizableDataTableInner<TData extends { id: string }>(
     return rect.top >= HEADER_HEIGHT && rect.bottom <= window.innerHeight - 20;
   }, []);
 
-  // Track previous selectedRowId to only scroll when selection actually changes
-  // This prevents scroll jumps when new items are synced (displayItems changes)
-  const prevSelectedRowIdRef = React.useRef<string | null | undefined>(undefined);
+  // Track which selectedRowId we've successfully scrolled to
+  // This allows retry when data wasn't available on first attempt (e.g., page load with ?id=XYZ)
+  const scrolledToIdRef = React.useRef<string | null>(null);
+  const scrollAttemptRef = React.useRef<number>(0);
 
-  // Auto-scroll to selected row when selection changes (not when data changes)
+  // Auto-scroll to selected row when selection changes or data becomes available
   React.useEffect(() => {
     if (!autoScrollToSelected || !selectedRowId) {
-      prevSelectedRowIdRef.current = selectedRowId;
+      scrolledToIdRef.current = null;
       return;
     }
 
-    // Only scroll if selectedRowId actually changed (not just displayItems)
-    const selectionChanged = prevSelectedRowIdRef.current !== selectedRowId;
-    prevSelectedRowIdRef.current = selectedRowId;
-
-    if (!selectionChanged) return;
+    // Skip if we've already successfully scrolled to this item
+    if (scrolledToIdRef.current === selectedRowId) {
+      return;
+    }
 
     // Skip scroll if element exists and is already fully visible (e.g., user clicked on it)
     const element = document.querySelector(`[data-row-id="${selectedRowId}"]`);
-    if (element && isElementInView(element)) return;
+    if (element && isElementInView(element)) {
+      scrolledToIdRef.current = selectedRowId;
+      return;
+    }
 
     // Find index in displayItems
     const index = displayItems.findIndex(
       (item) => item.type === "row" && item.data.id === selectedRowId
     );
-    if (index === -1) return;
+    // If item not found yet (data still loading), don't mark as scrolled - retry when data arrives
+    if (index === -1) {
+      console.log("[AutoScroll] Item not in displayItems yet, waiting...", { selectedRowId, displayItemsLength: displayItems.length });
+      return;
+    }
 
-    // First scroll via virtualizer to ensure row is rendered
-    virtualizer.scrollToIndex(index, { align: "center" });
+    // Wait for scroll container to be ready (critical on initial page load)
+    if (!parentRef.current) {
+      console.log("[AutoScroll] parentRef not ready, waiting...");
+      return;
+    }
 
-    // Fine-tune with scrollIntoView after virtualized table renders
-    setTimeout(() => {
-      const el = document.querySelector(`[data-row-id="${selectedRowId}"]`);
-      el?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, SCROLL_RENDER_DELAY);
+    console.log("[AutoScroll] Attempting scroll to index", { index, selectedRowId, totalItems: displayItems.length });
+
+    // Track this scroll attempt to cancel if selection changes
+    const attemptId = ++scrollAttemptRef.current;
+    const targetId = selectedRowId;
+
+    // Use requestAnimationFrame to ensure DOM is ready after data load
+    requestAnimationFrame(() => {
+      // Cancel if selection changed or already scrolled
+      if (scrollAttemptRef.current !== attemptId) return;
+      if (!parentRef.current) return;
+
+      console.log("[AutoScroll] RAF fired, calling scrollToIndex", { index });
+
+      // First scroll via virtualizer to ensure row is rendered
+      virtualizer.scrollToIndex(index, { align: "center" });
+
+      // Fine-tune with scrollIntoView after virtualized table renders
+      setTimeout(() => {
+        // Cancel if selection changed
+        if (scrollAttemptRef.current !== attemptId) return;
+
+        const el = document.querySelector(`[data-row-id="${targetId}"]`);
+        console.log("[AutoScroll] setTimeout fired, element found:", !!el);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          // Only mark as scrolled after successful scroll
+          scrolledToIdRef.current = targetId;
+        }
+      }, SCROLL_RENDER_DELAY);
+    });
   }, [selectedRowId, autoScrollToSelected, displayItems, virtualizer, isElementInView]);
 
   // Get column sizes from table state, using defaults

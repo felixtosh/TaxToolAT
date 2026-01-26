@@ -290,38 +290,40 @@ async function markPartnerMatchComplete(fileId, partnerId, partnerType, matchedB
         await syncPartnerToConnectedTransactions(fileId, mergedFileData);
     }
 }
-function resolvePartnerConflictWithConfidence(filePartnerId, fileMatchedBy, fileConfidence, txPartnerId, txMatchedBy, txConfidence) {
+/**
+ * Resolve partner conflict between file and transaction.
+ *
+ * Priority (highest to lowest):
+ * 1. Manual assignment on transaction (user explicitly chose) - always respected
+ * 2. File's partner (actual document with extracted company name)
+ * 3. Transaction's auto-matched partner (bank data guessing)
+ *
+ * The file is the source of truth because it's the actual invoice/receipt
+ * with the real company name extracted from the document.
+ */
+function resolvePartnerConflictForFileSync(filePartnerId, txPartnerId, txMatchedBy) {
     const filePid = filePartnerId ?? null;
     const txPid = txPartnerId ?? null;
-    if (!filePid && !txPid) {
-        return { winnerId: null, source: null, shouldSync: false };
-    }
-    if (filePid && !txPid) {
-        return { winnerId: filePid, source: "file", shouldSync: true };
-    }
-    if (txPid && !filePid) {
-        return { winnerId: txPid, source: "transaction", shouldSync: true };
-    }
-    const fileIsManual = fileMatchedBy === "manual";
     const txIsManual = txMatchedBy === "manual";
-    if (fileIsManual && txIsManual) {
-        return { winnerId: null, source: null, shouldSync: false };
+    // Neither has partner
+    if (!filePid && !txPid) {
+        return { winnerId: null, source: null, shouldSync: false, shouldStoreBankPartner: false };
     }
-    if (fileIsManual && !txIsManual) {
-        return { winnerId: filePid, source: "file", shouldSync: true };
+    // Only file has partner -> sync to transaction
+    if (filePid && !txPid) {
+        return { winnerId: filePid, source: "file", shouldSync: true, shouldStoreBankPartner: false };
     }
-    if (txIsManual && !fileIsManual) {
-        return { winnerId: txPid, source: "transaction", shouldSync: true };
+    // Only transaction has partner -> no sync needed (file doesn't override nothing)
+    if (txPid && !filePid) {
+        return { winnerId: null, source: null, shouldSync: false, shouldStoreBankPartner: false };
     }
-    const fileConf = fileConfidence ?? 0;
-    const txConf = txConfidence ?? 0;
-    if (fileConf > txConf) {
-        return { winnerId: filePid, source: "file", shouldSync: true };
+    // Both have partners
+    // If transaction was manual -> respect it, don't sync
+    if (txIsManual) {
+        return { winnerId: null, source: null, shouldSync: false, shouldStoreBankPartner: false };
     }
-    if (txConf > fileConf) {
-        return { winnerId: txPid, source: "transaction", shouldSync: true };
-    }
-    return { winnerId: txPid, source: "transaction", shouldSync: true };
+    // File wins - sync file's partner to transaction (store original as bankPartnerId)
+    return { winnerId: filePid, source: "file", shouldSync: true, shouldStoreBankPartner: txPid !== filePid };
 }
 async function syncPartnerToConnectedTransactions(fileId, fileData) {
     if (!fileData.partnerId)
@@ -357,17 +359,26 @@ async function syncPartnerToConnectedTransactions(fileId, fileData) {
         const txData = txDoc.data();
         if (txData.userId !== fileData.userId)
             continue;
-        const resolution = resolvePartnerConflictWithConfidence(fileData.partnerId, fileData.partnerMatchedBy, fileData.partnerMatchConfidence, txData.partnerId ?? null, txData.partnerMatchedBy ?? null, txData.partnerMatchConfidence ?? null);
-        if (!resolution.shouldSync || resolution.source !== "file") {
+        const resolution = resolvePartnerConflictForFileSync(fileData.partnerId, txData.partnerId ?? null, txData.partnerMatchedBy ?? null);
+        if (!resolution.shouldSync) {
             continue;
         }
-        await txRef.update({
+        const updateData = {
             partnerId: fileData.partnerId,
             partnerType: fileData.partnerType ?? null,
             partnerMatchedBy: fileData.partnerMatchedBy === "manual" ? "manual" : "auto",
             partnerMatchConfidence: fileData.partnerMatchConfidence ?? null,
             updatedAt: now,
-        });
+        };
+        // Store original transaction partner as bankPartnerId for audit trail
+        if (resolution.shouldStoreBankPartner && txData.partnerId) {
+            updateData.bankPartnerId = txData.partnerId;
+            updateData.bankPartnerType = txData.partnerType ?? null;
+            updateData.bankPartnerMatchedBy = txData.partnerMatchedBy ?? null;
+            updateData.bankPartnerMatchConfidence = txData.partnerMatchConfidence ?? null;
+            console.log(`[PartnerMatch] Storing original partner ${txData.partnerId} as bankPartnerId before overwriting`);
+        }
+        await txRef.update(updateData);
         console.log(`[PartnerMatch] Synced partner ${fileData.partnerId} from file ${fileId} to transaction ${transactionId}`);
     }
 }
@@ -388,9 +399,119 @@ function normalizeWebsiteToDomain(website) {
     return domain || null;
 }
 /**
+ * LLM-assisted partner deduplication
+ * Before creating a new partner, check if any existing partner is likely the same company.
+ * Returns the existing partner ID if a match is found, null otherwise.
+ */
+async function findExistingPartnerWithLLM(userId, companyInfo, originalExtractedName) {
+    try {
+        // Query existing partners with similar characteristics
+        const candidatePartners = [];
+        // 1. Search by similar name
+        const partnersSnapshot = await db
+            .collection("partners")
+            .where("userId", "==", userId)
+            .where("isActive", "==", true)
+            .limit(50)
+            .get();
+        // Find candidates with name similarity or matching VAT/website
+        const searchName = (companyInfo.name || originalExtractedName).toLowerCase();
+        const searchVatId = companyInfo.vatId?.toUpperCase().replace(/[^A-Z0-9]/g, "") || null;
+        const searchWebsite = companyInfo.website?.toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, "").split("/")[0] || null;
+        for (const doc of partnersSnapshot.docs) {
+            const data = doc.data();
+            const partnerName = (data.name || "").toLowerCase();
+            const partnerVatId = data.vatId?.toUpperCase().replace(/[^A-Z0-9]/g, "") || null;
+            const partnerWebsite = data.website?.toLowerCase() || null;
+            const partnerAliases = (data.aliases || []).map((a) => a.toLowerCase());
+            // Check for potential matches
+            const nameContains = searchName.includes(partnerName) || partnerName.includes(searchName);
+            const aliasMatch = partnerAliases.some((a) => a.includes(searchName) || searchName.includes(a));
+            const vatMatch = searchVatId && partnerVatId && searchVatId === partnerVatId;
+            const websiteMatch = searchWebsite && partnerWebsite && searchWebsite.includes(partnerWebsite);
+            if (nameContains || aliasMatch || vatMatch || websiteMatch) {
+                candidatePartners.push({
+                    id: doc.id,
+                    name: data.name,
+                    vatId: data.vatId,
+                    website: data.website,
+                    aliases: data.aliases,
+                });
+            }
+        }
+        if (candidatePartners.length === 0) {
+            console.log(`[PartnerDedup] No candidate partners found for "${searchName}"`);
+            return null;
+        }
+        console.log(`[PartnerDedup] Found ${candidatePartners.length} candidate partners for "${searchName}"`);
+        // 2. Use LLM to verify if any candidate is the same company
+        const vertexAI = (0, lookupCompany_1.createVertexAI)();
+        const model = vertexAI.getGenerativeModel({
+            model: "gemini-2.0-flash-lite-001",
+            generationConfig: { temperature: 0.1, maxOutputTokens: 256 },
+        });
+        const prompt = `Determine if the NEW company matches any EXISTING company (same legal entity).
+
+NEW COMPANY:
+- Name: "${companyInfo.name || originalExtractedName}"
+- VAT ID: ${companyInfo.vatId || "unknown"}
+- Website: ${companyInfo.website || "unknown"}
+
+EXISTING COMPANIES:
+${candidatePartners.map((p, i) => `${i + 1}. "${p.name}" (VAT: ${p.vatId || "unknown"}, Website: ${p.website || "unknown"}, Aliases: ${(p.aliases || []).join(", ") || "none"})`).join("\n")}
+
+Respond ONLY with JSON:
+{"match": true/false, "matchIndex": 1-based index if match, "reason": "brief explanation"}
+
+Rules:
+- Match = same legal entity (not just similar industry)
+- "Amazon EU S.a.r.l." matches "Amazon"
+- Different subsidiaries (Google LLC vs Alphabet Inc) = NO match
+- Similar names but different companies = NO match`;
+        const result = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
+        const responseText = result.response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+        // Parse response
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (parsed.match && parsed.matchIndex >= 1 && parsed.matchIndex <= candidatePartners.length) {
+                const matchedPartner = candidatePartners[parsed.matchIndex - 1];
+                console.log(`[PartnerDedup] LLM matched "${companyInfo.name}" to existing partner "${matchedPartner.name}" (${matchedPartner.id}): ${parsed.reason}`);
+                return matchedPartner.id;
+            }
+        }
+        console.log(`[PartnerDedup] LLM found no match for "${companyInfo.name}"`);
+        return null;
+    }
+    catch (error) {
+        console.error(`[PartnerDedup] LLM dedup failed, proceeding with creation:`, error);
+        return null;
+    }
+}
+/**
  * Create a user partner from company lookup results
  */
-async function createUserPartnerFromLookup(userId, companyInfo, originalExtractedName) {
+async function createUserPartnerFromLookup(userId, companyInfo, originalExtractedName, options) {
+    // === LLM-ASSISTED DEDUPLICATION ===
+    // Before creating, check if this company already exists as a partner
+    const existingPartnerId = await findExistingPartnerWithLLM(userId, companyInfo, originalExtractedName);
+    if (existingPartnerId) {
+        // Add the extracted name as an alias to the existing partner
+        const partnerRef = db.collection("partners").doc(existingPartnerId);
+        const partnerSnap = await partnerRef.get();
+        if (partnerSnap.exists) {
+            const existingAliases = partnerSnap.data()?.aliases || [];
+            const normalizedExtracted = originalExtractedName.toLowerCase().trim();
+            if (!existingAliases.some(a => a.toLowerCase().trim() === normalizedExtracted)) {
+                await partnerRef.update({
+                    aliases: firestore_2.FieldValue.arrayUnion(originalExtractedName),
+                    updatedAt: firestore_2.Timestamp.now(),
+                });
+                console.log(`[PartnerDedup] Added alias "${originalExtractedName}" to existing partner ${existingPartnerId}`);
+            }
+        }
+        return existingPartnerId;
+    }
     // Normalize website to domain format (e.g., "amazon.de" not "https://www.amazon.de")
     const normalizedWebsite = normalizeWebsiteToDomain(companyInfo.website);
     // Build aliases array - include original extracted name if different from official name
@@ -420,6 +541,11 @@ async function createUserPartnerFromLookup(userId, companyInfo, originalExtracte
         // Track that this was auto-created
         createdBy: "auto_partner_match",
         createdFromExtracted: originalExtractedName,
+        // Track VIES verification
+        ...(options?.viesVerified && {
+            viesVerified: true,
+            viesVerifiedAt: firestore_2.Timestamp.now(),
+        }),
     };
     const docRef = await db.collection("partners").add(partnerData);
     console.log(`[PartnerMatch] Created new partner ${docRef.id} from lookup for "${originalExtractedName}"`);
@@ -565,7 +691,7 @@ async function runPartnerMatching(fileId, fileData) {
                             ? (0, lookupCompany_1.parseViesAddress)(viesResult.address, parsed.countryCode)
                             : undefined,
                     };
-                    const newPartnerId = await createUserPartnerFromLookup(userId, companyInfo, extractedPartner || viesResult.name);
+                    const newPartnerId = await createUserPartnerFromLookup(userId, companyInfo, extractedPartner || viesResult.name, { viesVerified: true });
                     await markPartnerMatchComplete(fileId, newPartnerId, "user", "auto", 98, // Very high confidence for VIES-verified match
                     []);
                     // Learn email domain from Gmail files (non-blocking)
@@ -644,6 +770,7 @@ async function runPartnerMatching(fileId, fileData) {
     // No high-confidence match - try Gemini lookup if valid company name
     if (hasValidCompanyName) {
         console.log(`[PartnerMatch] No match >= ${CONFIG.AUTO_MATCH_THRESHOLD}% for "${extractedPartner}", trying Gemini lookup`);
+        let geminiLookupSucceeded = false;
         try {
             const vertexAI = (0, lookupCompany_1.createVertexAI)();
             const companyInfo = await (0, lookupCompany_1.searchByName)(vertexAI, extractedPartner, userId);
@@ -658,6 +785,7 @@ async function runPartnerMatching(fileId, fileData) {
                 });
                 console.log(`[PartnerMatch] Created partner from Gemini lookup: ${companyInfo.name} ` +
                     `(vatId: ${companyInfo.vatId || "none"}, website: ${companyInfo.website || "none"})`);
+                geminiLookupSucceeded = true;
                 return;
             }
             else {
@@ -666,6 +794,29 @@ async function runPartnerMatching(fileId, fileData) {
         }
         catch (error) {
             console.error(`[PartnerMatch] Gemini lookup failed for "${extractedPartner}":`, error);
+        }
+        // Fallback: If Gemini lookup failed/returned nothing but we have a valid company name,
+        // create a basic partner with just the extracted name. This ensures we don't lose
+        // valuable partner info when Gemini can't find additional data.
+        if (!geminiLookupSucceeded) {
+            console.log(`[PartnerMatch] Creating basic partner from extracted name: "${extractedPartner}"`);
+            const basicCompanyInfo = {
+                name: extractedPartner,
+                // Include extracted data if available
+                vatId: extractedVatId || undefined,
+                website: fileData.extractedWebsite
+                    ? normalizeWebsiteToDomain(fileData.extractedWebsite) || undefined
+                    : undefined,
+            };
+            const newPartnerId = await createUserPartnerFromLookup(userId, basicCompanyInfo, extractedPartner);
+            await markPartnerMatchComplete(fileId, newPartnerId, "user", "auto", 85, // Lower confidence since we only have extracted name
+            []);
+            // Learn email domain from Gmail files (non-blocking)
+            learnEmailDomainFromPartnerMatch(fileData, newPartnerId, extractedPartner, basicCompanyInfo.website || null).catch((err) => {
+                console.error(`[PartnerMatch] Failed to learn email domain:`, err);
+            });
+            console.log(`[PartnerMatch] Created basic partner ${newPartnerId} from extracted name: "${extractedPartner}"`);
+            return;
         }
     }
     // No match found and couldn't create - store suggestions only

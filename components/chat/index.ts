@@ -5,3 +5,4 @@ export { ConfirmationCard } from "./confirmation-card";
 export { ChatTabs } from "./chat-tabs";
 export { NotificationCard } from "./notification-card";
 export { NotificationsList } from "./notifications-list";
+export { WorkerQueueProcessor } from "./worker-queue-processor";

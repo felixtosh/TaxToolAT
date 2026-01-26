@@ -59,9 +59,10 @@ export const listTransactionsTool = tool(
       }
     }
 
-    // When searching, fetch more transactions since we filter client-side
-    // This ensures search finds matches across all transactions
-    const fetchLimit = search ? 500 : limit;
+    // When using client-side filters (search, date, amount), fetch more transactions
+    // This ensures filters find matches across all transactions
+    const hasClientSideFilters = search || startDate || endDate || minAmount !== undefined || maxAmount !== undefined;
+    const fetchLimit = hasClientSideFilters ? 500 : limit;
     const snapshot = await query.limit(fetchLimit).get();
 
     // Collect all fileIds to check for soft-deleted files
@@ -412,12 +413,14 @@ export const listFilesTool = tool(
       const data = doc.data();
       // Get extracted date if available
       const extractedDate = data.extractedDate?.toDate?.() || data.uploadedAt?.toDate?.();
-      // Get extracted amount (in cents) - apply sign based on invoiceDirection
+      // Get extracted amount - apply sign based on invoiceDirection
       // incoming = expense = negative, outgoing = income = positive
+      // Convert from cents to whole currency units
       const rawAmount = data.extractedAmount || null;
-      const signedAmount = rawAmount != null
+      const signedAmountCents = rawAmount != null
         ? (data.invoiceDirection === "incoming" ? -rawAmount : rawAmount)
         : null;
+      const signedAmount = signedAmountCents != null ? signedAmountCents / 100 : null;
 
       return {
         id: doc.id,
@@ -430,7 +433,7 @@ export const listFilesTool = tool(
           ? new Intl.NumberFormat("de-DE", {
               style: "currency",
               currency: data.extractedCurrency || "EUR",
-            }).format(signedAmount / 100)
+            }).format(signedAmount)
           : null,
         partnerId: data.partnerId || null,
         partnerName: data.extractedPartner || null,
@@ -499,6 +502,224 @@ export const listFilesTool = tool(
       maxAmount: z.number().optional().describe("Maximum amount in EUR"),
       hasTransaction: z.boolean().optional().describe("Filter by transaction connection status"),
       limit: z.number().optional().describe("Max results (default 20)"),
+    }),
+  }
+);
+
+// ============================================================================
+// Get File
+// ============================================================================
+
+export const getFileTool = tool(
+  async ({ fileId }, config) => {
+    const userId = config?.configurable?.userId;
+    if (!userId) {
+      return { error: "User ID not provided" };
+    }
+
+    const doc = await db.collection("files").doc(fileId).get();
+
+    if (!doc.exists) {
+      return { error: `File ${fileId} not found` };
+    }
+
+    const data = doc.data()!;
+
+    // Verify ownership
+    if (data.userId !== userId) {
+      return { error: "Not authorized to access this file" };
+    }
+
+    // Get dates
+    const extractedDate = data.extractedDate?.toDate?.();
+    const uploadedAt = data.uploadedAt?.toDate?.();
+
+    // Get amount with sign based on direction (convert from cents to whole units)
+    const rawAmount = data.extractedAmount || null;
+    const signedAmountCents = rawAmount != null
+      ? (data.invoiceDirection === "incoming" ? -rawAmount : rawAmount)
+      : null;
+    const signedAmount = signedAmountCents != null ? signedAmountCents / 100 : null;
+
+    return {
+      id: doc.id,
+      fileName: data.fileName,
+      fileType: data.fileType,
+      fileSize: data.fileSize,
+      downloadUrl: data.downloadUrl,
+      // Extracted data
+      extractedPartner: data.extractedPartner || null,
+      extractedAmount: signedAmount,
+      extractedAmountFormatted: signedAmount != null
+        ? new Intl.NumberFormat("de-DE", {
+            style: "currency",
+            currency: data.extractedCurrency || "EUR",
+          }).format(signedAmount)
+        : null,
+      extractedCurrency: data.extractedCurrency || "EUR",
+      extractedDate: extractedDate?.toISOString() || null,
+      extractedDateFormatted: extractedDate?.toLocaleDateString("de-DE") || null,
+      extractedVatId: data.extractedVatId || null,
+      extractedIban: data.extractedIban || null,
+      extractedInvoiceNumber: data.extractedInvoiceNumber || null,
+      invoiceDirection: data.invoiceDirection || null,
+      // Status
+      extractionComplete: data.extractionComplete || false,
+      isNotInvoice: data.isNotInvoice || false,
+      // Connections
+      partnerId: data.partnerId || null,
+      partnerType: data.partnerType || null,
+      transactionIds: data.transactionIds || [],
+      transactionSuggestions: data.transactionSuggestions || [],
+      // Metadata
+      uploadedAt: uploadedAt?.toISOString() || null,
+      // Gmail source info
+      gmailSenderEmail: data.gmailSenderEmail || null,
+      sourceType: data.sourceType || null,
+    };
+  },
+  {
+    name: "getFile",
+    description: `Get full details of a file by ID. Returns extracted data (partner, amount, date, VAT ID, IBAN),
+connection status (partnerId, transactionIds), and metadata.
+Use this to see all information about a specific file before searching for matches.`,
+    schema: z.object({
+      fileId: z.string().describe("The file ID to get details for"),
+    }),
+  }
+);
+
+// ============================================================================
+// Wait For File Extraction
+// ============================================================================
+
+export const waitForFileExtractionTool = tool(
+  async ({ fileId, timeoutSeconds = 30 }, config) => {
+    const userId = config?.configurable?.userId;
+    if (!userId) {
+      return { error: "User ID not provided" };
+    }
+
+    const pollIntervalMs = 2000; // Check every 2 seconds
+    const maxAttempts = Math.ceil((timeoutSeconds * 1000) / pollIntervalMs);
+    let attempts = 0;
+
+    console.log(`[waitForFileExtraction] Waiting for file ${fileId} extraction (timeout: ${timeoutSeconds}s)`);
+
+    while (attempts < maxAttempts) {
+      const doc = await db.collection("files").doc(fileId).get();
+
+      if (!doc.exists) {
+        return { error: `File ${fileId} not found` };
+      }
+
+      const data = doc.data()!;
+
+      if (data.userId !== userId) {
+        return { error: "Not authorized to access this file" };
+      }
+
+      // Check if extraction is complete
+      if (data.extractionComplete) {
+        // Get dates
+        const extractedDate = data.extractedDate?.toDate?.();
+        const uploadedAt = data.uploadedAt?.toDate?.();
+
+        // Get amount with sign based on direction (convert from cents to whole units)
+        const rawAmount = data.extractedAmount || null;
+        const signedAmountCents = rawAmount != null
+          ? (data.invoiceDirection === "incoming" ? -rawAmount : rawAmount)
+          : null;
+        const signedAmount = signedAmountCents != null ? signedAmountCents / 100 : null;
+
+        console.log(`[waitForFileExtraction] Extraction complete for ${fileId}`);
+
+        return {
+          success: true,
+          fileId: doc.id,
+          extractionComplete: true,
+          // Extracted data
+          fileName: data.fileName,
+          extractedPartner: data.extractedPartner || null,
+          extractedAmount: signedAmount,
+          extractedAmountFormatted: signedAmount != null
+            ? new Intl.NumberFormat("de-DE", {
+                style: "currency",
+                currency: data.extractedCurrency || "EUR",
+              }).format(signedAmount)
+            : null,
+          extractedCurrency: data.extractedCurrency || "EUR",
+          extractedDate: extractedDate?.toISOString() || null,
+          extractedDateFormatted: extractedDate?.toLocaleDateString("de-DE") || null,
+          extractedVatId: data.extractedVatId || null,
+          extractedIban: data.extractedIban || null,
+          extractedInvoiceNumber: data.extractedInvoiceNumber || null,
+          invoiceDirection: data.invoiceDirection || null,
+          isNotInvoice: data.isNotInvoice || false,
+          // Partner suggestions from extraction
+          partnerSuggestions: data.partnerSuggestions || [],
+          // Transaction suggestions from matching
+          transactionSuggestions: data.transactionSuggestions || [],
+          // Metadata
+          uploadedAt: uploadedAt?.toISOString() || null,
+          waitedSeconds: attempts * (pollIntervalMs / 1000),
+        };
+      }
+
+      // Check for extraction error
+      if (data.extractionError) {
+        console.log(`[waitForFileExtraction] Extraction failed for ${fileId}: ${data.extractionError}`);
+        return {
+          success: false,
+          fileId: doc.id,
+          extractionComplete: false,
+          error: data.extractionError,
+          message: `Extraction failed: ${data.extractionError}`,
+        };
+      }
+
+      // Wait before next poll
+      attempts++;
+      if (attempts < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      }
+    }
+
+    // Timeout reached
+    console.log(`[waitForFileExtraction] Timeout waiting for ${fileId}`);
+    return {
+      success: false,
+      fileId,
+      extractionComplete: false,
+      error: "timeout",
+      message: `Extraction not complete after ${timeoutSeconds} seconds. File may still be processing.`,
+      waitedSeconds: timeoutSeconds,
+    };
+  },
+  {
+    name: "waitForFileExtraction",
+    description: `Wait for a file's AI extraction to complete and return the extracted data.
+
+Use this AFTER downloading a Gmail attachment to:
+1. Wait for extraction to finish (polls every 2s)
+2. Get the extracted partner, amount, date, VAT ID, IBAN
+3. Verify the file matches the expected transaction
+
+Returns extracted data including:
+- extractedPartner: Company name from the document
+- extractedAmount: Amount in currency units (negative for expenses)
+- extractedDate: Invoice date
+- extractedVatId, extractedIban: Tax/bank identifiers
+- partnerSuggestions: Auto-matched partner suggestions
+- transactionSuggestions: Auto-matched transaction suggestions
+
+Use this to verify a downloaded file is the right one before connecting.`,
+    schema: z.object({
+      fileId: z.string().describe("The file ID to wait for"),
+      timeoutSeconds: z
+        .number()
+        .optional()
+        .describe("Max seconds to wait (default 30, max 60)"),
     }),
   }
 );
@@ -612,6 +833,131 @@ export const getPartnerTool = tool(
 );
 
 // ============================================================================
+// Company Lookup Tool (AI-powered, read-only)
+// ============================================================================
+
+import { lookupCompany, lookupByVatId } from "@/lib/api/firebase-callable";
+
+export const lookupCompanyInfoTool = tool(
+  async ({ nameOrUrl }, config) => {
+    const authHeader = config?.configurable?.authHeader;
+
+    const searchTerm = nameOrUrl.trim();
+    const isUrl = searchTerm.includes(".") && !searchTerm.includes(" ");
+
+    console.log(`[lookupCompanyInfo] Looking up: ${searchTerm} (isUrl: ${isUrl})`);
+
+    try {
+      const companyInfo = isUrl
+        ? await lookupCompany({ url: searchTerm }, authHeader)
+        : await lookupCompany({ name: searchTerm }, authHeader);
+
+      console.log(`[lookupCompanyInfo] Result:`, companyInfo);
+
+      return {
+        success: true,
+        searchTerm,
+        name: companyInfo.name || null,
+        aliases: companyInfo.aliases || [],
+        vatId: companyInfo.vatId || null,
+        website: companyInfo.website || null,
+        country: companyInfo.country || null,
+        address: companyInfo.address || null,
+        message: companyInfo.name
+          ? `Found company info for "${companyInfo.name}"`
+          : `No company info found for "${searchTerm}"`,
+      };
+    } catch (error) {
+      console.error(`[lookupCompanyInfo] Failed:`, error);
+      return {
+        success: false,
+        searchTerm,
+        error: error instanceof Error ? error.message : "Lookup failed",
+        message: `Could not look up "${searchTerm}"`,
+      };
+    }
+  },
+  {
+    name: "lookupCompanyInfo",
+    description: `Look up company information using AI-powered web search.
+
+Use this to find company details like official name, VAT ID, website, and country.
+This is a READ-ONLY lookup - it does NOT create any partner.
+
+Use when you have a company name or website and need to:
+- Verify the official company name
+- Find their VAT ID for VIES validation
+- Get their official website
+- Determine their country
+
+After getting results, you can use validateVatId to verify the VAT, then createPartner to create it.`,
+    schema: z.object({
+      nameOrUrl: z
+        .string()
+        .describe("Company name (e.g., 'Arac GmbH') or website URL (e.g., 'arac.de')"),
+    }),
+  }
+);
+
+// ============================================================================
+// VAT ID Validation Tool (VIES, read-only)
+// ============================================================================
+
+export const validateVatIdTool = tool(
+  async ({ vatId }, config) => {
+    const authHeader = config?.configurable?.authHeader;
+
+    const normalizedVat = vatId.trim().toUpperCase().replace(/\s/g, "");
+    console.log(`[validateVatId] Validating: ${normalizedVat}`);
+
+    try {
+      const result = await lookupByVatId(normalizedVat, authHeader);
+      console.log(`[validateVatId] Result:`, result);
+
+      return {
+        success: true,
+        vatId: normalizedVat,
+        isValid: result.viesValid ?? false,
+        name: result.name || null,
+        address: result.address || null,
+        country: result.country || null,
+        error: result.viesError || null,
+        message: result.viesValid
+          ? `VAT ${normalizedVat} is VALID - registered to "${result.name}"`
+          : `VAT ${normalizedVat} is INVALID: ${result.viesError || "Not found in VIES"}`,
+      };
+    } catch (error) {
+      console.error(`[validateVatId] Failed:`, error);
+      return {
+        success: false,
+        vatId: normalizedVat,
+        isValid: false,
+        error: error instanceof Error ? error.message : "Validation failed",
+        message: `Could not validate VAT ${normalizedVat}`,
+      };
+    }
+  },
+  {
+    name: "validateVatId",
+    description: `Validate a VAT ID using the official EU VIES service.
+
+Use this to verify if a VAT ID is valid and get the registered company info.
+This is a READ-ONLY validation - it does NOT create any partner.
+
+Returns:
+- isValid: true/false
+- name: Official company name from VIES
+- address: Registered address
+- country: Country code
+
+Use BEFORE creating a partner to verify the VAT is legitimate.`,
+    schema: z.object({
+      vatId: z.string().describe("VAT ID to validate (e.g., 'DE123456789', 'ATU12345678')"),
+    }),
+  }
+);
+
+// ============================================================================
 // Export all read tools
 // ============================================================================
 
@@ -622,6 +968,10 @@ export const READ_TOOLS = [
   getSourceTool,
   getTransactionHistoryTool,
   listFilesTool,
+  getFileTool,
+  waitForFileExtractionTool,
   listPartnersTool,
   getPartnerTool,
+  lookupCompanyInfoTool,
+  validateVatIdTool,
 ];

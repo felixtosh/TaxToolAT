@@ -26,6 +26,14 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ContentOverlay } from "@/components/ui/content-overlay";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { isPdfAttachment } from "@/lib/email-providers/interface";
 import { ConnectResultRow } from "@/components/ui/connect-result-row";
@@ -97,14 +105,6 @@ const AUTH_ERROR_CODES = new Set([
   "TOKENS_MISSING",
 ]);
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 function buildAmountVariants(amountCents?: number | null): string[] {
   if (amountCents == null) return [];
@@ -236,9 +236,6 @@ export function ConnectFileOverlay({
   const [searchLoading, setSearchLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [emailContentByMessageId, setEmailContentByMessageId] = useState<
-    Record<string, { textBody?: string; htmlBody?: string }>
-  >({});
   const [lastSearchTerm, setLastSearchTerm] = useState<string | null>(null);
   const [gmailAuthIssues, setGmailAuthIssues] = useState<
     Record<string, { code: string; message: string }>
@@ -367,47 +364,8 @@ export function ConnectFileOverlay({
     return allAttachments.find((a) => a.key === selectedAttachmentKey) || null;
   }, [allAttachments, selectedAttachmentKey]);
 
-  useEffect(() => {
-    if (!hasSearched || gmailMessages.length === 0) return;
-
-    let cancelled = false;
-
-    const fetchContent = async () => {
-      for (const message of gmailMessages) {
-        if (emailContentByMessageId[message.messageId]) continue;
-
-        try {
-          const response = await fetchWithAuth("/api/gmail/email-content", {
-            method: "POST",
-            body: JSON.stringify({
-              integrationId: message.integrationId,
-              messageId: message.messageId,
-            }),
-          });
-
-          if (!response.ok) continue;
-          const data = await response.json();
-          if (cancelled) return;
-
-          setEmailContentByMessageId((prev) => ({
-            ...prev,
-            [message.messageId]: {
-              textBody: data.textBody,
-              htmlBody: data.htmlBody,
-            },
-          }));
-        } catch {
-          // Ignore content fetch errors to avoid blocking search UI
-        }
-      }
-    };
-
-    fetchContent();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [gmailMessages, hasSearched, emailContentByMessageId]);
+  // Email body content for SCORING comes from searchGmailCallable (message.bodyText)
+  // For PREVIEW, htmlBody is fetched on-demand when user selects an email (handleSelectEmail)
 
   // Create a stable key for the attachments to score
   const attachmentsKey = useMemo(() => {
@@ -444,27 +402,19 @@ export function ConnectFileOverlay({
       setScoringLoading(true);
       lastScoredKeyRef.current = currentKey;
 
-      // Prepare attachments with email content
-      const attachmentsToScore = allAttachments.map((item) => {
-        const content = emailContentByMessageId[item.message.messageId];
-        const bodyText = content?.textBody
-          ? content.textBody
-          : content?.htmlBody
-            ? stripHtml(content.htmlBody)
-            : null;
-
-        return {
-          key: item.key,
-          filename: item.attachment.filename,
-          mimeType: item.attachment.mimeType,
-          emailSubject: item.message.subject,
-          emailFrom: item.message.from,
-          emailSnippet: item.message.snippet,
-          emailBodyText: bodyText,
-          emailDate: item.message.date,
-          integrationId: item.message.integrationId,
-        };
-      });
+      // Prepare attachments with email content (bodyText comes from server search)
+      const attachmentsToScore = allAttachments.map((item) => ({
+        key: item.key,
+        filename: item.attachment.filename,
+        mimeType: item.attachment.mimeType,
+        emailSubject: item.message.subject,
+        emailFrom: item.message.from,
+        emailSnippet: item.message.snippet,
+        emailBodyText: item.message.bodyText || null,
+        emailDate: item.message.date,
+        integrationId: item.message.integrationId,
+        classification: item.message.classification,
+      }));
 
       scoreAttachments(
         attachmentsToScore,
@@ -521,8 +471,6 @@ export function ConnectFileOverlay({
     transaction?.partner,
     transaction?.reference,
     transactionDate?.getTime(),
-    // Note: emailContentByMessageId excluded to prevent re-scoring on every content load
-    // Content will be included in the next scoring batch after debounce
   ]);
 
   // Use the state-based signals map
@@ -549,7 +497,7 @@ export function ConnectFileOverlay({
       emailSubject: email.subject,
       emailFrom: email.from,
       emailSnippet: email.snippet,
-      emailBodyText: email.bodyText || email.textBody || null,
+      emailBodyText: email.bodyText || null,
       emailDate: email.date,
       integrationId: email.integrationId,
       classification: email.classification,
@@ -1349,6 +1297,70 @@ export function ConnectFileOverlay({
     }
   };
 
+  // Handle saving an email attachment from the selected email
+  const handleSaveEmailAttachment = async (attachment: EmailAttachment) => {
+    if (!selectedEmail) return;
+
+    setIsConverting(true);
+    setError(null);
+
+    try {
+      const integrationEmail = integrationEmails.get(selectedEmail.integrationId);
+      const strategyPattern = strategyQueryByMessageId.get(selectedEmail.messageId);
+      const searchPattern = strategyPattern || lastSearchTerm || searchQuery || undefined;
+      const response = await fetchWithAuth("/api/gmail/attachment", {
+        method: "POST",
+        body: JSON.stringify({
+          integrationId: selectedEmail.integrationId,
+          messageId: attachment.messageId,
+          attachmentId: attachment.attachmentId,
+          mimeType: attachment.mimeType,
+          filename: attachment.filename,
+          gmailMessageSubject: selectedEmail.subject,
+          gmailMessageFrom: selectedEmail.from,
+          gmailMessageFromName: selectedEmail.fromName,
+          searchPattern,
+          resultType: "gmail_attachment",
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to save attachment");
+      }
+
+      const data = await response.json();
+      await onSelect(data.fileId, {
+        sourceType: "gmail",
+        searchPattern,
+        gmailIntegrationId: selectedEmail.integrationId,
+        gmailIntegrationEmail: integrationEmail,
+        gmailMessageId: selectedEmail.messageId,
+        gmailMessageFrom: selectedEmail.from,
+        gmailMessageFromName: selectedEmail.fromName,
+        resultType: "gmail_attachment",
+      });
+
+      const senderDomain = extractEmailDomain(selectedEmail.from);
+      if (partner && senderDomain && userId) {
+        try {
+          await addEmailDomainToPartner(
+            { db, userId },
+            partner.id,
+            senderDomain
+          );
+        } catch (err) {
+          console.error("Failed to learn email domain:", err);
+        }
+      }
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save attachment");
+    } finally {
+      setIsConverting(false);
+    }
+  };
+
   const formatAmount = (amount: number | null | undefined, currency: string | null | undefined) => {
     if (amount == null) return null;
     return new Intl.NumberFormat("de-DE", { style: "currency", currency: currency || "EUR" }).format(amount / 100);
@@ -1362,7 +1374,7 @@ export function ConnectFileOverlay({
   const subtitle = transaction ? (
     <>
       {format(transaction.date.toDate(), "MMM d, yyyy")} &middot;{" "}
-      <span className={transaction.amount < 0 ? "text-red-600" : "text-green-600"}>
+      <span className={transaction.amount < 0 ? "text-amount-negative" : "text-amount-positive"}>
         {new Intl.NumberFormat("de-DE", { style: "currency", currency: transaction.currency }).format(transaction.amount / 100)}
       </span>
       {transaction.partner && ` · ${transaction.partner}`}
@@ -1376,7 +1388,7 @@ export function ConnectFileOverlay({
       <ContentOverlay open={open} onClose={onClose} title="Connect File to Transaction" subtitle={subtitle}>
       <div className="flex h-full">
         {/* Left sidebar: Search + Tabs + Results */}
-        <div className="@container w-[35%] min-w-[280px] max-w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
+        <div className="@container w-[35%] min-w-[200px] max-w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
           {/* Search section */}
           <div className="p-4 border-b space-y-3">
             {/* Search input with inline button */}
@@ -1704,20 +1716,21 @@ export function ConnectFileOverlay({
                       const confidence = signal ? Math.round(signal.score * 100) : null;
 
                       // Build classification badges from message classification
-                      const classificationBadges: Array<{ label: string; description: string; variant: "receipt" | "link" | "pdf" }> = [];
+                      const classificationBadges: Array<{ type: "receipt" | "link" | "pdf"; keywords?: string[] }> = [];
                       if (item.message.classification) {
+                        if (item.message.classification.hasPdfAttachment) {
+                          classificationBadges.push({ type: "pdf" });
+                        }
                         if (item.message.classification.possibleMailInvoice) {
                           classificationBadges.push({
-                            label: "Receipt",
-                            description: "Email body contains receipt/order confirmation",
-                            variant: "receipt",
+                            type: "receipt",
+                            keywords: item.message.classification.matchedKeywords,
                           });
                         }
                         if (item.message.classification.possibleInvoiceLink) {
                           classificationBadges.push({
-                            label: "Link",
-                            description: "Email contains links to download invoice",
-                            variant: "link",
+                            type: "link",
+                            keywords: item.message.classification.matchedKeywords,
                           });
                         }
                       }
@@ -1790,27 +1803,21 @@ export function ConnectFileOverlay({
                       const confidence = signal ? Math.round(signal.score * 100) : null;
 
                       // Build classification badges from email classification
-                      const classificationBadges: Array<{ label: string; description: string; variant: "receipt" | "link" | "pdf" }> = [];
+                      const classificationBadges: Array<{ type: "receipt" | "link" | "pdf"; keywords?: string[] }> = [];
                       if (email.classification) {
+                        if (email.classification.hasPdfAttachment) {
+                          classificationBadges.push({ type: "pdf" });
+                        }
                         if (email.classification.possibleMailInvoice) {
                           classificationBadges.push({
-                            label: "Receipt",
-                            description: "Email body contains receipt/order confirmation",
-                            variant: "receipt",
+                            type: "receipt",
+                            keywords: email.classification.matchedKeywords,
                           });
                         }
                         if (email.classification.possibleInvoiceLink) {
                           classificationBadges.push({
-                            label: "Link",
-                            description: "Email contains links to download invoice",
-                            variant: "link",
-                          });
-                        }
-                        if (email.classification.hasPdfAttachment) {
-                          classificationBadges.push({
-                            label: "PDF",
-                            description: "Email has PDF attachment",
-                            variant: "pdf",
+                            type: "link",
+                            keywords: email.classification.matchedKeywords,
                           });
                         }
                       }
@@ -2039,27 +2046,47 @@ export function ConnectFileOverlay({
                     </div>
                   )}
                 </div>
-                <div className="border-t p-4 shrink-0 space-y-3">
-                  {/* Matched Keywords from Classification */}
-                  {selectedEmail.classification?.matchedKeywords &&
-                   selectedEmail.classification.matchedKeywords.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {selectedEmail.classification.matchedKeywords.map((keyword, idx) => (
-                        <Badge
-                          key={idx}
-                          variant="secondary"
-                          className="text-xs"
-                        >
-                          {keyword}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
+                <div className="border-t p-4 shrink-0">
                   <div className="flex justify-end">
-                    <Button onClick={handleConvertToPdf} disabled={isConverting}>
-                      {isConverting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileDown className="h-4 w-4 mr-2" />}
-                      To PDF and Connect
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button disabled={isConverting}>
+                          {isConverting ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4 mr-2" />
+                          )}
+                          Action
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-56">
+                        <DropdownMenuLabel>Save as Invoice</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={handleConvertToPdf}>
+                          <Mail className="h-4 w-4 mr-2" />
+                          Email is Invoice
+                        </DropdownMenuItem>
+                        {selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuLabel>Attachments</DropdownMenuLabel>
+                            {selectedEmail.attachments
+                              .filter((att) => isPdfAttachment(att.mimeType, att.filename))
+                              .map((att, idx) => (
+                                <DropdownMenuItem
+                                  key={att.attachmentId}
+                                  onClick={() => handleSaveEmailAttachment(att)}
+                                >
+                                  <Paperclip className="h-4 w-4 mr-2" />
+                                  {att.filename.length > 30
+                                    ? `${att.filename.slice(0, 27)}...`
+                                    : att.filename}
+                                </DropdownMenuItem>
+                              ))}
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </div>
               </>

@@ -27,7 +27,7 @@ import {
   StickyNote,
   Link as LinkIcon,
 } from "lucide-react";
-import { UserPartner, PartnerFormData } from "@/types/partner";
+import { UserPartner, PartnerFormData, ManualRemoval, ManualFileRemoval } from "@/types/partner";
 import { Transaction } from "@/types/transaction";
 import { TaxFile } from "@/types/file";
 import { usePartners } from "@/hooks/use-partners";
@@ -62,6 +62,50 @@ import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { FieldRow, SectionHeader, CollapsibleListSection, ListItem } from "@/components/ui/detail-panel-primitives";
 import { useAuth } from "@/components/auth";
+import { Bot, Hand, Sparkles, MousePointerClick } from "lucide-react";
+
+// ============================================================================
+// Match Source Badge
+// ============================================================================
+
+type MatchedBy = "manual" | "auto" | "ai" | "suggestion" | null | undefined;
+
+function MatchSourceBadge({ matchedBy }: { matchedBy: MatchedBy }) {
+  if (!matchedBy) return null;
+
+  const configs: Record<string, { icon: ReactNode; label: string; className: string }> = {
+    manual: {
+      icon: <Hand className="h-3 w-3" />,
+      label: "Manual",
+      className: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300",
+    },
+    ai: {
+      icon: <Bot className="h-3 w-3" />,
+      label: "AI",
+      className: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
+    },
+    auto: {
+      icon: <Sparkles className="h-3 w-3" />,
+      label: "Auto",
+      className: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
+    },
+    suggestion: {
+      icon: <MousePointerClick className="h-3 w-3" />,
+      label: "Click",
+      className: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+    },
+  };
+
+  const config = configs[matchedBy];
+  if (!config) return null;
+
+  return (
+    <span className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium", config.className)}>
+      {config.icon}
+      {config.label}
+    </span>
+  );
+}
 
 interface PartnerDetailPanelProps {
   partner: UserPartner;
@@ -624,26 +668,53 @@ export function PartnerDetailPanel({
               viewAllLink={`/transactions?partnerIds=${partner.id}`}
               viewAllLabel={`View all ${totalTransactionCount} transactions`}
             >
-              {transactions.length === 0 && !isLoadingTransactions ? (
+              {transactions.length === 0 && !isLoadingTransactions && (!partner.manualRemovals || partner.manualRemovals.length === 0) ? (
                 <p className="text-sm text-muted-foreground py-2">
                   No transactions connected
                 </p>
               ) : (
-                transactions.slice(0, 5).map((tx) => (
-                  <ListItem
-                    key={tx.id}
-                    href={`/transactions?id=${tx.id}`}
-                    title={tx.name}
-                    subtitle={
-                      tx.date?.toDate
-                        ? format(tx.date.toDate(), "MMM d, yyyy")
-                        : ""
-                    }
-                    amount={tx.amount}
-                    currency={tx.currency}
-                    isNegative={tx.amount < 0}
-                  />
-                ))
+                <>
+                  {transactions.slice(0, 5).map((tx) => (
+                    <ListItem
+                      key={tx.id}
+                      href={`/transactions?id=${tx.id}`}
+                      title={tx.name}
+                      subtitle={
+                        tx.date?.toDate
+                          ? format(tx.date.toDate(), "MMM d, yyyy")
+                          : ""
+                      }
+                      amount={tx.amount}
+                      currency={tx.currency}
+                      isNegative={tx.amount < 0}
+                      badge={<MatchSourceBadge matchedBy={tx.partnerMatchedBy} />}
+                    />
+                  ))}
+                  {/* Manual Rejects */}
+                  {partner.manualRemovals && partner.manualRemovals.length > 0 && (
+                    <div className="pt-2 border-t mt-2">
+                      <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                        <Ban className="h-3 w-3" />
+                        Rejected ({partner.manualRemovals.length})
+                      </p>
+                      {partner.manualRemovals.slice(0, 3).map((removal) => (
+                        <div
+                          key={removal.transactionId}
+                          className="flex items-center gap-2 py-1.5 px-2 -mx-2 rounded text-muted-foreground line-through opacity-60"
+                        >
+                          <span className="text-sm truncate flex-1">
+                            {removal.name || removal.partner || "Unknown"}
+                          </span>
+                        </div>
+                      ))}
+                      {partner.manualRemovals.length > 3 && (
+                        <p className="text-xs text-muted-foreground pl-2">
+                          +{partner.manualRemovals.length - 3} more
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </CollapsibleListSection>
 
@@ -656,26 +727,53 @@ export function PartnerDetailPanel({
               viewAllLink={`/files?partnerId=${partner.id}`}
               viewAllLabel={`View all ${totalFileCount} files`}
             >
-              {files.length === 0 && !isLoadingFiles ? (
+              {files.length === 0 && !isLoadingFiles && (!partner.manualFileRemovals || partner.manualFileRemovals.length === 0) ? (
                 <p className="text-sm text-muted-foreground py-2">
                   No files connected
                 </p>
               ) : (
-                files.slice(0, 5).map((file) => (
-                  <ListItem
-                    key={file.id}
-                    href={`/files?id=${file.id}`}
-                    title={file.fileName}
-                    subtitle={
-                      file.uploadedAt?.toDate
-                        ? format(file.uploadedAt.toDate(), "MMM d, yyyy")
-                        : ""
-                    }
-                    amount={file.extractedAmount || undefined}
-                    currency={file.extractedCurrency || undefined}
-                    isNegative={false}
-                  />
-                ))
+                <>
+                  {files.slice(0, 5).map((file) => (
+                    <ListItem
+                      key={file.id}
+                      href={`/files?id=${file.id}`}
+                      title={file.fileName}
+                      subtitle={
+                        file.uploadedAt?.toDate
+                          ? format(file.uploadedAt.toDate(), "MMM d, yyyy")
+                          : ""
+                      }
+                      amount={file.extractedAmount || undefined}
+                      currency={file.extractedCurrency || undefined}
+                      isNegative={false}
+                      badge={<MatchSourceBadge matchedBy={file.partnerMatchedBy} />}
+                    />
+                  ))}
+                  {/* Manual File Rejects */}
+                  {partner.manualFileRemovals && partner.manualFileRemovals.length > 0 && (
+                    <div className="pt-2 border-t mt-2">
+                      <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                        <Ban className="h-3 w-3" />
+                        Rejected ({partner.manualFileRemovals.length})
+                      </p>
+                      {partner.manualFileRemovals.slice(0, 3).map((removal) => (
+                        <div
+                          key={removal.fileId}
+                          className="flex items-center gap-2 py-1.5 px-2 -mx-2 rounded text-muted-foreground line-through opacity-60"
+                        >
+                          <span className="text-sm truncate flex-1">
+                            {removal.fileName || "Unknown file"}
+                          </span>
+                        </div>
+                      ))}
+                      {partner.manualFileRemovals.length > 3 && (
+                        <p className="text-xs text-muted-foreground pl-2">
+                          +{partner.manualFileRemovals.length - 3} more
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </CollapsibleListSection>
           </div>

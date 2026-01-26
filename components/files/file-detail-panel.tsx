@@ -59,6 +59,7 @@ import { shouldAutoApply } from "@/lib/matching/partner-matcher";
 import { db } from "@/lib/firebase/config";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/auth";
+import { useChat } from "@/components/chat/chat-provider";
 
 // Helper to determine invoice type status for display
 type InvoiceTypeStatus = 'unknown' | 'analyzing' | 'invoice' | 'not_invoice';
@@ -131,6 +132,9 @@ export function FileDetailPanel({
   const [isRetryingExtraction, setIsRetryingExtraction] = useState(false);
   const [isUpdatingExtractedFields, setIsUpdatingExtractedFields] = useState(false);
   const [isRematchingTransactions, setIsRematchingTransactions] = useState(false);
+
+  // Chat hook for agentic search
+  const { startFilePartnerSearchThread, startFileTransactionSearchThread, isLoading: isChatLoading } = useChat();
 
   const ctx: OperationsContext = useMemo(
     () => ({ db, userId: userId ?? "" }),
@@ -511,35 +515,22 @@ export function FileDetailPanel({
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium">Partner</h3>
                 <div className="flex items-center gap-1">
-                  {/* Search button to trigger partner re-matching */}
+                  {/* Search button to trigger AI partner search */}
                   {!assignedPartner && file.extractionComplete && (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          disabled={isRetryingExtraction}
-                        >
-                          {isRetryingExtraction ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Search className="h-3.5 w-3.5" />
-                          )}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-60 text-xs p-3" align="end">
-                        <p className="font-medium mb-1">Partner Matching</p>
-                        <p className="text-muted-foreground">
-                          Partner suggestions are computed automatically based on extracted data (IBAN, VAT ID, name).
-                        </p>
-                        {suggestions.length === 0 && (
-                          <p className="text-muted-foreground mt-2">
-                            No matches found. Try re-extracting the file if data is missing.
-                          </p>
-                        )}
-                      </PopoverContent>
-                    </Popover>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => startFilePartnerSearchThread(file.id)}
+                      disabled={isChatLoading}
+                      title="Search for partner"
+                    >
+                      {isChatLoading ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Search className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
                   )}
                   {/* Debug info button */}
                   <Popover>
@@ -647,6 +638,16 @@ export function FileDetailPanel({
               onDismissSuggestion={handleDismissTransactionSuggestion}
               onTriggerRematch={handleTriggerTransactionRematch}
               isRematching={isRematchingTransactions}
+              onAiSearch={() =>
+                startFileTransactionSearchThread(file.id, {
+                  fileName: file.fileName,
+                  amount: file.extractedAmount ?? undefined,
+                  currency: file.extractedCurrency ?? undefined,
+                  date: file.extractedDate?.toDate?.()?.toISOString().split("T")[0],
+                  partner: file.extractedPartner ?? undefined,
+                })
+              }
+              isAiSearching={isChatLoading}
             />
           </div>
         </ScrollArea>

@@ -4,7 +4,9 @@
 import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useChat as useVercelChat } from "@ai-sdk/react";
-import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession } from "@/types/chat";
+import { doc, setDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
+import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession, ModelProvider, ChatMessage } from "@/types/chat";
 import { AutoActionNotification } from "@/types/notification";
 import { requiresConfirmation, getConfirmationDetails } from "@/lib/chat/confirmation-config";
 import { useNotifications } from "@/hooks/use-notifications";
@@ -46,7 +48,17 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const [pendingConfirmations, setPendingConfirmations] = useState<ToolCall[]>([]);
   const [activeTab, setActiveTab] = useState<ChatTab>(initialChatOpen ? "chat" : "notifications");
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("chat");
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  // Default to gemini (cheaper), fall back to anthropic if needed
+  const [modelProvider, setModelProvider] = useState<ModelProvider>("gemini");
+
+  // Track active search notification for updating when complete
+  const activeSearchRef = useRef<{
+    notificationId: string;
+    sessionId: string;
+    transactionId?: string;
+    fileId?: string;
+    workerType: "file_matching" | "partner_matching";
+  } | null>(null);
 
   // Keep searchParams in a ref to avoid dependency loops
   const searchParamsRef = useRef(searchParams);
@@ -214,16 +226,38 @@ export function ChatProvider({ children }: ChatProviderProps) {
           textContent = (msg as { content: string }).content;
         }
 
+        // Build parts array in chronological order for proper history rendering
+        const orderedParts: Array<{ type: "text"; text: string } | { type: "tool"; toolCallId: string; toolName: string }> = [];
+        if ((msg as any).parts) {
+          for (const p of (msg as any).parts) {
+            if (p.type === "text" && p.text) {
+              orderedParts.push({ type: "text", text: p.text });
+            } else if (typeof p.type === "string" && (p.type.startsWith("tool-") || p.type === "dynamic-tool")) {
+              const toolName = p.toolName || (p.type.startsWith("tool-") ? p.type.replace("tool-", "") : null);
+              // Only add unique tool calls (by toolCallId)
+              if (toolName && p.toolCallId && !orderedParts.some(part => part.type === "tool" && part.toolCallId === p.toolCallId)) {
+                orderedParts.push({ type: "tool", toolCallId: p.toolCallId, toolName });
+              }
+            }
+          }
+        }
+
         // Save message with tool invocations (only include fields with values - Firestore rejects undefined)
         const messageToSave: {
           role: "assistant";
           content: string;
+          parts?: Array<{ type: "text"; text: string } | { type: "tool"; toolCallId: string; toolName: string }>;
           toolCalls?: ToolCall[];
           toolResults?: { toolCallId: string; result: unknown }[];
         } = {
           role: "assistant",
           content: textContent,
         };
+
+        // Include parts for chronological ordering in history
+        if (orderedParts.length > 0) {
+          messageToSave.parts = orderedParts;
+        }
 
         if (toolInvocations.length > 0) {
           messageToSave.toolCalls = toolInvocations.map((t) => ({
@@ -250,6 +284,155 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
     lastSavedMessageCount.current = messages.length;
   }, [messages, isLoading, saveMessage]);
+
+  // Track previous isLoading state to detect completion
+  const wasLoadingRef = useRef(false);
+
+  // Update activity notification when search completes
+  useEffect(() => {
+    const wasLoading = wasLoadingRef.current;
+    wasLoadingRef.current = isLoading;
+
+    // Detect completion: was loading, now not loading, and we have an active search
+    if (wasLoading && !isLoading && activeSearchRef.current && user?.uid) {
+      const { notificationId, sessionId, workerType } = activeSearchRef.current;
+
+      // Build summary from messages
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const assistantMessages = (messages as any[]).filter((m) => m.role === "assistant");
+
+      // Build transcript from messages (simplified)
+      const transcript = assistantMessages.map((msg, idx) => ({
+        id: `msg_${idx}`,
+        role: "assistant" as const,
+        content: typeof msg.content === "string" ? msg.content : "",
+        createdAt: new Date(),
+      }));
+
+      let title: string;
+      let message: string;
+      let actionsPerformed = 0;
+
+      if (workerType === "file_matching") {
+        // Extract downloaded/connected files from messages
+        const downloadedFiles: string[] = [];
+        let noMatchFound = false;
+
+        for (const msg of assistantMessages) {
+          const content = typeof msg.content === "string" ? msg.content : "";
+
+          // Look for downloaded file patterns like "Downloaded and connected: filename.pdf"
+          const downloadMatch = content.match(/[Dd]ownloaded(?:\s+and\s+connected)?[:\s]+["']?([^"'\n,]+\.(?:pdf|png|jpg|jpeg|doc|docx))/gi);
+          if (downloadMatch) {
+            for (const match of downloadMatch) {
+              const fileMatch = match.match(/["']?([^"'\n,]+\.(?:pdf|png|jpg|jpeg|doc|docx))/i);
+              if (fileMatch) downloadedFiles.push(fileMatch[1].trim());
+            }
+          }
+
+          // Also check for "connected!" with filename in context
+          const connectedMatch = content.match(/connected[!.]?\s*["']?([^"'\n,]+\.(?:pdf|png|jpg|jpeg|doc|docx))/gi);
+          if (connectedMatch) {
+            for (const match of connectedMatch) {
+              const fileMatch = match.match(/["']?([^"'\n,]+\.(?:pdf|png|jpg|jpeg|doc|docx))/i);
+              if (fileMatch && !downloadedFiles.includes(fileMatch[1].trim())) {
+                downloadedFiles.push(fileMatch[1].trim());
+              }
+            }
+          }
+
+          // Check for no match scenarios
+          if (content.includes("no good match") || content.includes("No suitable") || content.includes("couldn't find") || content.includes("no results")) {
+            noMatchFound = true;
+          }
+        }
+
+        if (downloadedFiles.length > 0) {
+          title = `Found ${downloadedFiles.length} file${downloadedFiles.length > 1 ? "s" : ""}`;
+          message = `Downloaded ${downloadedFiles.join(", ")}`;
+          actionsPerformed = downloadedFiles.length;
+        } else if (noMatchFound) {
+          title = "No files found";
+          message = "No suitable matches in local files or Gmail";
+        } else {
+          title = "Search completed";
+          message = "Finished searching for receipts";
+        }
+      } else if (workerType === "partner_matching") {
+        // Extract partner assignment results from messages
+        let partnerAssigned = false;
+        let partnerName = "";
+        let noPartnerFound = false;
+
+        for (const msg of assistantMessages) {
+          const content = typeof msg.content === "string" ? msg.content : "";
+
+          // Look for partner assignment patterns
+          const assignMatch = content.match(/(?:assigned|connected|matched)\s+(?:partner\s+)?["']?([^"'\n]+?)["']?\s+(?:to|with)/i);
+          if (assignMatch) {
+            partnerAssigned = true;
+            partnerName = assignMatch[1].trim();
+          }
+
+          // Also look for "Partner: NAME assigned" or similar
+          const partnerMatch = content.match(/partner[:\s]+["']?([^"'\n,]+?)["']?\s+(?:has been\s+)?(?:assigned|connected|matched)/i);
+          if (partnerMatch && !partnerName) {
+            partnerAssigned = true;
+            partnerName = partnerMatch[1].trim();
+          }
+
+          // Check for found/created patterns
+          if (content.includes("Successfully assigned") || content.includes("created and assigned")) {
+            partnerAssigned = true;
+            // Try to extract name from context
+            const nameMatch = content.match(/["']([^"']+)["']/);
+            if (nameMatch && !partnerName) {
+              partnerName = nameMatch[1];
+            }
+          }
+
+          // Check for no match scenarios
+          if (content.includes("couldn't find") || content.includes("no matching partner") ||
+              content.includes("uncertain") || content.includes("not confident") ||
+              content.includes("unable to determine")) {
+            noPartnerFound = true;
+          }
+        }
+
+        if (partnerAssigned && partnerName) {
+          title = "Partner assigned";
+          message = `Assigned "${partnerName}"`;
+          actionsPerformed = 1;
+        } else if (partnerAssigned) {
+          title = "Partner assigned";
+          message = "Successfully matched and assigned partner";
+          actionsPerformed = 1;
+        } else if (noPartnerFound) {
+          title = "No partner found";
+          message = "Could not find a confident match";
+        } else {
+          title = "Search completed";
+          message = "Finished searching for partner";
+        }
+      } else {
+        title = "Search completed";
+        message = "Finished processing";
+      }
+
+      // Update the notification
+      updateDoc(doc(db, `users/${user.uid}/notifications`, notificationId), {
+        title,
+        message,
+        "context.workerStatus": "completed",
+        "context.sessionId": sessionId,
+        "context.actionsPerformed": actionsPerformed,
+        transcript: transcript.slice(-10), // Last 10 messages
+      }).catch((err) => console.error("Failed to update search notification:", err));
+
+      // Clear active search
+      activeSearchRef.current = null;
+    }
+  }, [isLoading, messages, user?.uid]);
 
   // UI Control Actions
   const uiActions: UIControlActions = useMemo(
@@ -334,9 +517,12 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
       // Get fresh auth headers for this request
       const headers = await getAuthHeaders();
-      await sdkSendMessage({ role: "user", content }, { headers });
+      await sdkSendMessage(
+        { role: "user", content },
+        { headers, body: { modelProvider } }
+      );
     },
-    [sdkSendMessage, saveMessage, getAuthHeaders]
+    [sdkSendMessage, saveMessage, getAuthHeaders, modelProvider]
   );
 
   // Approve tool call (for confirmation flow)
@@ -419,10 +605,41 @@ export function ChatProvider({ children }: ChatProviderProps) {
       }
 
       // Create a NEW session for this search to avoid polluting current chat
+      let sessionId = "";
       try {
-        await createPersistenceSession(`Find receipt for transaction`);
+        sessionId = await createPersistenceSession(`Find receipt for transaction`);
       } catch (err) {
         console.error("Failed to create new session for search:", err);
+      }
+
+      // Create activity notification immediately (status: running)
+      if (user?.uid && sessionId) {
+        const notificationId = `search_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        try {
+          await setDoc(doc(db, `users/${user.uid}/notifications`, notificationId), {
+            type: "worker_activity",
+            title: "Searching for receipt...",
+            message: "Looking through local files and Gmail",
+            createdAt: serverTimestamp(),
+            readAt: null,
+            context: {
+              workerType: "file_matching",
+              workerStatus: "running",
+              transactionId,
+              sessionId,
+            },
+          });
+
+          // Track this search so we can update when complete
+          activeSearchRef.current = {
+            notificationId,
+            sessionId,
+            transactionId,
+            workerType: "file_matching",
+          };
+        } catch (err) {
+          console.error("Failed to create search notification:", err);
+        }
       }
 
       // Simple prompt - the agent will use searchReceiptForTransaction to get all details
@@ -438,7 +655,219 @@ export function ChatProvider({ children }: ChatProviderProps) {
         sendMessage(prompt);
       }, 100);
     },
-    [isSidebarOpen, setMessages, sendMessage, createPersistenceSession]
+    [isSidebarOpen, setMessages, sendMessage, createPersistenceSession, user?.uid]
+  );
+
+  // Start a new partner search thread for a transaction
+  const startPartnerSearchThread = useCallback(
+    async (transactionId: string) => {
+      // Switch to chat mode and tab
+      setSidebarMode("chat");
+      setActiveTab("chat");
+
+      // Open sidebar if not open
+      if (!isSidebarOpen) {
+        setIsSidebarOpen(true);
+      }
+
+      // Create a NEW session for this search to avoid polluting current chat
+      let sessionId = "";
+      try {
+        sessionId = await createPersistenceSession(`Find partner for transaction`);
+      } catch (err) {
+        console.error("Failed to create new session for partner search:", err);
+      }
+
+      // Create activity notification immediately (status: running)
+      if (user?.uid && sessionId) {
+        const notificationId = `partner_search_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        try {
+          await setDoc(doc(db, `users/${user.uid}/notifications`, notificationId), {
+            type: "worker_activity",
+            title: "Searching for partner...",
+            message: "Looking up company information",
+            createdAt: serverTimestamp(),
+            readAt: null,
+            context: {
+              workerType: "partner_matching",
+              workerStatus: "running",
+              transactionId,
+              sessionId,
+            },
+          });
+
+          // Track this search so we can update when complete
+          activeSearchRef.current = {
+            notificationId,
+            sessionId,
+            transactionId,
+            workerType: "partner_matching",
+          };
+        } catch (err) {
+          console.error("Failed to create partner search notification:", err);
+        }
+      }
+
+      // Short prompt - system prompt has the detailed steps
+      const prompt = `Find partner for transaction ID: ${transactionId}`;
+
+      // Clear previous messages and send the search prompt
+      setMessages([]);
+      // Reset saved message counter for new session
+      lastSavedMessageCount.current = 0;
+
+      // Use setTimeout to ensure state is updated, then use wrapped sendMessage (saves to Firestore)
+      setTimeout(() => {
+        sendMessage(prompt);
+      }, 100);
+    },
+    [isSidebarOpen, setMessages, sendMessage, createPersistenceSession, user?.uid]
+  );
+
+  // Start a file partner search thread (find partner for a file based on extracted data)
+  const startFilePartnerSearchThread = useCallback(
+    async (fileId: string) => {
+      // Switch to chat mode and tab
+      setSidebarMode("chat");
+      setActiveTab("chat");
+
+      // Open sidebar if not open
+      if (!isSidebarOpen) {
+        setIsSidebarOpen(true);
+      }
+
+      // Create a NEW session for this search
+      let sessionId = "";
+      try {
+        sessionId = await createPersistenceSession(`Find partner for file`);
+      } catch (err) {
+        console.error("Failed to create new session for file partner search:", err);
+      }
+
+      // Create activity notification immediately (status: running)
+      if (user?.uid && sessionId) {
+        const notificationId = `file_partner_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        try {
+          await setDoc(doc(db, `users/${user.uid}/notifications`, notificationId), {
+            type: "worker_activity",
+            title: "Searching for partner...",
+            message: "Looking up company from file data",
+            createdAt: serverTimestamp(),
+            readAt: null,
+            context: {
+              workerType: "partner_matching",
+              workerStatus: "running",
+              fileId,
+              sessionId,
+            },
+          });
+
+          activeSearchRef.current = {
+            notificationId,
+            sessionId,
+            fileId,
+            workerType: "partner_matching",
+          };
+        } catch (err) {
+          console.error("Failed to create file partner search notification:", err);
+        }
+      }
+
+      // Short prompt - system prompt has the detailed steps
+      const prompt = `Find partner for file ID: ${fileId}`;
+
+      setMessages([]);
+      lastSavedMessageCount.current = 0;
+
+      setTimeout(() => {
+        sendMessage(prompt);
+      }, 100);
+    },
+    [isSidebarOpen, setMessages, sendMessage, createPersistenceSession, user?.uid]
+  );
+
+  // Start a file transaction search thread (find transaction for a file)
+  const startFileTransactionSearchThread = useCallback(
+    async (
+      fileId: string,
+      fileInfo?: {
+        fileName?: string;
+        amount?: number;
+        currency?: string;
+        date?: string;
+        partner?: string;
+      }
+    ) => {
+      // Switch to chat mode and tab
+      setSidebarMode("chat");
+      setActiveTab("chat");
+
+      // Open sidebar if not open
+      if (!isSidebarOpen) {
+        setIsSidebarOpen(true);
+      }
+
+      // Create a NEW session for this search
+      let sessionId = "";
+      try {
+        sessionId = await createPersistenceSession(`Find transaction for file`);
+      } catch (err) {
+        console.error("Failed to create new session for file transaction search:", err);
+      }
+
+      // Create activity notification immediately (status: running)
+      if (user?.uid && sessionId) {
+        const notificationId = `file_tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        try {
+          await setDoc(doc(db, `users/${user.uid}/notifications`, notificationId), {
+            type: "worker_activity",
+            title: "Searching for transaction...",
+            message: fileInfo?.fileName
+              ? `Looking for transaction matching "${fileInfo.fileName}"`
+              : "Looking for matching transaction",
+            createdAt: serverTimestamp(),
+            readAt: null,
+            context: {
+              workerType: "file_matching",
+              workerStatus: "running",
+              fileId,
+              sessionId,
+            },
+          });
+
+          activeSearchRef.current = {
+            notificationId,
+            sessionId,
+            fileId,
+            workerType: "file_matching",
+          };
+        } catch (err) {
+          console.error("Failed to create file transaction search notification:", err);
+        }
+      }
+
+      // Build simple user prompt with just the facts
+      const amountEur = fileInfo?.amount ? Math.abs(fileInfo.amount) / 100 : 0;
+      const amountStr = fileInfo?.amount
+        ? `${amountEur.toFixed(2)} ${fileInfo.currency || "EUR"}`
+        : "unknown amount";
+
+      const prompt = `Find matching transaction for file ID: ${fileId}
+
+File: "${fileInfo?.fileName || "Unknown"}"
+Amount: ${amountStr}${fileInfo?.date ? `
+Date: ${fileInfo.date}` : ""}${fileInfo?.partner ? `
+Partner: ${fileInfo.partner}` : ""}`;
+
+      setMessages([]);
+      lastSavedMessageCount.current = 0;
+
+      // Use setTimeout to ensure state is updated, then use wrapped sendMessage (saves to Firestore)
+      setTimeout(() => {
+        sendMessage(prompt);
+      }, 100);
+    },
+    [isSidebarOpen, setMessages, sendMessage, createPersistenceSession, user?.uid]
   );
 
   // Start conversation from a notification
@@ -518,9 +947,37 @@ export function ChatProvider({ children }: ChatProviderProps) {
         const orderedParts: Array<{ type: "text"; text: string } | { type: "tool"; toolCall: NonNullable<ChatContextValue["messages"][0]["toolCalls"]>[0] }> = [];
         let fullTextContent = "";
 
-        // Handle messages loaded from Firestore (have toolInvocations, not parts)
-        if (m.toolInvocations && m.toolInvocations.length > 0) {
-          // Add text content first
+        // Handle messages loaded from Firestore
+        // Check if we have stored parts with chronological order
+        const storedParts = m.parts as Array<{ type: string; text?: string; toolCallId?: string; toolName?: string }> | undefined;
+        const hasStoredParts = storedParts && storedParts.length > 0 && storedParts.some((p) => p.type === "tool" && p.toolCallId);
+
+        if (hasStoredParts && m.toolInvocations && m.toolInvocations.length > 0) {
+          // Use stored parts for chronological order, with tool data from toolInvocations
+          for (const p of storedParts) {
+            if (p.type === "text" && p.text) {
+              fullTextContent += p.text;
+              orderedParts.push({ type: "text", text: p.text });
+            } else if (p.type === "tool" && p.toolCallId) {
+              // Find tool data from toolInvocations
+              const ti = m.toolInvocations.find((t: { toolCallId: string }) => t.toolCallId === p.toolCallId);
+              if (ti) {
+                orderedParts.push({
+                  type: "tool",
+                  toolCall: {
+                    id: ti.toolCallId,
+                    name: ti.toolName,
+                    args: ti.args || {},
+                    result: ti.result,
+                    status: ti.state === "result" || ti.result !== undefined ? "executed" : "pending",
+                    requiresConfirmation: requiresConfirmation(ti.toolName),
+                  },
+                });
+              }
+            }
+          }
+        } else if (m.toolInvocations && m.toolInvocations.length > 0) {
+          // Legacy: no stored parts, reconstruct (text first, then all tools)
           if (m.content) {
             fullTextContent = m.content;
             orderedParts.push({ type: "text", text: m.content });
@@ -684,12 +1141,15 @@ export function ChatProvider({ children }: ChatProviderProps) {
       startConversationFromNotification,
       // Agentic search
       startSearchThread,
+      startPartnerSearchThread,
+      startFilePartnerSearchThread,
+      startFileTransactionSearchThread,
       // Sidebar mode
       sidebarMode,
       setSidebarMode,
-      // History
-      isHistoryOpen,
-      setIsHistoryOpen,
+      // Model selection
+      modelProvider,
+      setModelProvider,
     }),
     [
       messages,
@@ -712,10 +1172,13 @@ export function ChatProvider({ children }: ChatProviderProps) {
       markAllNotificationsRead,
       startConversationFromNotification,
       startSearchThread,
+      startPartnerSearchThread,
+      startFilePartnerSearchThread,
+      startFileTransactionSearchThread,
       sidebarMode,
-      isHistoryOpen,
       sessions,
       currentSessionId,
+      modelProvider,
     ]
   );
 

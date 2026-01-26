@@ -136,6 +136,7 @@ export const matchPartners = onCall<MatchPartnersRequest>(
     let autoMatched = 0;
     let withSuggestions = 0;
     const processedTransactionIds: string[] = [];
+    const autoMatchedPartnerIds = new Set<string>(); // Track partners for file matching
 
     let batch = db.batch();
     let batchCount = 0;
@@ -212,6 +213,11 @@ export const matchPartners = onCall<MatchPartnersRequest>(
           updates.partnerMatchConfidence = topMatch.confidence;
           updates.partnerMatchedBy = "auto";
           autoMatched++;
+
+          // Track partner for file matching (only user partners can have files)
+          if (assignedPartnerType === "user") {
+            autoMatchedPartnerIds.add(assignedPartnerId);
+          }
         } else {
           withSuggestions++;
         }
@@ -271,6 +277,31 @@ export const matchPartners = onCall<MatchPartnersRequest>(
         );
       } catch (err) {
         console.error("Failed to chain category matching:", err);
+      }
+    }
+
+    // Chain file matching for auto-matched partners
+    // This finds receipts/files for transactions that just got partner-matched
+    if (autoMatchedPartnerIds.size > 0) {
+      console.log(`Chaining file matching for ${autoMatchedPartnerIds.size} partners`);
+
+      try {
+        const { matchFilesForPartnerInternal } = await import("./matchFilesForPartner");
+
+        for (const partnerId of autoMatchedPartnerIds) {
+          try {
+            const fileResult = await matchFilesForPartnerInternal(userId, partnerId);
+            if (fileResult.autoMatched > 0 || fileResult.suggested > 0) {
+              console.log(
+                `File matching for partner ${partnerId}: ${fileResult.autoMatched} auto-matched, ${fileResult.suggested} suggested`
+              );
+            }
+          } catch (err) {
+            console.error(`Failed to chain file matching for partner ${partnerId}:`, err);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to import matchFilesForPartnerInternal:", err);
       }
     }
 

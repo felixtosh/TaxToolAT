@@ -112,6 +112,14 @@ export interface MatchPattern {
 
   /** Confidence score (0-100) */
   confidence: number;
+
+  /**
+   * Exclusion patterns - if any of these match, the main pattern is ignored.
+   * Example: pattern="*google*" with exclude=["*google*ads*"] matches "Google Cloud" but not "Google Ads".
+   * Note: Better-matching partners with higher confidence should naturally win;
+   * exclusions are for edge cases where that doesn't work.
+   */
+  exclude?: string[];
 }
 
 /**
@@ -312,6 +320,12 @@ export interface UserPartner {
 
   /** VAT identification number */
   vatId?: string;
+
+  /** Whether VAT ID was verified via EU VIES service */
+  viesVerified?: boolean;
+
+  /** When VAT ID was verified via VIES */
+  viesVerifiedAt?: Timestamp;
 
   /** Known IBANs */
   ibans: string[];

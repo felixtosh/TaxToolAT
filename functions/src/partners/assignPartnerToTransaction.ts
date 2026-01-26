@@ -80,6 +80,53 @@ export const assignPartnerToTransactionCallable = createCallable<
       matchedBy,
     });
 
+    // Trigger pattern learning for user/AI assignments
+    // Manual, suggestion clicks, and AI assignments should inform pattern learning
+    if ((matchedBy === "manual" || matchedBy === "suggestion" || matchedBy === "ai") && partnerType === "user") {
+      try {
+        const { learnPatternsForPartnersBatch } = await import("../matching/learnPartnerPatterns");
+        // Run pattern learning in background (don't await)
+        learnPatternsForPartnersBatch(ctx.userId, [partnerId])
+          .then((results) => {
+            console.log(`[assignPartnerToTransaction] Pattern learning completed:`, results);
+          })
+          .catch((err) => {
+            console.error(`[assignPartnerToTransaction] Pattern learning failed:`, err);
+          });
+      } catch (err) {
+        console.error(`[assignPartnerToTransaction] Failed to start pattern learning:`, err);
+      }
+    }
+
+    // Trigger receipt search if transaction has no files attached
+    // This runs in background and creates a worker request for the frontend to process
+    const hasFiles = txData.fileIds && txData.fileIds.length > 0;
+    const previousPartnerId = txData.partnerId;
+    const partnerChanged = previousPartnerId !== partnerId;
+
+    if (!hasFiles && (partnerChanged || !previousPartnerId)) {
+      try {
+        const { queueReceiptSearchForTransaction } = await import(
+          "../workers/runReceiptSearchForTransaction"
+        );
+
+        // Queue receipt search in background (don't await)
+        queueReceiptSearchForTransaction({
+          transactionId,
+          userId: ctx.userId,
+          partnerId,
+        })
+          .then((result) => {
+            console.log(`[assignPartnerToTransaction] Receipt search queued:`, result);
+          })
+          .catch((err) => {
+            console.error(`[assignPartnerToTransaction] Receipt search queue failed:`, err);
+          });
+      } catch (err) {
+        console.error(`[assignPartnerToTransaction] Failed to queue receipt search:`, err);
+      }
+    }
+
     return { success: true };
   }
 );

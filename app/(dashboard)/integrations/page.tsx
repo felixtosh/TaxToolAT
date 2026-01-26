@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import {
   Mail,
@@ -32,6 +32,7 @@ import { EmailIntegration } from "@/types/email-integration";
 
 function IntegrationsContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const extension = useBrowserExtensionStatus();
   const {
     integrations,
@@ -40,6 +41,20 @@ function IntegrationsContent() {
     connectGmail,
     refresh,
   } = useEmailIntegrations();
+
+  // Broadcast Gmail reconnection to other tabs (e.g., chat)
+  useEffect(() => {
+    const success = searchParams.get("success");
+    if (success === "reconnected" || success === "tokens_updated" || success === "connected") {
+      // Write to localStorage to notify other tabs
+      localStorage.setItem("gmail_reconnected", JSON.stringify({
+        status: success,
+        timestamp: Date.now(),
+      }));
+      // Clean up URL params
+      router.replace("/integrations", { scroll: false });
+    }
+  }, [searchParams, router]);
   const {
     loading: inboundLoading,
     error: inboundError,

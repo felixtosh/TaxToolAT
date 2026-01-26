@@ -444,9 +444,11 @@ export const searchGmailCallable = onCall<
       const attachments = extractAttachments(msg);
       const subject = extractHeader(msg, "Subject") || "(No Subject)";
       const snippet = msg.snippet || "";
+      const bodyText = extractBodyText(msg);
 
       // Classify email to determine type (mail invoice, invoice link, has PDF)
-      const classification = classifyEmail(subject, snippet, attachments);
+      // Include bodyText for better classification of mail invoices
+      const classification = classifyEmail(subject, snippet, attachments, bodyText);
 
       return {
         messageId: msg.id,
@@ -456,7 +458,7 @@ export const searchGmailCallable = onCall<
         fromName,
         date: new Date(parseInt(msg.internalDate, 10)).toISOString(),
         snippet,
-        bodyText: extractBodyText(msg),
+        bodyText,
         attachments: attachments.map((att) => {
           const key = `${msg.id}:${att.attachmentId}`;
           return {

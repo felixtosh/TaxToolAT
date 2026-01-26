@@ -113,7 +113,7 @@ export function ReceiptLostDialog({
             <span
               className={cn(
                 "font-medium",
-                transaction.amount < 0 ? "text-red-600" : "text-green-600"
+                transaction.amount < 0 ? "text-amount-negative" : "text-amount-positive"
               )}
             >
               {formatAmount(transaction.amount, transaction.currency)}

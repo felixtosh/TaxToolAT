@@ -39,14 +39,19 @@ function DataTableInner<TData extends { id: string }>(
 ) {
   // Type guard to check if row is a transaction
   const isTransactionRow = (row: TData): row is TData & Transaction => {
-    return "description" in row || "isComplete" in row;
+    return "description" in row || "fileIds" in row;
+  };
+
+  // Compute completion status from fileIds and noReceiptCategoryId (no stored field needed)
+  const isRowComplete = (row: TData & Transaction): boolean => {
+    return (row.fileIds && row.fileIds.length > 0) || !!row.noReceiptCategoryId;
   };
 
   // Get row className based on completion status
   const getRowClassName = React.useCallback(
     (row: TData, isSelected: boolean) => {
-      if (isTransactionRow(row) && row.isComplete && !isSelected) {
-        return "bg-green-50/70 hover:bg-green-100/70 dark:bg-green-950/20 dark:hover:bg-green-950/30";
+      if (isTransactionRow(row) && isRowComplete(row) && !isSelected) {
+        return "bg-[#d9ffb2] hover:bg-[#c9f59f] dark:bg-green-950/20 dark:hover:bg-green-950/30";
       }
       return "";
     },

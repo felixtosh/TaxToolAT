@@ -52,7 +52,7 @@ function KennzahlRow({
       <span
         className={cn(
           "font-mono text-sm tabular-nums",
-          isTotal && (isPositiveBalance ? "text-red-600" : "text-green-600")
+          isTotal && (isPositiveBalance ? "text-amount-negative" : "text-amount-positive")
         )}
       >
         {displayAmount !== 0 ? formatAmount(displayAmount) : "-"} EUR
@@ -254,7 +254,7 @@ export function UVAPreview({ report, period, country }: UVAPreviewProps) {
           <p
             className={cn(
               "text-2xl font-bold",
-              report.vatBalance >= 0 ? "text-red-600" : "text-green-600"
+              report.vatBalance >= 0 ? "text-amount-negative" : "text-amount-positive"
             )}
           >
             {formatAmount(Math.abs(report.vatBalance))} EUR

@@ -4,6 +4,22 @@
  *
  * Triggered when a file's extraction completes.
  * Scores potential transaction matches and creates auto-connections.
+ *
+ * WORKER INTEGRATION NOTE:
+ * This trigger can be replaced with a worker-based approach that:
+ * 1. Uses LangGraph agent with search tools
+ * 2. Searches both local files AND Gmail for matches
+ * 3. Creates activity log with full reasoning transcript
+ *
+ * To enable worker-based matching:
+ * 1. Set user preference or feature flag
+ * 2. Call triggerFileMatchingWorkerCallable instead of runTransactionMatching
+ * 3. Worker creates notification with transcript in users/{userId}/notifications
+ *
+ * The worker approach is implemented in:
+ * - lib/agent/worker-graph.ts (LangGraph worker)
+ * - app/api/worker/route.ts (API endpoint)
+ * - hooks/use-worker.ts (frontend hook)
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.matchFileTransactions = void 0;
@@ -14,6 +30,76 @@ const transactionScoring_1 = require("./transactionScoring");
 const db = (0, firestore_2.getFirestore)();
 // Use shared config
 const CONFIG = transactionScoring_1.SCORING_CONFIG;
+// === Transcript Builder ===
+/**
+ * Build a synthetic transcript that shows what the matching process did.
+ * This gives users visibility into the matching logic without requiring
+ * the full LangGraph worker.
+ */
+function buildMatchingTranscript(fileData, fileId, candidateCount, matches, autoMatches, suggestions, elapsedMs) {
+    const messages = [];
+    const now = firestore_2.Timestamp.now();
+    let msgIndex = 0;
+    const addMessage = (content) => {
+        messages.push({
+            id: `msg_${msgIndex++}`,
+            role: "assistant",
+            content,
+            createdAt: now,
+        });
+    };
+    // Step 1: File info
+    const fileAmount = fileData.extractedAmount != null
+        ? `${(fileData.extractedAmount / 100).toFixed(2)} EUR`
+        : "unknown";
+    const fileDate = fileData.extractedDate
+        ? fileData.extractedDate.toDate().toISOString().split("T")[0]
+        : "unknown";
+    const filePartner = fileData.extractedPartner || fileData.partnerName || "unknown";
+    addMessage(`Searching for matches for **${fileData.fileName || fileId}**\n` +
+        `- Amount: ${fileAmount}\n` +
+        `- Date: ${fileDate}\n` +
+        `- Partner: ${filePartner}`);
+    // Step 2: Search scope
+    addMessage(`Scanning ${candidateCount} candidate transactions...`);
+    // Step 3: Results
+    if (matches.length === 0) {
+        addMessage(`No matches found above 50% confidence threshold.`);
+    }
+    else {
+        // Show top matches
+        const topMatches = matches.slice(0, 3);
+        let matchList = topMatches.map((m) => {
+            const txAmount = (m.preview.amount / 100).toFixed(2);
+            const txDate = m.preview.date.toDate().toISOString().split("T")[0];
+            return `- **${m.confidence}%** - ${m.preview.name} (${txAmount} EUR, ${txDate})`;
+        }).join("\n");
+        if (matches.length > 3) {
+            matchList += `\n- ... and ${matches.length - 3} more`;
+        }
+        addMessage(`Found ${matches.length} potential matches:\n${matchList}`);
+    }
+    // Step 4: Actions taken
+    if (autoMatches.length > 0) {
+        const connectedList = autoMatches.map((m) => {
+            const txAmount = (m.preview.amount / 100).toFixed(2);
+            return `- ${m.preview.name} (${txAmount} EUR) - ${m.confidence}% confidence`;
+        }).join("\n");
+        addMessage(`**Auto-connected ${autoMatches.length} transaction${autoMatches.length !== 1 ? "s" : ""}:**\n${connectedList}`);
+    }
+    if (suggestions.length > autoMatches.length) {
+        const suggestionCount = suggestions.length - autoMatches.length;
+        addMessage(`${suggestionCount} suggestion${suggestionCount !== 1 ? "s" : ""} saved for your review (50-84% confidence).`);
+    }
+    // Step 5: Summary
+    const summary = autoMatches.length > 0
+        ? `Done! Matched ${autoMatches.length} transaction${autoMatches.length !== 1 ? "s" : ""} in ${elapsedMs}ms.`
+        : suggestions.length > 0
+            ? `Done! ${suggestions.length} suggestion${suggestions.length !== 1 ? "s" : ""} ready for review.`
+            : `Done! No suitable matches found.`;
+    addMessage(summary);
+    return messages;
+}
 // === Email Domain Learning ===
 /**
  * Learn email domain from successful auto-match.
@@ -327,30 +413,101 @@ async function runTransactionMatching(fileId, fileData) {
     const elapsed = Date.now() - t0;
     console.log(`[TxMatch] Complete for ${fileData.fileName || fileId}: ` +
         `${autoMatches.length} auto-matched, ${suggestions.length} suggestions (${elapsed}ms)`);
-    // Create notification if matches found
+    // Create notification with transcript if matches found
     if (autoMatches.length > 0 || suggestions.length > 0) {
         try {
+            // Build synthetic transcript showing what the matching process did
+            const transcript = buildMatchingTranscript(fileData, fileId, candidateCount, matches, autoMatches, suggestions, elapsed);
             await db.collection(`users/${userId}/notifications`).add({
-                type: "file_transaction_match",
+                type: "worker_activity",
                 title: autoMatches.length > 0
-                    ? `Matched ${autoMatches.length} transaction${autoMatches.length !== 1 ? "s" : ""} to file`
+                    ? `Matched file to ${autoMatches.length} transaction${autoMatches.length !== 1 ? "s" : ""}`
                     : `Found ${suggestions.length} transaction suggestion${suggestions.length !== 1 ? "s" : ""}`,
                 message: autoMatches.length > 0
-                    ? `Your uploaded file was automatically matched to ${autoMatches.length} transaction${autoMatches.length !== 1 ? "s" : ""}.${suggestions.length > autoMatches.length ? ` Review ${suggestions.length - autoMatches.length} more suggestions.` : ""}`
-                    : `Found potential transaction matches for your uploaded file. Please review and confirm.`,
+                    ? `${fileData.fileName || "Your file"} was automatically matched.`
+                    : `Found potential matches for ${fileData.fileName || "your file"}. Please review.`,
                 createdAt: firestore_2.FieldValue.serverTimestamp(),
                 readAt: null,
                 context: {
+                    workerType: "file_matching",
+                    workerStatus: "completed",
+                    actionsPerformed: autoMatches.length,
                     fileId,
-                    autoMatchCount: autoMatches.length,
-                    suggestionCount: suggestions.length,
                 },
+                transcript,
             });
         }
         catch (err) {
             console.error("Failed to create notification:", err);
         }
     }
+    // Queue agentic worker when rule-based matching didn't auto-connect
+    // Matching files to transactions is critical - every file needs this treatment
+    // The agent can try smarter strategies (currency conversion, Gmail search, etc.)
+    if (autoMatches.length === 0) {
+        const topSuggestionConfidence = suggestions[0]?.confidence || 0;
+        try {
+            await queueAgenticTransactionSearch(userId, fileId, fileData, topSuggestionConfidence);
+        }
+        catch (err) {
+            console.error(`[TxMatch] Failed to queue agentic search for file ${fileId}:`, err);
+        }
+    }
+}
+/**
+ * Queue an agentic transaction search worker when rule-based matching is uncertain.
+ * The agent can reason about currency conversion, search Gmail, and make smarter matches.
+ */
+async function queueAgenticTransactionSearch(userId, fileId, fileData, topSuggestionConfidence) {
+    // Build prompt with file info for the worker
+    const fileInfo = {
+        fileName: fileData.fileName || "Unknown",
+        amount: fileData.extractedAmount,
+        currency: fileData.extractedCurrency || "EUR",
+        date: fileData.extractedDate?.toDate?.()?.toISOString?.()?.split("T")[0],
+        partner: fileData.extractedPartner || fileData.partnerName,
+    };
+    const promptParts = [
+        `Find matching transaction for file "${fileInfo.fileName}"`,
+    ];
+    if (topSuggestionConfidence > 0) {
+        promptParts.push(`Rule-based matching found suggestions but no confident match (top: ${topSuggestionConfidence}%)`);
+    }
+    else {
+        promptParts.push(`Rule-based matching found no suggestions - search broadly`);
+    }
+    if (fileInfo.amount) {
+        const amountStr = (fileInfo.amount / 100).toFixed(2);
+        promptParts.push(`Amount: ${amountStr} ${fileInfo.currency}`);
+        // Hint about currency conversion if non-EUR
+        if (fileInfo.currency !== "EUR") {
+            promptParts.push(`Note: Amount is in ${fileInfo.currency}, bank transactions are in EUR - check exchange rates`);
+        }
+    }
+    if (fileInfo.date) {
+        promptParts.push(`Date: ${fileInfo.date}`);
+    }
+    if (fileInfo.partner) {
+        promptParts.push(`Partner: ${fileInfo.partner}`);
+    }
+    const initialPrompt = promptParts.join(". ");
+    // Create worker request for frontend/worker processor to pick up
+    const requestRef = db.collection(`users/${userId}/workerRequests`).doc();
+    await requestRef.set({
+        id: requestRef.id,
+        workerType: "file_matching",
+        initialPrompt,
+        triggerContext: {
+            fileId,
+            topSuggestionConfidence,
+            triggeredAfterRuleBasedMatch: true,
+        },
+        triggeredBy: "auto",
+        status: "pending",
+        createdAt: firestore_2.Timestamp.now(),
+    });
+    console.log(`[TxMatch] Queued agentic search for file ${fileId} (worker request ${requestRef.id}, ` +
+        `top suggestion: ${topSuggestionConfidence}%)`);
 }
 // === Helper: Check for manual transaction connections ===
 async function hasManualTransactionConnections(fileId) {

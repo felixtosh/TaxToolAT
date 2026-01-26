@@ -37,7 +37,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const userId = await getServerUserIdWithFallback(request);
-    const body = await request.json().catch(() => ({}));
+    const body = await request.json().catch((err) => {
+      console.warn("[email-inbound] Failed to parse request body:", err);
+      return {};
+    });
     const { displayName, allowedDomains, dailyLimit } = body;
 
     const ctx = { db, userId };

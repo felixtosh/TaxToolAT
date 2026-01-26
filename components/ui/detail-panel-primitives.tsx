@@ -47,12 +47,12 @@ export function PanelHeader({
   children,
 }: PanelHeaderProps) {
   return (
-    <div className="flex items-center justify-between py-3 border-b px-4">
-      <h2 className="text-lg font-semibold flex items-center gap-2">
-        {icon}
-        {title}
+    <div className="flex items-center justify-between gap-2 py-3 border-b px-4">
+      <h2 className="text-lg font-semibold flex items-center gap-2 min-w-0 flex-1">
+        {icon && <span className="shrink-0">{icon}</span>}
+        <span className="truncate">{title}</span>
       </h2>
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 shrink-0">
         {children}
         {onNavigatePrevious && (
           <Button

@@ -13,10 +13,11 @@ import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import { FieldRow } from "@/components/ui/detail-panel-primitives";
 import { usePartnerSuggestions, useAssignedPartner } from "@/hooks/use-partner-suggestions";
-import { Plus, ExternalLink, Loader2 } from "lucide-react";
+import { Plus, ExternalLink, Loader2, Search } from "lucide-react";
 import { ShowMoreButton } from "@/components/ui/show-more-button";
 import { cn } from "@/lib/utils";
 import { functions } from "@/lib/firebase/config";
+import { useChat } from "@/components/chat/chat-provider";
 
 interface TransactionDetailsProps {
   transaction: Transaction;
@@ -48,6 +49,9 @@ export function TransactionDetails({
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
   const matchedTransactionIds = useRef<Set<string>>(new Set());
+
+  // Chat hook for agentic partner search
+  const { startPartnerSearchThread, isLoading: isChatLoading } = useChat();
 
   // Get partner suggestions and assigned partner (all from server-side data)
   const suggestions = usePartnerSuggestions(transaction, userPartners, globalPartners);
@@ -214,7 +218,26 @@ export function TransactionDetails({
 
       {/* Partner section */}
       <div className="border-t pt-3 mt-3 -mx-4 px-4" data-onboarding="partner-section">
-        <h3 className="text-sm font-medium mb-2">Partner</h3>
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-medium">Partner</h3>
+          {/* Show search button only when no partner assigned */}
+          {!assignedPartner && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => startPartnerSearchThread(transaction.id)}
+              disabled={isChatLoading}
+              title="Search for partner"
+            >
+              {isChatLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Search className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          )}
+        </div>
 
         <FieldRow label="Connect" labelWidth="w-32">
           {assignedPartner ? (

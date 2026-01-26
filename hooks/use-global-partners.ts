@@ -24,7 +24,7 @@ const GLOBAL_PARTNERS_COLLECTION = "globalPartners";
  * Hook for managing global partners (admin functionality)
  */
 export function useGlobalPartners() {
-  const { userId } = useAuth();
+  const { userId, isAdmin } = useAuth();
   const [globalPartners, setGlobalPartners] = useState<GlobalPartner[]>([]);
   const [promotionCandidates, setPromotionCandidates] = useState<PromotionCandidate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,15 +84,16 @@ export function useGlobalPartners() {
     return () => unsubscribe();
   }, []);
 
-  // Load promotion candidates
+  // Load promotion candidates (admin only)
   const loadPromotionCandidates = useCallback(async () => {
+    if (!isAdmin) return; // Only admins can read promotion candidates
     try {
       const candidates = await listPromotionCandidates(ctx);
       setPromotionCandidates(candidates);
     } catch (err) {
       console.error("Error loading promotion candidates:", err);
     }
-  }, [ctx]);
+  }, [ctx, isAdmin]);
 
   useEffect(() => {
     loadPromotionCandidates();

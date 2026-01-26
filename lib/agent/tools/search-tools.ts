@@ -100,6 +100,14 @@ interface GmailMessageResult {
   snippet: string;
   bodyText: string | null;
   attachments: GmailAttachmentResult[];
+  /** Server-computed classification (includes bodyText analysis) */
+  classification?: {
+    hasPdfAttachment: boolean;
+    possibleMailInvoice: boolean;
+    possibleInvoiceLink: boolean;
+    confidence: number;
+    matchedKeywords?: string[];
+  };
 }
 
 interface SearchGmailResponse {
@@ -276,6 +284,7 @@ export const searchLocalFilesTool = tool(
 
     const tx = txDoc.data()!;
     const txDate = tx.date?.toDate?.() || new Date(tx.date);
+    const rejectedFileIds = new Set<string>(tx.rejectedFileIds || []);
 
     // Get partner info if available
     let partner = null;
@@ -301,6 +310,7 @@ export const searchLocalFilesTool = tool(
       fileType: string;
       deletedAt?: unknown;
       extractedAmount?: number;
+      extractedCurrency?: string;
       extractedDate?: { toDate?: () => Date };
       extractedPartner?: string;
     }
@@ -351,8 +361,10 @@ export const searchLocalFilesTool = tool(
       fileId: string;
       fileName: string;
       extractedAmount?: number;
+      extractedCurrency?: string;
       extractedDate?: string;
       extractedPartner?: string;
+      isRejected?: boolean;
     }> = [];
 
     try {
@@ -406,9 +418,12 @@ export const searchLocalFilesTool = tool(
             scoreReasons: scoreResult.reasons,
             fileId: file.id,
             fileName: file.fileName,
-            extractedAmount: file.extractedAmount ?? undefined,
+            // Convert from cents to whole units for display
+            extractedAmount: file.extractedAmount != null ? file.extractedAmount / 100 : undefined,
+            extractedCurrency: file.extractedCurrency || "EUR",
             extractedDate: file.extractedDate?.toDate?.()?.toISOString() ?? undefined,
             extractedPartner: file.extractedPartner ?? undefined,
+            isRejected: rejectedFileIds.has(file.id),
           });
         }
       }
@@ -536,19 +551,60 @@ export const searchGmailAttachmentsTool = tool(
         };
       });
 
-    // Build search queries
-    const searchQueries: string[] = [];
+    // Build search queries with variations (matching UI behavior)
+    const searchQueriesSet = new Set<string>();
+
+    const addQueryVariations = (baseQuery: string) => {
+      if (!baseQuery || baseQuery.trim().length < 2) return;
+
+      const cleaned = baseQuery.trim();
+      searchQueriesSet.add(cleaned);
+
+      // Add first word only (for compound names like "autotrading school" -> "autotrading")
+      const words = cleaned.split(/\s+/).filter(w => w.length > 2);
+      if (words.length > 1) {
+        searchQueriesSet.add(words[0]);
+      }
+
+      // Add without spaces for concatenated names
+      if (cleaned.includes(" ")) {
+        searchQueriesSet.add(cleaned.replace(/\s+/g, ""));
+      }
+
+      // Add from: prefix if it looks like a domain or email
+      const isDomain = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(cleaned);
+      const isEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cleaned);
+      if (isDomain || isEmail) {
+        searchQueriesSet.add(`from:${cleaned}`);
+      }
+    };
+
     if (query) {
-      searchQueries.push(query);
+      addQueryVariations(query);
     } else {
       // Auto-generate queries based on transaction
       const partnerName = tx.partner || tx.name;
       if (partnerName) {
-        searchQueries.push(partnerName);
-        searchQueries.push(`${partnerName} rechnung`);
-        searchQueries.push(`${partnerName} invoice`);
+        // Clean bank transaction names (remove prefixes like "Tbl*", truncation indicators)
+        const cleanedPartner = partnerName
+          .replace(/^(Tbl\*|To |From |SEPA |Überweisung |Lastschrift )/i, "")
+          .replace(/\.{3}$/, "") // Remove trailing ...
+          .trim();
+
+        addQueryVariations(cleanedPartner);
+        searchQueriesSet.add(`${cleanedPartner} rechnung`);
+        searchQueriesSet.add(`${cleanedPartner} invoice`);
+      }
+
+      // Add partner email domains if available (high-value searches)
+      if (partner?.emailDomains && Array.isArray(partner.emailDomains)) {
+        for (const domain of partner.emailDomains.slice(0, 3)) {
+          searchQueriesSet.add(`from:${domain}`);
+        }
       }
     }
+
+    const searchQueries = Array.from(searchQueriesSet);
 
     const allCandidates: Array<{
       id: string;
@@ -568,6 +624,9 @@ export const searchGmailAttachmentsTool = tool(
         possibleMailInvoice: boolean;
         possibleInvoiceLink: boolean;
       };
+      /** If already downloaded, the existing file ID */
+      alreadyDownloaded?: boolean;
+      existingFileId?: string;
     }> = [];
 
     for (const integrationDoc of integrationsSnapshot.docs) {
@@ -609,6 +668,8 @@ export const searchGmailAttachmentsTool = tool(
             _attachmentId?: string;
             _classification: ReturnType<typeof classifyEmail>;
             _sourceType: "gmail_attachment" | "gmail_email";
+            _alreadyDownloaded?: boolean;
+            _existingFileId?: string;
           }> = [];
 
           for (const message of messages) {
@@ -629,11 +690,6 @@ export const searchGmailAttachmentsTool = tool(
 
             // Collect PDF attachments for scoring
             for (const attachment of message.attachments || []) {
-              // Skip already imported attachments
-              if (attachment.existingFileId) {
-                continue;
-              }
-
               // Only include PDFs - images are usually logos/signatures, not receipts
               const isPdf = attachment.mimeType === "application/pdf" ||
                 (attachment.mimeType === "application/octet-stream" &&
@@ -641,6 +697,9 @@ export const searchGmailAttachmentsTool = tool(
               if (!isPdf) {
                 continue;
               }
+
+              // Mark already-downloaded attachments (don't skip them)
+              const alreadyDownloaded = !!attachment.existingFileId;
 
               attachmentsToScore.push({
                 key: `gmail_${message.messageId}_${attachment.attachmentId}`,
@@ -656,6 +715,8 @@ export const searchGmailAttachmentsTool = tool(
                 _attachmentId: attachment.attachmentId,
                 _classification: classification,
                 _sourceType: "gmail_attachment",
+                _alreadyDownloaded: alreadyDownloaded,
+                _existingFileId: attachment.existingFileId || undefined,
               });
             }
 
@@ -715,14 +776,20 @@ export const searchGmailAttachmentsTool = tool(
               for (const att of attachmentsToScore) {
                 const scoreResult = scoreMap.get(att.key);
                 if (scoreResult) {
+                  // Build reasons, adding "Already downloaded" if applicable
+                  const reasons = att._sourceType === "gmail_email"
+                    ? [...scoreResult.reasons, "Possible mail invoice"]
+                    : scoreResult.reasons;
+                  if (att._alreadyDownloaded) {
+                    reasons.unshift("✓ Already downloaded");
+                  }
+
                   allCandidates.push({
                     id: att.key,
                     sourceType: att._sourceType,
                     score: scoreResult.score,
                     scoreLabel: scoreResult.label,
-                    scoreReasons: att._sourceType === "gmail_email"
-                      ? [...scoreResult.reasons, "Possible mail invoice"]
-                      : scoreResult.reasons,
+                    scoreReasons: reasons,
                     messageId: att._messageId,
                     attachmentId: att._attachmentId,
                     attachmentFilename: att.filename,
@@ -731,6 +798,8 @@ export const searchGmailAttachmentsTool = tool(
                     emailDate: att.emailDate,
                     integrationId: att.integrationId,
                     classification: att._classification,
+                    alreadyDownloaded: att._alreadyDownloaded,
+                    existingFileId: att._existingFileId,
                   });
                 }
               }
@@ -759,6 +828,19 @@ export const searchGmailAttachmentsTool = tool(
     });
 
     const topCandidates = dedupedCandidates.slice(0, 15);
+    const alreadyDownloadedCount = dedupedCandidates.filter((c) => c.alreadyDownloaded).length;
+
+    // Build summary
+    let summary: string;
+    if (dedupedCandidates.length > 0) {
+      const topInfo = `Top: "${topCandidates[0]?.attachmentFilename || topCandidates[0]?.emailSubject}" (${topCandidates[0]?.score}%)`;
+      const downloadedInfo = alreadyDownloadedCount > 0
+        ? ` (${alreadyDownloadedCount} already downloaded)`
+        : "";
+      summary = `Searched "${searchQueries.join('", "')}" - Found ${dedupedCandidates.length} attachments${downloadedInfo}. ${topInfo}`;
+    } else {
+      summary = `Searched "${searchQueries.join('", "')}" - No attachments found`;
+    }
 
     return {
       searchType: "gmail_attachments",
@@ -770,23 +852,27 @@ export const searchGmailAttachmentsTool = tool(
         date: txDate.toISOString(),
       },
       queriesUsed: searchQueries,
-      summary:
-        dedupedCandidates.length > 0
-          ? `Searched "${searchQueries.join('", "')}" - Found ${dedupedCandidates.length} attachments. Top: "${topCandidates[0]?.attachmentFilename || topCandidates[0]?.emailSubject}" (${topCandidates[0]?.score}%)`
-          : `Searched "${searchQueries.join('", "')}" - No attachments found`,
+      summary,
       candidates: topCandidates.map((c) => ({
         ...c,
         scoreDetails: `${c.score}% - ${c.scoreReasons?.join(", ") || "no reasons"}`,
       })),
       totalFound: dedupedCandidates.length,
+      alreadyDownloadedCount,
       integrationCount: integrationsSnapshot.size,
       integrationsNeedingReauth: integrationsNeedingReauth.length > 0 ? integrationsNeedingReauth : undefined,
     };
   },
   {
     name: "searchGmailAttachments",
-    description:
-      "Search Gmail for email attachments that might be receipts for a transaction. Returns emails with attachments and classification. Does NOT download.",
+    description: `Search Gmail for email attachments that might be receipts for a transaction.
+
+Returns candidates with scores. Each candidate includes:
+- alreadyDownloaded: true if this attachment was previously downloaded
+- existingFileId: the file ID if already downloaded (can be connected directly)
+
+If a high-scoring candidate is alreadyDownloaded, use connectFileToTransaction with existingFileId.
+If not downloaded, use downloadGmailAttachment to download it first.`,
     schema: z.object({
       transactionId: z.string().describe("The transaction ID to find attachments for"),
       query: z
@@ -798,11 +884,384 @@ export const searchGmailAttachmentsTool = tool(
 );
 
 // ============================================================================
+// Search Gmail Emails (broader email search with classification)
+// ============================================================================
+
+export const searchGmailEmailsTool = tool(
+  async ({ query, transactionId, dateFrom, dateTo, from, limit }, config) => {
+    const userId = config?.configurable?.userId;
+    const authHeader = config?.configurable?.authHeader;
+
+    if (!userId) {
+      return { error: "User ID not provided" };
+    }
+
+    // Get transaction context if provided (for scoring)
+    let tx = null;
+    let partner = null;
+    if (transactionId) {
+      const txDoc = await db.collection("transactions").doc(transactionId).get();
+      if (txDoc.exists && txDoc.data()?.userId === userId) {
+        tx = txDoc.data();
+        if (tx?.partnerId) {
+          const partnerDoc = await db.collection("partners").doc(tx.partnerId).get();
+          if (partnerDoc.exists) {
+            partner = partnerDoc.data();
+          }
+        }
+      }
+    }
+
+    // Get Gmail integrations
+    const integrationsSnapshot = await db
+      .collection("emailIntegrations")
+      .where("userId", "==", userId)
+      .where("provider", "==", "gmail")
+      .where("isActive", "==", true)
+      .get();
+
+    if (integrationsSnapshot.empty) {
+      return {
+        searchType: "gmail_emails",
+        query: query || "",
+        gmailNotConnected: true,
+        error: "Gmail is not connected. Connect Gmail to search emails.",
+        emails: [],
+        totalFound: 0,
+        integrationCount: 0,
+      };
+    }
+
+    // Check for integrations needing reauth
+    const integrationsNeedingReauth = integrationsSnapshot.docs
+      .filter((doc) => {
+        const data = doc.data();
+        return data.needsReauth === true;
+      })
+      .map((doc) => {
+        const data = doc.data();
+        return {
+          integrationId: doc.id,
+          email: data.email,
+          needsReauth: true,
+        };
+      });
+
+    const allEmails: Array<{
+      messageId: string;
+      threadId: string;
+      subject: string;
+      from: string;
+      fromName: string | null;
+      date: string;
+      snippet: string;
+      bodyText: string | null;
+      integrationId: string;
+      integrationEmail?: string;
+      attachmentCount: number;
+      classification: {
+        hasPdfAttachment: boolean;
+        possibleMailInvoice: boolean;
+        possibleInvoiceLink: boolean;
+        confidence: number;
+        matchedKeywords?: string[];
+      };
+    }> = [];
+
+    for (const integrationDoc of integrationsSnapshot.docs) {
+      const integration = integrationDoc.data();
+
+      try {
+        const searchResponse = await callFirebaseFunction<SearchGmailRequest, SearchGmailResponse>(
+          "searchGmailCallable",
+          {
+            integrationId: integrationDoc.id,
+            query,
+            dateFrom,
+            dateTo,
+            from,
+            hasAttachments: false, // Get all emails, not just those with attachments
+            expandThreads: true,
+            limit: limit || 30,
+          },
+          authHeader
+        );
+
+        const messages = searchResponse?.messages || [];
+
+        for (const message of messages) {
+          // Use server-computed classification (includes bodyText analysis)
+          // Fallback to basic classification if server didn't provide one
+          const classification = message.classification || {
+            hasPdfAttachment: message.attachments?.some((a) => a.mimeType === "application/pdf") || false,
+            possibleMailInvoice: false,
+            possibleInvoiceLink: false,
+            confidence: 20,
+            matchedKeywords: [],
+          };
+
+          allEmails.push({
+            messageId: message.messageId,
+            threadId: message.threadId,
+            subject: message.subject,
+            from: message.from,
+            fromName: message.fromName,
+            date: message.date,
+            snippet: message.snippet,
+            bodyText: message.bodyText,
+            integrationId: integrationDoc.id,
+            integrationEmail: integration.email,
+            attachmentCount: message.attachments?.length || 0,
+            classification,
+          });
+        }
+      } catch (err) {
+        console.error(`[searchGmailEmails] Error searching integration ${integrationDoc.id}:`, err);
+      }
+    }
+
+    // Deduplicate by messageId
+    const seen = new Set<string>();
+    const dedupedEmails = allEmails.filter((e) => {
+      if (seen.has(e.messageId)) return false;
+      seen.add(e.messageId);
+      return true;
+    });
+
+    // Score emails using the same server-side scoring as the UI (if transaction context provided)
+    let scoredEmails = dedupedEmails.map((e) => ({
+      ...e,
+      score: e.classification.confidence,
+      scoreLabel: null as "Strong" | "Likely" | null,
+      scoreReasons: e.classification.matchedKeywords || [],
+    }));
+
+    if (tx && dedupedEmails.length > 0) {
+      try {
+        const txDate = tx.date?.toDate?.() || new Date(tx.date);
+        const emailsToScore = dedupedEmails.map((email) => ({
+          key: email.messageId,
+          filename: `${email.subject}.pdf`,
+          mimeType: "application/pdf",
+          emailSubject: email.subject,
+          emailFrom: email.from,
+          emailSnippet: email.snippet,
+          emailBodyText: email.bodyText,
+          emailDate: email.date,
+          integrationId: email.integrationId,
+          classification: email.classification,
+        }));
+
+        const scoreResponse = await callFirebaseFunction<ScoreAttachmentRequest, ScoreAttachmentResponse>(
+          "scoreAttachmentMatchCallable",
+          {
+            attachments: emailsToScore,
+            transaction: {
+              amount: tx.amount,
+              date: txDate.toISOString(),
+              name: tx.name,
+              partner: tx.partner,
+            },
+            partner: partner ? {
+              name: partner.name,
+              emailDomains: partner.emailDomains,
+              fileSourcePatterns: partner.fileSourcePatterns,
+            } : null,
+          },
+          authHeader
+        );
+
+        // Map scores back to emails
+        const scoreMap = new Map(scoreResponse.scores.map((s) => [s.key, s]));
+        scoredEmails = dedupedEmails.map((email) => {
+          const scoreResult = scoreMap.get(email.messageId);
+          return {
+            ...email,
+            score: scoreResult?.score ?? email.classification.confidence,
+            scoreLabel: scoreResult?.label ?? null,
+            scoreReasons: scoreResult?.reasons ?? email.classification.matchedKeywords ?? [],
+          };
+        });
+      } catch (err) {
+        console.error("[searchGmailEmails] Error scoring emails:", err);
+        // Fall back to classification confidence
+      }
+    }
+
+    // Sort by score (from server scoring or classification), then by date
+    scoredEmails.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
+
+    const resultEmails = scoredEmails.slice(0, 20);
+
+    return {
+      searchType: "gmail_emails",
+      query,
+      emails: resultEmails,
+      totalFound: dedupedEmails.length,
+      integrationCount: integrationsSnapshot.size,
+      integrationsNeedingReauth: integrationsNeedingReauth.length > 0 ? integrationsNeedingReauth : undefined,
+      summary: resultEmails.length > 0
+        ? `Found ${dedupedEmails.length} emails for "${query}". ${resultEmails.filter(e => e.classification.possibleMailInvoice).length} may be mail invoices, ${resultEmails.filter(e => e.classification.possibleInvoiceLink).length} may have invoice links.`
+        : `No emails found for "${query}"`,
+    };
+  },
+  {
+    name: "searchGmailEmails",
+    description:
+      "Search Gmail for emails matching a query. Returns emails with classification (mail invoice, invoice link, attachments). Use to find order confirmations, booking receipts, or emails with invoice download links.",
+    schema: z.object({
+      query: z.string().describe("Gmail search query (e.g., 'Netflix receipt', 'from:amazon.de')"),
+      transactionId: z.string().optional().describe("Transaction ID for context (optional)"),
+      dateFrom: z.string().optional().describe("Start date filter (ISO format)"),
+      dateTo: z.string().optional().describe("End date filter (ISO format)"),
+      from: z.string().optional().describe("Filter by sender email/domain"),
+      limit: z.number().optional().describe("Max results per integration (default 30)"),
+    }),
+  }
+);
+
+// ============================================================================
+// Analyze Email for Invoice (Gemini-powered deep analysis)
+// ============================================================================
+
+interface AnalyzeEmailResponse {
+  messageId: string;
+  subject: string;
+  from: string;
+  date?: string;
+  hasInvoiceLink: boolean;
+  invoiceLinks: Array<{ url: string; anchorText?: string }>;
+  isMailInvoice: boolean;
+  mailInvoiceConfidence: number;
+  reasoning: string;
+}
+
+export const analyzeEmailTool = tool(
+  async ({ integrationId, messageId, transactionId }, config) => {
+    const userId = config?.configurable?.userId;
+    const authHeader = config?.configurable?.authHeader;
+
+    if (!userId) {
+      return { error: "User ID not provided" };
+    }
+
+    // Verify integration belongs to user
+    const integrationDoc = await db.collection("emailIntegrations").doc(integrationId).get();
+    if (!integrationDoc.exists || integrationDoc.data()?.userId !== userId) {
+      return { error: "Gmail integration not found" };
+    }
+
+    // Get transaction context if provided
+    let transaction = null;
+    if (transactionId) {
+      const txDoc = await db.collection("transactions").doc(transactionId).get();
+      if (txDoc.exists && txDoc.data()?.userId === userId) {
+        const tx = txDoc.data()!;
+        transaction = {
+          name: tx.name,
+          partner: tx.partner,
+          amount: tx.amount,
+        };
+      }
+    }
+
+    // Call the analyze-email API
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const response = await fetch(`${baseUrl}/api/gmail/analyze-email`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(authHeader ? { Authorization: authHeader } : {}),
+      },
+      body: JSON.stringify({
+        integrationId,
+        messageId,
+        transaction,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return {
+        error: errorData.error || `Analysis failed: ${response.status}`,
+        code: errorData.code,
+      };
+    }
+
+    const result: AnalyzeEmailResponse = await response.json();
+
+    return {
+      messageId: result.messageId,
+      subject: result.subject,
+      from: result.from,
+      date: result.date,
+      hasInvoiceLink: result.hasInvoiceLink,
+      invoiceLinks: result.invoiceLinks,
+      isMailInvoice: result.isMailInvoice,
+      mailInvoiceConfidence: result.mailInvoiceConfidence,
+      reasoning: result.reasoning,
+      summary: result.hasInvoiceLink
+        ? `Found ${result.invoiceLinks.length} invoice link(s): ${result.invoiceLinks.map(l => l.anchorText || l.url).join(", ")}`
+        : result.isMailInvoice
+          ? `Email IS an invoice (${Math.round(result.mailInvoiceConfidence * 100)}% confidence)`
+          : "No invoice content detected",
+    };
+  },
+  {
+    name: "analyzeEmail",
+    description:
+      "Use AI to deeply analyze an email for invoice content. Determines if the email body IS an invoice, or if it contains links to download an invoice. Returns extracted URLs and confidence scores.",
+    schema: z.object({
+      integrationId: z.string().describe("Gmail integration ID"),
+      messageId: z.string().describe("Gmail message ID to analyze"),
+      transactionId: z.string().optional().describe("Transaction ID for context (improves accuracy)"),
+    }),
+  }
+);
+
+// ============================================================================
 // Connect File to Transaction
 // ============================================================================
 
+/**
+ * Helper to check if two names match (fuzzy comparison)
+ */
+function doNamesMatch(name1: string | null | undefined, name2: string | null | undefined): boolean {
+  if (!name1 || !name2) return false;
+
+  const normalize = (s: string) =>
+    s.toLowerCase()
+      .replace(/\s*(gmbh|ag|kg|ohg|ug|e\.?k\.?|inc\.?|ltd\.?|llc|co\.?)\s*/gi, " ")
+      .replace(/[^a-z0-9\s]/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const n1 = normalize(name1);
+  const n2 = normalize(name2);
+
+  // Exact match after normalization
+  if (n1 === n2) return true;
+
+  // One contains the other
+  if (n1.includes(n2) || n2.includes(n1)) return true;
+
+  // Check for significant word overlap
+  const words1 = n1.split(" ").filter((w) => w.length > 2);
+  const words2 = n2.split(" ").filter((w) => w.length > 2);
+  const matchingWords = words1.filter((w) =>
+    words2.some((w2) => w === w2 || w.includes(w2) || w2.includes(w))
+  );
+
+  return matchingWords.length >= 1;
+}
+
 export const connectFileToTransactionTool = tool(
-  async ({ fileId, transactionId, confidence }, config) => {
+  async ({ fileId, transactionId, confidence, skipValidation }, config) => {
     const userId = config?.configurable?.userId;
 
     if (!userId) {
@@ -823,6 +1282,74 @@ export const connectFileToTransactionTool = tool(
 
     const file = fileDoc.data()!;
     const tx = txDoc.data()!;
+
+    // === VALIDATION: Check for mismatches before connecting ===
+    if (!skipValidation) {
+      const warnings: string[] = [];
+
+      // 1. Amount validation - check if amounts are significantly different
+      const fileAmount = file.extractedAmount; // in cents
+      const txAmount = tx.amount; // in cents
+
+      if (fileAmount != null && txAmount != null) {
+        const absFileAmount = Math.abs(fileAmount);
+        const absTxAmount = Math.abs(txAmount);
+
+        if (absFileAmount > 0 && absTxAmount > 0) {
+          const ratio = absFileAmount / absTxAmount;
+
+          // Flag if amounts differ by more than 50% (ratio < 0.5 or > 2.0)
+          if (ratio < 0.5 || ratio > 2.0) {
+            const fileAmtStr = (absFileAmount / 100).toFixed(2);
+            const txAmtStr = (absTxAmount / 100).toFixed(2);
+            const fileCurrency = file.extractedCurrency || "EUR";
+            const txCurrency = tx.currency || "EUR";
+
+            warnings.push(
+              `AMOUNT MISMATCH: File has ${fileAmtStr} ${fileCurrency} but transaction is ${txAmtStr} ${txCurrency} ` +
+              `(${Math.round(ratio * 100)}% ratio). This file likely belongs to a different transaction.`
+            );
+          }
+        }
+      }
+
+      // 2. Partner validation - check if file's extracted partner matches transaction
+      const filePartner = file.extractedPartner;
+      const txName = tx.name || tx.partner;
+
+      if (filePartner && txName) {
+        // Clean the transaction name (remove bank prefixes)
+        const cleanTxName = txName
+          .replace(/^(Tbl\*|To |From |SEPA |Überweisung |Lastschrift )/i, "")
+          .replace(/\.{3}$/, "")
+          .trim();
+
+        if (!doNamesMatch(filePartner, cleanTxName)) {
+          warnings.push(
+            `PARTNER MISMATCH: File is from "${filePartner}" but transaction is "${cleanTxName}". ` +
+            `This file may not belong to this transaction.`
+          );
+        }
+      }
+
+      // If there are warnings, return them instead of connecting
+      if (warnings.length > 0) {
+        return {
+          error: "VALIDATION_FAILED",
+          warnings,
+          fileId,
+          transactionId,
+          fileName: file.fileName,
+          extractedPartner: file.extractedPartner || null,
+          extractedAmount: file.extractedAmount != null ? file.extractedAmount / 100 : null,
+          extractedCurrency: file.extractedCurrency || "EUR",
+          transactionName: tx.name,
+          transactionAmount: tx.amount != null ? tx.amount / 100 : null,
+          transactionCurrency: tx.currency || "EUR",
+          message: `Cannot connect: ${warnings.join(" ")} Use skipValidation=true to force connection.`,
+        };
+      }
+    }
 
     // Check if already connected
     const existingConnection = await db
@@ -862,9 +1389,10 @@ export const connectFileToTransactionTool = tool(
       updatedAt: now,
     });
 
-    // 3. Update transaction's fileIds array
+    // 3. Update transaction's fileIds array and mark as complete
     batch.update(txDoc.ref, {
       fileIds: [...(tx.fileIds || []), fileId],
+      isComplete: true,
       updatedAt: now,
     });
 
@@ -880,11 +1408,19 @@ export const connectFileToTransactionTool = tool(
   {
     name: "connectFileToTransaction",
     description:
-      "Connect an existing local file to a transaction. Use when searchLocalFiles finds a good match.",
+      `Connect an existing local file to a transaction. Use when searchLocalFiles finds a good match.
+
+IMPORTANT: This tool validates that the file matches the transaction before connecting:
+- Amount must be within 50-200% of transaction amount
+- File's extracted partner must match transaction name
+
+If validation fails, the connection is blocked. Review the warnings before proceeding.
+Only use skipValidation=true if you're certain the file belongs to this transaction despite the mismatch.`,
     schema: z.object({
       fileId: z.string().describe("The file ID from searchLocalFiles results"),
       transactionId: z.string().describe("The transaction ID to connect to"),
       confidence: z.number().optional().describe("Match confidence score (0-100)"),
+      skipValidation: z.boolean().optional().describe("Set to true to skip amount/partner validation (use with caution)"),
     }),
   }
 );
@@ -898,4 +1434,6 @@ export const SEARCH_TOOLS = [
   searchLocalFilesTool,
   connectFileToTransactionTool,
   searchGmailAttachmentsTool,
+  searchGmailEmailsTool,
+  analyzeEmailTool,
 ];

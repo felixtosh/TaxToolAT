@@ -3,6 +3,122 @@
  */
 
 /**
+ * Cologne Phonetics (Kölner Phonetik) implementation
+ * A phonetic algorithm optimized for German but works reasonably for other languages.
+ * Similar words sound alike and produce the same phonetic code.
+ *
+ * Rules: https://en.wikipedia.org/wiki/Cologne_phonetics
+ */
+export function colognePhonetic(str: string): string {
+  if (!str) return "";
+
+  // Normalize: lowercase, remove non-letters, handle umlauts
+  let s = str.toLowerCase()
+    .replace(/ä/g, "a")
+    .replace(/ö/g, "o")
+    .replace(/ü/g, "u")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z]/g, "");
+
+  if (s.length === 0) return "";
+
+  const codes: string[] = [];
+
+  for (let i = 0; i < s.length; i++) {
+    const char = s[i];
+    const prev = i > 0 ? s[i - 1] : "";
+    const next = i < s.length - 1 ? s[i + 1] : "";
+
+    let code: string;
+
+    switch (char) {
+      case "a":
+      case "e":
+      case "i":
+      case "o":
+      case "u":
+        code = "0";
+        break;
+      case "h":
+        code = ""; // H is ignored
+        break;
+      case "b":
+        code = "1";
+        break;
+      case "p":
+        code = next === "h" ? "3" : "1";
+        break;
+      case "d":
+      case "t":
+        code = ["c", "s", "z"].includes(next) ? "8" : "2";
+        break;
+      case "f":
+      case "v":
+      case "w":
+        code = "3";
+        break;
+      case "g":
+      case "k":
+      case "q":
+        code = "4";
+        break;
+      case "c":
+        if (i === 0) {
+          code = ["a", "h", "k", "l", "o", "q", "r", "u", "x"].includes(next) ? "4" : "8";
+        } else {
+          code = ["a", "h", "k", "o", "q", "u", "x"].includes(next) &&
+                 !["s", "z"].includes(prev) ? "4" : "8";
+        }
+        break;
+      case "x":
+        code = ["c", "k", "q"].includes(prev) ? "8" : "48";
+        break;
+      case "l":
+        code = "5";
+        break;
+      case "m":
+      case "n":
+        code = "6";
+        break;
+      case "r":
+        code = "7";
+        break;
+      case "s":
+      case "z":
+        code = "8";
+        break;
+      case "j":
+        code = "0"; // Treat J like a vowel
+        break;
+      case "y":
+        code = "0"; // Treat Y like a vowel
+        break;
+      default:
+        code = "";
+    }
+
+    codes.push(code);
+  }
+
+  // Remove consecutive duplicates and leading zeros (except single "0")
+  let result = "";
+  let lastCode = "";
+
+  for (const code of codes) {
+    for (const c of code) { // Handle "48" from X
+      if (c !== lastCode) {
+        result += c;
+        lastCode = c;
+      }
+    }
+  }
+
+  // Remove all zeros except if string would be empty
+  const withoutZeros = result.replace(/0/g, "");
+  return withoutZeros || "0";
+}
+
+/**
  * Calculate Levenshtein distance between two strings
  */
 function levenshteinDistance(a: string, b: string): number {
@@ -144,6 +260,7 @@ export function normalizeCompanyName(name: string): string {
 
 /**
  * Calculate company name similarity (using normalized names)
+ * Uses phonetic matching (Cologne Phonetics) for better German name matching.
  */
 export function calculateCompanyNameSimilarity(name1: string, name2: string): number {
   const normalized1 = normalizeCompanyName(name1);
@@ -151,6 +268,14 @@ export function calculateCompanyNameSimilarity(name1: string, name2: string): nu
 
   // Check for exact match after normalization
   if (normalized1 === normalized2) return 100;
+
+  // Phonetic match (Cologne Phonetics) - "Müller" matches "Mueller" matches "MULLER"
+  // Applied to all names, not just German (works reasonably for other languages too)
+  const phonetic1 = colognePhonetic(normalized1);
+  const phonetic2 = colognePhonetic(normalized2);
+  if (phonetic1 && phonetic2 && phonetic1.length >= 2 && phonetic1 === phonetic2) {
+    return 92; // Strong phonetic match
+  }
 
   // Check if one contains the other (common for abbreviations)
   if (normalized1.includes(normalized2) || normalized2.includes(normalized1)) {

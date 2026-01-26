@@ -266,7 +266,7 @@ export function ConnectTransactionDialog({
                 <>
                   {" "}
                   &middot;{" "}
-                  <span className={fileInfo.extractedAmount < 0 ? "text-red-600" : "text-green-600"}>
+                  <span className={fileInfo.extractedAmount < 0 ? "text-amount-negative" : "text-amount-positive"}>
                     {formatFileAmount(fileInfo.extractedAmount, fileInfo.extractedCurrency)}
                   </span>
                 </>
@@ -277,7 +277,7 @@ export function ConnectTransactionDialog({
 
         <div className="flex flex-1 overflow-hidden">
           {/* Left column: Transaction search and list */}
-          <div className="w-[35%] min-w-[280px] max-w-[420px] border-r flex flex-col">
+          <div className="w-[35%] min-w-[200px] max-w-[420px] border-r flex flex-col">
             {/* Search */}
             <div className="p-4 border-b">
               <div className="relative">
@@ -383,7 +383,7 @@ export function ConnectTransactionDialog({
                               <span
                                 className={cn(
                                   "font-medium",
-                                  transaction.amount < 0 ? "text-red-600" : "text-green-600"
+                                  transaction.amount < 0 ? "text-amount-negative" : "text-amount-positive"
                                 )}
                               >
                                 {formatAmount(transaction.amount, transaction.currency)}
@@ -425,7 +425,7 @@ export function ConnectTransactionDialog({
                         <p
                           className={cn(
                             "font-medium text-lg",
-                            previewTransaction.amount < 0 ? "text-red-600" : "text-green-600"
+                            previewTransaction.amount < 0 ? "text-amount-negative" : "text-amount-positive"
                           )}
                         >
                           {formatAmount(previewTransaction.amount, previewTransaction.currency)}

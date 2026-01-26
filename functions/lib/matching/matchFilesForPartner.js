@@ -67,6 +67,10 @@ const CONFIG = {
     AI_MATCH_MIN_UNMATCHED: 2,
     /** AI match confidence threshold */
     AI_MATCH_CONFIDENCE: 90,
+    /** Enable agentic fallback for unmatched transactions */
+    ENABLE_AGENTIC_FALLBACK: true,
+    /** Max transactions to queue for agentic fallback per run */
+    AGENTIC_FALLBACK_MAX_QUEUE: 5,
 };
 // === Scoring Functions ===
 /**
@@ -535,6 +539,39 @@ async function matchFilesForPartnerInternal(userId, partnerId, specificTransacti
         }
         catch (err) {
             console.error("Failed to create file matching notification:", err);
+        }
+    }
+    // 8. Queue agentic fallback for remaining unmatched transactions
+    // After scoring and AI matching, any transactions still without files get queued
+    // for the agentic receipt search worker (searches Gmail, local files, etc.)
+    if (CONFIG.ENABLE_AGENTIC_FALLBACK) {
+        const finallyUnmatchedTxs = unfiledTransactions.filter((doc) => !usedTransactions.has(doc.id));
+        if (finallyUnmatchedTxs.length > 0) {
+            console.log(`Queueing ${Math.min(finallyUnmatchedTxs.length, CONFIG.AGENTIC_FALLBACK_MAX_QUEUE)} ` +
+                `of ${finallyUnmatchedTxs.length} unmatched transactions for agentic receipt search`);
+            // Dynamically import to avoid circular dependencies
+            const { queueReceiptSearchForTransaction } = await Promise.resolve().then(() => __importStar(require("../workers/runReceiptSearchForTransaction")));
+            // Queue up to max limit (avoid overwhelming the system)
+            const toQueue = finallyUnmatchedTxs.slice(0, CONFIG.AGENTIC_FALLBACK_MAX_QUEUE);
+            let queued = 0;
+            for (const txDoc of toQueue) {
+                try {
+                    const result = await queueReceiptSearchForTransaction({
+                        transactionId: txDoc.id,
+                        userId,
+                        partnerId,
+                    });
+                    if (result.success && !result.skipped) {
+                        queued++;
+                    }
+                }
+                catch (err) {
+                    console.error(`Failed to queue agentic search for tx ${txDoc.id}:`, err);
+                }
+            }
+            if (queued > 0) {
+                console.log(`Queued ${queued} transactions for agentic receipt search`);
+            }
         }
     }
     return {

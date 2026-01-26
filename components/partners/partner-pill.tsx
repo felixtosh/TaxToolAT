@@ -70,8 +70,8 @@ export function PartnerPill({
         )
       )}
       <span className="truncate">{name}</span>
-      {matchedBy === "manual" ? (
-        <span className="inline-flex items-center gap-0.5 text-xs flex-shrink-0 ml-auto text-green-600" title="Manually assigned">
+      {matchedBy === "manual" || matchedBy === "suggestion" ? (
+        <span className="inline-flex items-center gap-0.5 text-xs flex-shrink-0 ml-auto text-green-600" title={matchedBy === "manual" ? "Manually assigned" : "Accepted suggestion"}>
           <UserCheck className="h-3 w-3" />
         </span>
       ) : matchedBy === "ai" ? (
@@ -83,7 +83,7 @@ export function PartnerPill({
           "text-xs flex-shrink-0 ml-auto",
           isSuggestion ? "text-info-foreground/70" : "text-muted-foreground"
         )}>
-          {confidence}%
+          {Math.round(confidence)}%
         </span>
       )}
       {onRemove && (

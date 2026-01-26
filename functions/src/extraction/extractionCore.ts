@@ -11,9 +11,7 @@ import { getStorage } from "firebase-admin/storage";
 import {
   extractDocument,
   getDefaultProvider,
-  generateTextBlocks,
 } from "./documentExtractor";
-import { mapFieldsToBoundingBoxes } from "./boundingBoxMapper";
 import { logAIUsage } from "../utils/ai-usage-logger";
 
 const db = getFirestore();
@@ -432,31 +430,6 @@ export async function runExtraction(
     });
   }
 
-  // Map extracted fields to bounding boxes (for legacy support)
-  const t5 = Date.now();
-  let fieldsWithLocations: import("./boundingBoxMapper").ExtractedFieldLocation[];
-
-  if (result.geminiBoundingBoxes && result.geminiBoundingBoxes.length > 0) {
-    // Use Gemini's native bounding boxes
-    fieldsWithLocations = result.geminiBoundingBoxes.map((box) => ({
-      field: box.field,
-      value: box.value,
-      confidence: result.extracted.confidence,
-      boundingBox: {
-        vertices: box.vertices,
-        pageIndex: box.pageIndex,
-      },
-    }));
-    console.log(`[+${Date.now() - t0}ms] Using ${fieldsWithLocations.length} Gemini bounding boxes (took ${Date.now() - t5}ms)`);
-  } else {
-    // Fall back to OCR block mapping
-    const blocksForMapping = result.blocks.length > 0
-      ? result.blocks
-      : generateTextBlocks(result.text);
-    fieldsWithLocations = mapFieldsToBoundingBoxes(result.extracted, blocksForMapping);
-    console.log(`[+${Date.now() - t0}ms] Mapped ${fieldsWithLocations.length} fields from OCR (took ${Date.now() - t5}ms)`);
-  }
-
   // Determine counterparty and invoice direction based on user data
   let invoiceDirection: InvoiceDirection = "unknown";
   let matchedUserAccount: "issuer" | "recipient" | null = null;
@@ -500,7 +473,7 @@ export async function runExtraction(
     extractionProvider: result.provider,
     extractionComplete: true,
     extractionError: null,
-    extractedFields: fieldsWithLocations,
+    extractedFields: [], // Bounding box overlays removed - using text search instead
     invoiceDirection,
     matchedUserAccount,
     // Store extracted entities for future re-calculation

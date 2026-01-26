@@ -22,6 +22,7 @@ import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 import { MfaChallengeDialog } from "@/components/mfa";
 import { useMfaChallenge } from "@/hooks/use-mfa-challenge";
 import { usePasskeys } from "@/hooks/use-passkeys";
+import { logoFont } from "@/app/fonts";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -98,7 +99,9 @@ export default function LoginPage() {
             )}
           >
             <FibukiMascot size={32} isJumping={isLogoJumping} />
-            <span className="font-bold text-2xl mascot-text">FiBuKI</span>
+            <span className={cn("font-bold text-2xl mascot-text", logoFont.className)}>
+              FiBuKI
+            </span>
           </button>
         </div>
         <CardTitle className="text-2xl">Sign in</CardTitle>

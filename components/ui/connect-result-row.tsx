@@ -3,20 +3,18 @@
 import { ReactNode } from "react";
 import { Check, Link2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import {
+  ClassificationBadge,
+  ScoreBadge,
+  type BadgeSize,
+} from "@/design-system/tool-results/classification-badges";
 
-export interface ClassificationBadge {
-  /** Short label (e.g., "Receipt", "Link") */
-  label: string;
-  /** Description shown in tooltip */
-  description: string;
-  /** Badge color variant */
-  variant: "receipt" | "link" | "pdf";
+export interface ClassificationBadgeConfig {
+  /** Classification type */
+  type: "receipt" | "link" | "pdf";
+  /** Optional keywords for tooltip */
+  keywords?: string[];
 }
 
 export interface ConnectResultRowProps {
@@ -53,7 +51,7 @@ export interface ConnectResultRowProps {
   /** Match signal labels for tooltip */
   matchSignals?: string[];
   /** Email classification badges with tooltips */
-  classificationBadges?: ClassificationBadge[];
+  classificationBadges?: ClassificationBadgeConfig[];
   /** Click handler */
   onClick?: () => void;
   /** Whether the button is disabled */
@@ -156,55 +154,21 @@ export function ConnectResultRow({
             </Badge>
           )}
           {showConfidence && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "text-xs py-0 h-4 cursor-help",
-                    confidence >= 85
-                      ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/50 dark:text-green-200 dark:border-green-700"
-                      : confidence >= 70
-                      ? "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200 dark:border-yellow-700"
-                      : "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600"
-                  )}
-                >
-                  {confidence}%
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-[260px] text-xs">
-                <div className="font-medium mb-1">Match signals</div>
-                <div className="space-y-0.5">
-                  {matchSignals.length > 0 ? (
-                    matchSignals.map((signal, idx) => (
-                      <div key={idx}>{signal}</div>
-                    ))
-                  ) : (
-                    <div>No specific signals</div>
-                  )}
-                </div>
-              </TooltipContent>
-            </Tooltip>
+            <ScoreBadge
+              score={confidence}
+              size="md"
+              showTooltip
+              tooltipReasons={matchSignals}
+            />
           )}
           {classificationBadges.map((badge, idx) => (
-            <Tooltip key={idx}>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "text-[10px] py-0 h-4 cursor-help",
-                    badge.variant === "receipt" && "bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-900/50 dark:text-purple-200 dark:border-purple-700",
-                    badge.variant === "link" && "bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-900/50 dark:text-blue-200 dark:border-blue-700",
-                    badge.variant === "pdf" && "bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-900/50 dark:text-orange-200 dark:border-orange-700"
-                  )}
-                >
-                  {badge.label}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-[200px] text-xs">
-                {badge.description}
-              </TooltipContent>
-            </Tooltip>
+            <ClassificationBadge
+              key={idx}
+              type={badge.type}
+              size="md"
+              showTooltip
+              tooltipKeywords={badge.keywords}
+            />
           ))}
         </div>
       </div>

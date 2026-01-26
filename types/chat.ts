@@ -1,18 +1,29 @@
 import { Timestamp } from "firebase/firestore";
 import { AutoActionNotification } from "./notification";
 
-export type ChatTab = "notifications" | "chat";
+export type ChatTab = "notifications" | "chat" | "history";
 export type SidebarMode = "chat" | "onboarding";
+export type ModelProvider = "anthropic" | "gemini";
 
 /**
  * A part of a message - either text or a tool call (in chronological order)
+ * Runtime format with full toolCall object
  */
 export type MessagePart =
   | { type: "text"; text: string }
   | { type: "tool"; toolCall: ToolCall };
 
 /**
- * A single message in a chat conversation
+ * Stored format for parts - lighter weight for Firestore storage
+ * Tool calls only store ID and name, full data is in toolCalls array
+ */
+export type StoredMessagePart =
+  | { type: "text"; text: string }
+  | { type: "tool"; toolCallId: string; toolName: string };
+
+/**
+ * A single message in a chat conversation (storage format)
+ * Parts can be either runtime format or stored format for Firestore flexibility
  */
 export interface ChatMessage {
   id: string;
@@ -23,14 +34,23 @@ export interface ChatMessage {
   /** Sequence number for deterministic ordering (auto-incremented per session) */
   sequence?: number;
 
-  /** Ordered parts for rendering (text and tool calls in chronological order) */
-  parts?: MessagePart[];
+  /** Ordered parts for rendering (text and tool calls in chronological order)
+   * Can be either runtime format (MessagePart) or stored format (StoredMessagePart) */
+  parts?: MessagePart[] | StoredMessagePart[];
 
   /** Tool calls made by the assistant (legacy, for backwards compat) */
   toolCalls?: ToolCall[];
 
   /** Results of tool executions */
   toolResults?: ToolResult[];
+}
+
+/**
+ * Chat message with parts transformed to runtime format (used in context)
+ * Parts are always full MessagePart[] with toolCall objects
+ */
+export interface RuntimeChatMessage extends Omit<ChatMessage, "parts"> {
+  parts?: MessagePart[];
 }
 
 /**
@@ -93,7 +113,7 @@ export interface UIControlActions {
  */
 export interface ChatContextValue {
   // State
-  messages: ChatMessage[];
+  messages: RuntimeChatMessage[];
   isLoading: boolean;
   isStreaming: boolean;
   currentSession: ChatSession | null;
@@ -128,12 +148,25 @@ export interface ChatContextValue {
 
   // Agentic search
   startSearchThread: (transactionId: string) => void;
+  startPartnerSearchThread: (transactionId: string) => void;
+  startFilePartnerSearchThread: (fileId: string) => void;
+  startFileTransactionSearchThread: (
+    fileId: string,
+    fileInfo?: {
+      fileName?: string;
+      amount?: number;
+      currency?: string;
+      date?: string;
+      partner?: string;
+    }
+  ) => Promise<void>;
 
   // Sidebar mode (chat vs onboarding)
   sidebarMode: SidebarMode;
   setSidebarMode: (mode: SidebarMode) => void;
 
-  // History overlay
-  isHistoryOpen: boolean;
-  setIsHistoryOpen: (open: boolean) => void;
+  // Model selection
+  modelProvider: ModelProvider;
+  setModelProvider: (provider: ModelProvider) => void;
+
 }

@@ -26,9 +26,6 @@ export {
   triggerLearningNow,
 } from "./matching/learningQueue";
 
-// Export pattern application functions
-export { applyPatternsToTransactions } from "./matching/applyPatterns";
-
 // Export admin functions
 export { generatePromotionCandidates } from "./admin/generatePromotionCandidates";
 
@@ -153,3 +150,7 @@ export {
   updateSourceCallable as updateSource,
   deleteSourceCallable as deleteSource,
 } from "./sources";
+
+// Worker operations
+export { triggerFileMatchingWorkerCallable as triggerFileMatchingWorker } from "./workers/triggerFileMatchingWorker";
+export { runReceiptSearchForTransactionCallable as runReceiptSearchForTransaction } from "./workers/runReceiptSearchForTransaction";

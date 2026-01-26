@@ -9,14 +9,53 @@ const db = (0, firestore_1.getFirestore)();
 // ============================================================================
 // Pattern Matching
 // ============================================================================
+/**
+ * Try to match a pattern against transaction text using multiple strategies:
+ * 1. Individual fields (name, partner, reference)
+ * 2. Combined text in different orderings
+ *
+ * This handles cases where the relevant text might be in any field,
+ * and patterns were learned from a specific field ordering.
+ */
+function matchPatternFlexible(pattern, txName, txPartner, txReference) {
+    // Build all possible text combinations to try
+    const textsToTry = [];
+    // Individual fields (most specific)
+    if (txName)
+        textsToTry.push(txName.toLowerCase());
+    if (txPartner)
+        textsToTry.push(txPartner.toLowerCase());
+    if (txReference)
+        textsToTry.push(txReference.toLowerCase());
+    // Combined: name + partner (common order)
+    const namePartner = [txName, txPartner].filter(Boolean).join(" ").toLowerCase();
+    if (namePartner)
+        textsToTry.push(namePartner);
+    // Combined: partner + name (reverse order - handles cases where fields are swapped)
+    const partnerName = [txPartner, txName].filter(Boolean).join(" ").toLowerCase();
+    if (partnerName && partnerName !== namePartner)
+        textsToTry.push(partnerName);
+    // Combined: all fields in standard order
+    const allFields = [txName, txPartner, txReference].filter(Boolean).join(" ").toLowerCase();
+    if (allFields && allFields !== namePartner && allFields !== partnerName)
+        textsToTry.push(allFields);
+    // Combined: all fields with partner first
+    const partnerFirst = [txPartner, txName, txReference].filter(Boolean).join(" ").toLowerCase();
+    if (partnerFirst && !textsToTry.includes(partnerFirst))
+        textsToTry.push(partnerFirst);
+    // Try matching against each text variant
+    for (const text of textsToTry) {
+        if ((0, partner_matcher_1.globMatch)(pattern, text)) {
+            return true;
+        }
+    }
+    return false;
+}
 function findBestMatch(txId, txPartner, txName, txReference, partners) {
     let bestMatch = null;
-    // Combine all text fields for matching (no field-specific penalties)
-    const textToMatch = [txName, txPartner, txReference]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-    if (!textToMatch)
+    // Check if we have any text to match
+    const hasText = txName || txPartner || txReference;
+    if (!hasText)
         return null;
     for (const partner of partners) {
         if (!partner.learnedPatterns || partner.learnedPatterns.length === 0)
@@ -26,7 +65,8 @@ function findBestMatch(txId, txPartner, txName, txReference, partners) {
             continue;
         }
         for (const pattern of partner.learnedPatterns) {
-            if ((0, partner_matcher_1.globMatch)(pattern.pattern, textToMatch)) {
+            // Use flexible matching that tries multiple field combinations
+            if (matchPatternFlexible(pattern.pattern, txName, txPartner, txReference)) {
                 // Use pattern confidence directly, no penalty
                 if (!bestMatch || pattern.confidence > bestMatch.confidence) {
                     bestMatch = {

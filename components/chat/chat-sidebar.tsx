@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback } from "react";
-import { MessageSquare, Send, Loader2, Plus, ArrowDown } from "lucide-react";
+import { MessageSquare, Send, Loader2, Plus, ArrowDown, CheckCircle2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,7 +13,8 @@ import { ConfirmationCard } from "./confirmation-card";
 import { ChatTabs } from "./chat-tabs";
 import { NotificationsList } from "./notifications-list";
 import { OnboardingSidebar } from "@/components/onboarding";
-import { ChatHistoryOverlay } from "./chat-history-overlay";
+import { ChatHistoryPanel } from "./chat-history-overlay";
+import type { ChatTab } from "@/types/chat";
 
 const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 600;
@@ -34,8 +35,6 @@ export function ChatSidebar() {
     setActiveTab,
     notifications,
     sidebarMode,
-    isHistoryOpen,
-    setIsHistoryOpen,
     currentSessionId,
   } = useChat();
 
@@ -49,11 +48,34 @@ export function ChatSidebar() {
   const [isResizing, setIsResizing] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const userScrolledRef = useRef(false);
+  const [gmailReconnected, setGmailReconnected] = useState(false);
 
   // Keep currentWidthRef in sync with sidebarWidth
   useEffect(() => {
     currentWidthRef.current = sidebarWidth;
   }, [sidebarWidth]);
+
+  // Listen for Gmail reconnection from other tabs
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "gmail_reconnected" && e.newValue) {
+        try {
+          const data = JSON.parse(e.newValue);
+          // Only show if recent (within last 30 seconds)
+          if (Date.now() - data.timestamp < 30000) {
+            setGmailReconnected(true);
+            // Auto-hide after 10 seconds
+            setTimeout(() => setGmailReconnected(false), 10000);
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
 
   // Handle resize start
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -160,6 +182,10 @@ export function ChatSidebar() {
     await sendMessage(message);
   };
 
+  const handleTabChange = useCallback((tab: ChatTab) => {
+    setActiveTab(tab);
+  }, [setActiveTab]);
+
   return (
     <>
       {/* Toggle button when sidebar is closed */}
@@ -168,7 +194,7 @@ export function ChatSidebar() {
           variant="outline"
           size="icon"
           onClick={toggleSidebar}
-          className="fixed left-4 bottom-4 z-50 h-12 w-12 rounded-full shadow-lg"
+          className="fixed left-4 bottom-4 z-[60] h-12 w-12 rounded-full shadow-lg"
           title="Open AI Chat"
         >
           <MessageSquare className="h-5 w-5" />
@@ -179,7 +205,7 @@ export function ChatSidebar() {
       <div
         ref={panelRef}
         className={cn(
-          "fixed left-0 top-0 z-50 h-full transform bg-background transition-transform duration-300 ease-in-out flex border-r",
+          "fixed left-0 top-0 z-[60] h-full transform bg-background transition-transform duration-300 ease-in-out flex border-r",
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
         style={{ width: sidebarWidth }}
@@ -194,14 +220,23 @@ export function ChatSidebar() {
               {/* Header with Tabs */}
               <ChatTabs
                 activeTab={activeTab}
-                onTabChange={setActiveTab}
+                onTabChange={handleTabChange}
                 onNewChat={startNewSession}
                 onClose={toggleSidebar}
-                onOpenHistory={() => setIsHistoryOpen(true)}
               />
 
               {/* Content based on active tab */}
-              {activeTab === "notifications" ? (
+              {activeTab === "history" ? (
+                <div className="flex flex-1 flex-col overflow-hidden">
+                  <ChatHistoryPanel
+                    onSelectSession={(sessionId) => {
+                      loadSession(sessionId);
+                      setActiveTab("chat");
+                    }}
+                    currentSessionId={currentSessionId}
+                  />
+                </div>
+              ) : activeTab === "notifications" ? (
                 <NotificationsList
                   notifications={notifications}
                   onStartNewConversation={() => {
@@ -260,6 +295,24 @@ export function ChatSidebar() {
                     )}
                   </div>
 
+                  {/* Gmail reconnected banner */}
+                  {gmailReconnected && (
+                    <div className="border-t bg-green-50 dark:bg-green-950/30 px-4 py-2 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-sm text-green-700 dark:text-green-300">
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Gmail reconnected! You can retry the search.</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/50"
+                        onClick={() => setGmailReconnected(false)}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  )}
+
                   {/* Input */}
                   <div className="border-t p-4">
                     <form ref={formRef} onSubmit={handleSubmit} className="flex gap-2">
@@ -302,16 +355,9 @@ export function ChatSidebar() {
 
       {/* Prevent text selection while resizing */}
       {isResizing && (
-        <div className="fixed inset-0 z-50 cursor-col-resize" />
+        <div className="fixed inset-0 z-[70] cursor-col-resize" />
       )}
 
-      {/* Chat History Overlay */}
-      <ChatHistoryOverlay
-        isOpen={isHistoryOpen}
-        onClose={() => setIsHistoryOpen(false)}
-        onSelectSession={loadSession}
-        currentSessionId={currentSessionId}
-      />
     </>
   );
 }

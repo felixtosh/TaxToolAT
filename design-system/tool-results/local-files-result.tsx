@@ -3,13 +3,8 @@
 import Link from "next/link";
 import { FileText, FolderSearch, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { LocalFilesSearchResult, LocalFileCandidate, ToolResultUIActions } from "./types";
+import { ScoreBadge, RejectedBadge } from "./classification-badges";
 
 // Note: strategy field is available but not displayed in header to save space
 
@@ -38,18 +33,18 @@ export function LocalFilesResult({
     }
   };
 
-  const formatAmount = (amount: number) => {
-    const euros = amount / 100;
-    return euros.toLocaleString("de-DE", {
+  /**
+   * Format amount for display.
+   * Note: amount is already in currency units (not cents) - tool divides by 100
+   */
+  const formatAmount = (amount: number, currency?: string) => {
+    const currencyCode = currency || "EUR";
+    return amount.toLocaleString("de-DE", {
       style: "currency",
-      currency: "EUR",
+      currency: currencyCode,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
     });
-  };
-
-  const getScoreColor = (score: number) => {
-    if (score >= 85) return "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/50 dark:text-green-200";
-    if (score >= 70) return "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200";
-    return "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300";
   };
 
   if (candidates.length === 0) {
@@ -91,35 +86,25 @@ export function LocalFilesResult({
             <span className={cn(
               "text-right tabular-nums w-[70px]",
               candidate.extractedAmount
-                ? (candidate.extractedAmount < 0 ? "text-red-600" : "text-green-600")
+                ? (candidate.extractedAmount < 0 ? "text-amount-negative" : "text-amount-positive")
                 : "text-muted-foreground"
             )}>
-              {candidate.extractedAmount ? formatAmount(candidate.extractedAmount) : "—"}
+              {candidate.extractedAmount ? formatAmount(candidate.extractedAmount, candidate.extractedCurrency) : "—"}
             </span>
 
-            {/* Score badge with tooltip */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant="outline"
-                  className={cn("text-[10px] py-0 h-4 cursor-help w-[50px] justify-center", getScoreColor(candidate.score))}
-                >
-                  {candidate.score}%
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent side="left" className="max-w-[240px] text-xs">
-                <div className="font-medium mb-1">Match signals</div>
-                <div className="space-y-0.5">
-                  {candidate.scoreReasons && candidate.scoreReasons.length > 0 ? (
-                    candidate.scoreReasons.map((reason, idx) => (
-                      <div key={idx} className="text-muted-foreground">{reason}</div>
-                    ))
-                  ) : (
-                    <div className="text-muted-foreground">No specific signals</div>
-                  )}
-                </div>
-              </TooltipContent>
-            </Tooltip>
+            {/* Score badge with tooltip - show "Rejected" if rejected */}
+            <div className="w-[50px] flex justify-center">
+              {candidate.isRejected ? (
+                <RejectedBadge size="sm" />
+              ) : (
+                <ScoreBadge
+                  score={candidate.score}
+                  size="sm"
+                  showTooltip
+                  tooltipReasons={candidate.scoreReasons}
+                />
+              )}
+            </div>
           </button>
         ))}
       </div>

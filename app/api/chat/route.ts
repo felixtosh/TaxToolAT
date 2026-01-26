@@ -10,7 +10,8 @@
 import { createUIMessageStreamResponse } from "ai";
 import { toUIMessageStream } from "@ai-sdk/langchain";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import { buildAgentGraph } from "@/lib/agent/graph";
+import { buildAgentGraph, ModelProvider } from "@/lib/agent/graph";
+import { getModelId, calculateCost } from "@/lib/agent/model";
 import { createLangfuseHandler, flushLangfuse } from "@/lib/agent/langfuse";
 import {
   HumanMessage,
@@ -133,11 +134,12 @@ async function logAIUsage(
   params: {
     function: string;
     model: string;
+    modelProvider: ModelProvider;
     inputTokens: number;
     outputTokens: number;
   }
 ): Promise<void> {
-  const cost = (params.inputTokens * 3 + params.outputTokens * 15) / 1_000_000;
+  const cost = calculateCost(params.modelProvider, params.inputTokens, params.outputTokens);
 
   try {
     await db.collection("aiUsage").add({
@@ -169,9 +171,12 @@ async function logAIUsage(
 export async function POST(req: Request) {
   const authHeader = req.headers.get("Authorization") || "";
   const userId = await getServerUserIdWithFallback(req);
-  const { messages: rawMessages } = await req.json();
+  const { messages: rawMessages, modelProvider: requestedProvider } = await req.json();
 
-  console.log("[Chat API] Starting LangGraph agent with", rawMessages.length, "messages");
+  // Determine model provider (default to gemini for cost savings, anthropic as backup)
+  const modelProvider: ModelProvider = requestedProvider || "gemini";
+
+  console.log(`[Chat API] Starting LangGraph agent with ${modelProvider}, ${rawMessages.length} messages`);
 
   // Convert messages to LangChain format
   const messages = convertToLangChainMessages(rawMessages);
@@ -203,6 +208,7 @@ export async function POST(req: Request) {
       messages,
       userId,
       authHeader,
+      modelProvider,
       pendingConfirmation: null,
       shouldContinue: true,
     },
@@ -302,7 +308,8 @@ export async function POST(req: Request) {
       if (userId && (totalInputTokens > 0 || totalOutputTokens > 0)) {
         await logAIUsage(userId, {
           function: "chat",
-          model: "claude-sonnet-4-20250514",
+          model: getModelId(modelProvider),
+          modelProvider,
           inputTokens: totalInputTokens,
           outputTokens: totalOutputTokens,
         });

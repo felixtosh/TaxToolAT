@@ -1,20 +1,41 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useMemo, ReactNode } from "react";
+import { useRunningWorkers } from "./use-running-workers";
 
 interface PrecisionSearchContextValue {
+  /** Combined set of transactionIds being searched (manual + worker automations) */
   searchingTransactions: Set<string>;
+  /** Set manual searching state for a transaction */
   setSearching: (transactionId: string, isSearching: boolean) => void;
+  /** Check if a transaction has any active search (manual or worker) */
   isSearchingTransaction: (transactionId: string) => boolean;
+  /** Set of transactionIds with file-related workers running (from notifications) */
+  runningFileSearchTransactionIds: Set<string>;
+  /** Set of transactionIds with partner matching workers running (from notifications) */
+  runningPartnerSearchTransactionIds: Set<string>;
 }
 
 const PrecisionSearchContext = createContext<PrecisionSearchContextValue | null>(null);
 
 export function PrecisionSearchProvider({ children }: { children: ReactNode }) {
-  const [searchingTransactions, setSearchingTransactions] = useState<Set<string>>(new Set());
+  // Manual precision search state
+  const [manualSearchingTransactions, setManualSearchingTransactions] = useState<Set<string>>(new Set());
+
+  // Running workers from notifications (real-time via Firestore)
+  const { runningFileSearchTransactionIds, runningPartnerSearchTransactionIds } = useRunningWorkers();
+
+  // Combine manual searches and worker file searches for the unified searchingTransactions
+  const searchingTransactions = useMemo(() => {
+    const combined = new Set<string>(manualSearchingTransactions);
+    for (const id of runningFileSearchTransactionIds) {
+      combined.add(id);
+    }
+    return combined;
+  }, [manualSearchingTransactions, runningFileSearchTransactionIds]);
 
   const setSearching = useCallback((transactionId: string, isSearching: boolean) => {
-    setSearchingTransactions((prev) => {
+    setManualSearchingTransactions((prev) => {
       const next = new Set(prev);
       if (isSearching) {
         next.add(transactionId);
@@ -32,7 +53,13 @@ export function PrecisionSearchProvider({ children }: { children: ReactNode }) {
 
   return (
     <PrecisionSearchContext.Provider
-      value={{ searchingTransactions, setSearching, isSearchingTransaction }}
+      value={{
+        searchingTransactions,
+        setSearching,
+        isSearchingTransaction,
+        runningFileSearchTransactionIds,
+        runningPartnerSearchTransactionIds,
+      }}
     >
       {children}
     </PrecisionSearchContext.Provider>
