@@ -13,6 +13,11 @@ const SUPER_ADMIN_EMAIL = "felix@i7v6.com";
  */
 exports.validateRegistration = (0, https_1.onCall)({
     region: "europe-west1",
+    cors: [
+        "https://fibuki.com",
+        "https://taxstudio-f12fb.firebaseapp.com",
+        "http://localhost:3000",
+    ],
 }, async (request) => {
     const { email } = request.data;
     if (!email || typeof email !== "string") {
@@ -58,6 +63,11 @@ exports.validateRegistration = (0, https_1.onCall)({
  */
 exports.markInviteUsed = (0, https_1.onCall)({
     region: "europe-west1",
+    cors: [
+        "https://fibuki.com",
+        "https://taxstudio-f12fb.firebaseapp.com",
+        "http://localhost:3000",
+    ],
 }, async (request) => {
     // This should only be called by authenticated users (just registered)
     if (!request.auth) {
