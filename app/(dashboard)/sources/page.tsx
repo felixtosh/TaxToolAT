@@ -8,11 +8,15 @@ import { AddSourceDialog } from "@/components/sources/add-source-dialog";
 import { Button } from "@/components/ui/button";
 import { Plus, Link2 } from "lucide-react";
 import { TransactionSource } from "@/types/source";
+import { usePageTitle } from "@/hooks/use-page-title";
 
 export default function SourcesPage() {
   const router = useRouter();
   const { sources, loading, addSource } = useSources();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+
+  // Set page title
+  usePageTitle("Accounts");
 
   const handleSourceClick = (source: TransactionSource) => {
     router.push(`/sources/${source.id}`);

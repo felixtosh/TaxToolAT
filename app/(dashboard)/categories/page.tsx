@@ -8,6 +8,7 @@ import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserNoReceiptCategory } from "@/types/no-receipt-category";
 import { cn } from "@/lib/utils";
+import { usePageTitle } from "@/hooks/use-page-title";
 
 const PANEL_WIDTH_KEY = "categoryDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 480;
@@ -68,6 +69,9 @@ function CategoriesContent() {
 
   // Find selected category
   const selectedCategory = categories.find((c) => c.id === selectedId) || null;
+
+  // Set page title
+  usePageTitle("Categories", selectedCategory?.name);
 
   // Load panel width from localStorage
   useEffect(() => {

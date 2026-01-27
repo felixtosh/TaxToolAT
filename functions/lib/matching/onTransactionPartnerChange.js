@@ -62,8 +62,9 @@ exports.onTransactionPartnerChange = (0, firestore_1.onDocumentUpdated)({
     const hasFiles = after.fileIds && after.fileIds.length > 0;
     const hasCategory = !!after.noReceiptCategoryId;
     console.log(`Partner ${after.partnerId} assigned to transaction ${transactionId}, triggering automations`);
-    // Queue receipt search if transaction has no files
-    if (!hasFiles) {
+    // Queue receipt search if transaction has no files AND no no-receipt category
+    // Transactions with a no-receipt category are considered complete
+    if (!hasFiles && !hasCategory) {
         try {
             const { queueReceiptSearchForTransaction } = await Promise.resolve().then(() => __importStar(require("../workers/runReceiptSearchForTransaction")));
             queueReceiptSearchForTransaction({

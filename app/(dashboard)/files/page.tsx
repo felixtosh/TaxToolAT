@@ -33,6 +33,7 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/auth";
+import { usePageTitle } from "@/hooks/use-page-title";
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ACCEPTED_TYPES = {
   "image/jpeg": [".jpg", ".jpeg"],
@@ -364,6 +365,9 @@ function FilesContent() {
     if (!primarySelectedId || !files.length) return null;
     return files.find((f) => f.id === primarySelectedId) || null;
   }, [primarySelectedId, files]);
+
+  // Set page title
+  usePageTitle("Files", selectedFile?.fileName);
 
   // Handle connecting transactions to the selected file
   const handleConnectTransactions = useCallback(

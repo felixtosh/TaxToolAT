@@ -52,6 +52,7 @@ import { TaxCountryCode } from "@/types/user-data";
 import { ReportReadinessCheck } from "@/components/reports/readiness-check";
 import { UVAPreview } from "@/components/reports/uva-preview";
 import { PeriodTimeline } from "@/components/reports/period-timeline";
+import { usePageTitle } from "@/hooks/use-page-title";
 
 const TAX_COUNTRIES: { value: TaxCountryCode; label: string; flag: string }[] = [
   { value: "AT", label: "Austria", flag: "AT" },
@@ -94,6 +95,9 @@ function getAvailableYears(): number[] {
 export default function ReportsPage() {
   const { userId } = useAuth();
   const { userData, loading: userDataLoading } = useUserData();
+
+  // Set page title
+  usePageTitle("Reports");
 
   // Period state
   const [periodType, setPeriodType] = useState<"monthly" | "quarterly">("monthly");

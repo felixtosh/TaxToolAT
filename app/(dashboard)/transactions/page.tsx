@@ -167,6 +167,9 @@ function TransactionsContent() {
     return transactions.find((t) => t.id === selectedId) || null;
   }, [selectedId, transactions]);
 
+  // Set page title
+  usePageTitle("Transactions", selectedTransaction?.description);
+
   // Find source for selected transaction
   const selectedSource = useMemo(() => {
     if (!selectedTransaction) return undefined;
@@ -458,6 +461,7 @@ function TransactionsContent() {
 }
 
 import { PrecisionSearchProvider } from "@/hooks/use-precision-search-context";
+import { usePageTitle } from "@/hooks/use-page-title";
 
 export default function TransactionsPage() {
   return (

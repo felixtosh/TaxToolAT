@@ -47,15 +47,6 @@ export function useFilteredTransactions(
       result = result.filter((t) => t.partnerId && allowedPartners.has(t.partnerId));
     }
 
-    // File filter
-    if (filters.hasFile !== undefined) {
-      result = result.filter((t) =>
-        filters.hasFile
-          ? (t.fileIds?.length || 0) > 0
-          : (t.fileIds?.length || 0) === 0
-      );
-    }
-
     // Date range filter
     // Handle case where dateFrom > dateTo (e.g., "Oct 27 - Jan 27" when both default to same year)
     let effectiveDateFrom = filters.dateFrom;

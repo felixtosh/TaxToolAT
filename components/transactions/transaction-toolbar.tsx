@@ -12,7 +12,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import {
   CalendarDays,
-  FileText,
+  CircleCheck,
   ArrowUpDown,
   X,
   CalendarIcon,
@@ -48,7 +48,7 @@ export function TransactionToolbar({
   totalCount,
 }: TransactionToolbarProps) {
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
-  const [filePopoverOpen, setFilePopoverOpen] = useState(false);
+  const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
   const [typePopoverOpen, setTypePopoverOpen] = useState(false);
   const [partnerPopoverOpen, setPartnerPopoverOpen] = useState(false);
   const [partnerSearch, setPartnerSearch] = useState("");
@@ -56,7 +56,7 @@ export function TransactionToolbar({
   const [showToCalendar, setShowToCalendar] = useState(false);
 
   const hasDateFilter = filters.dateFrom || filters.dateTo;
-  const hasFileFilter = filters.hasFile !== undefined;
+  const hasStatusFilter = filters.isComplete !== undefined;
   const hasAmountFilter = filters.amountType && filters.amountType !== "all";
   const selectedPartnerIds = filters.partnerIds || [];
   const hasPartnerFilter = selectedPartnerIds.length > 0;
@@ -101,9 +101,9 @@ export function TransactionToolbar({
     onFiltersChange({ ...filters, dateFrom: undefined, dateTo: undefined });
   };
 
-  const clearFileFilter = (e: React.MouseEvent) => {
+  const clearStatusFilter = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onFiltersChange({ ...filters, hasFile: undefined });
+    onFiltersChange({ ...filters, isComplete: undefined });
   };
 
   const clearAmountFilter = (e: React.MouseEvent) => {
@@ -126,10 +126,10 @@ export function TransactionToolbar({
     return "Date";
   };
 
-  const getFileLabel = () => {
-    if (filters.hasFile === true) return "Has file";
-    if (filters.hasFile === false) return "No file";
-    return "File";
+  const getStatusLabel = () => {
+    if (filters.isComplete === true) return "Assigned";
+    if (filters.isComplete === false) return "Unassigned";
+    return "Status";
   };
 
   const getAmountLabel = () => {
@@ -323,22 +323,22 @@ export function TransactionToolbar({
         </PopoverContent>
       </Popover>
 
-      {/* File filter */}
-      <Popover open={filePopoverOpen} onOpenChange={setFilePopoverOpen}>
+      {/* Status filter (assigned = has file or no-receipt category) */}
+      <Popover open={statusPopoverOpen} onOpenChange={setStatusPopoverOpen}>
         <PopoverTrigger asChild>
           <Button
-            variant={hasFileFilter ? "secondary" : "outline"}
+            variant={hasStatusFilter ? "secondary" : "outline"}
             size="sm"
             className="h-9 gap-2"
           >
-            <FileText className="h-4 w-4" />
-            <span>{getFileLabel()}</span>
-            {hasFileFilter && (
+            <CircleCheck className="h-4 w-4" />
+            <span>{getStatusLabel()}</span>
+            {hasStatusFilter && (
               <span
                 role="button"
                 tabIndex={0}
-                onClick={clearFileFilter}
-                onKeyDown={(e) => e.key === "Enter" && clearFileFilter(e as unknown as React.MouseEvent)}
+                onClick={clearStatusFilter}
+                onKeyDown={(e) => e.key === "Enter" && clearStatusFilter(e as unknown as React.MouseEvent)}
                 className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
               >
                 <X className="h-3 w-3" />
@@ -349,37 +349,37 @@ export function TransactionToolbar({
         <PopoverContent className="w-auto p-2" align="start">
           <div className="flex flex-col gap-1">
             <Button
-              variant={filters.hasFile === undefined ? "secondary" : "ghost"}
+              variant={filters.isComplete === undefined ? "secondary" : "ghost"}
               size="sm"
               className="justify-start h-8"
               onClick={() => {
-                onFiltersChange({ ...filters, hasFile: undefined });
-                setFilePopoverOpen(false);
+                onFiltersChange({ ...filters, isComplete: undefined });
+                setStatusPopoverOpen(false);
               }}
             >
               All
             </Button>
             <Button
-              variant={filters.hasFile === true ? "secondary" : "ghost"}
+              variant={filters.isComplete === true ? "secondary" : "ghost"}
               size="sm"
               className="justify-start h-8"
               onClick={() => {
-                onFiltersChange({ ...filters, hasFile: true });
-                setFilePopoverOpen(false);
+                onFiltersChange({ ...filters, isComplete: true });
+                setStatusPopoverOpen(false);
               }}
             >
-              Has file
+              Assigned
             </Button>
             <Button
-              variant={filters.hasFile === false ? "secondary" : "ghost"}
+              variant={filters.isComplete === false ? "secondary" : "ghost"}
               size="sm"
               className="justify-start h-8"
               onClick={() => {
-                onFiltersChange({ ...filters, hasFile: false });
-                setFilePopoverOpen(false);
+                onFiltersChange({ ...filters, isComplete: false });
+                setStatusPopoverOpen(false);
               }}
             >
-              No file
+              Unassigned
             </Button>
           </div>
         </PopoverContent>

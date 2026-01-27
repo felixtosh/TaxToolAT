@@ -40,6 +40,7 @@ import {
 import { GoCardlessConnectorConfig, ApiConnectorConfig } from "@/types/source";
 import { TrueLayerApiConfig } from "@/types/truelayer";
 import { formatIban } from "@/lib/import/deduplication";
+import { usePageTitle } from "@/hooks/use-page-title";
 
 interface SourceDetailPageProps {
   params: Promise<{ id: string }>;
@@ -55,6 +56,9 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
   const [isEditOpen, setIsEditOpen] = useState(false);
 
   const source = sources.find((s) => s.id === id);
+
+  // Set page title
+  usePageTitle("Accounts", source?.name);
 
   if (loading) {
     return (

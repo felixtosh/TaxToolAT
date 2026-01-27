@@ -160,6 +160,16 @@ async function queueReceiptSearchForTransaction(options) {
             skipReason: "has_files",
         };
     }
+    // Check if transaction has a no-receipt category (considered complete)
+    const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
+    if (hasNoReceiptCategory && !force) {
+        return {
+            success: true,
+            message: "Transaction has a no-receipt category assigned",
+            skipped: true,
+            skipReason: "has_no_receipt_category",
+        };
+    }
     // Check if receipt search already ran for this partner
     const automationHistory = txData.automationHistory || [];
     const alreadyRanForPartner = automationHistory.some((entry) => entry.type === "receipt_search" &&

@@ -261,7 +261,7 @@ export function TransactionTable({
 
   // Determine which empty state to show
   const hasAnyFilters = searchValue || filters.dateFrom || filters.dateTo ||
-    filters.hasFile !== undefined || filters.amountType || filters.partnerIds?.length;
+    filters.isComplete !== undefined || filters.amountType || filters.partnerIds?.length;
 
   const emptyState = useMemo(() => {
     // Don't show empty state while still loading - prevents flicker

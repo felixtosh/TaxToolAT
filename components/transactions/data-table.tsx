@@ -52,7 +52,12 @@ function DataTableInner<TData extends { id: string }>(
   // Get row className based on completion status
   const getRowClassName = React.useCallback(
     (row: TData, isSelected: boolean) => {
-      if (isTransactionRow(row) && isRowComplete(row) && !isSelected) {
+      if (isTransactionRow(row) && isRowComplete(row)) {
+        if (isSelected) {
+          // Active/selected completed rows: darker green
+          return "bg-[#b8e986] hover:bg-[#a8d976] dark:bg-green-900/40 dark:hover:bg-green-900/50";
+        }
+        // Non-selected completed rows: light green
         return "bg-[#d9ffb2] hover:bg-[#c9f59f] dark:bg-green-950/20 dark:hover:bg-green-950/30";
       }
       return "";

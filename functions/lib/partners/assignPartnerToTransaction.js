@@ -63,8 +63,9 @@ exports.assignPartnerToTransactionCallable = (0, createCallable_1.createCallable
     if (txData.userId !== ctx.userId) {
         throw new createCallable_1.HttpsError("permission-denied", "Access denied");
     }
-    // Verify partner exists
-    const partnerRef = ctx.db.collection("partners").doc(partnerId);
+    // Verify partner exists - check correct collection based on type
+    const collectionName = partnerType === "global" ? "globalPartners" : "partners";
+    const partnerRef = ctx.db.collection(collectionName).doc(partnerId);
     const partnerSnap = await partnerRef.get();
     if (!partnerSnap.exists) {
         throw new createCallable_1.HttpsError("not-found", "Partner not found");

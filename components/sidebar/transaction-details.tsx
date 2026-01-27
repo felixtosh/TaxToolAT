@@ -5,9 +5,21 @@ import { format } from "date-fns";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { httpsCallable } from "firebase/functions";
+import { Timestamp } from "firebase/firestore";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
+
+/** Safely convert Firestore Timestamp or timestamp-like object to Date */
+function toDate(ts: Timestamp | { seconds: number; nanoseconds: number } | Date | null | undefined): Date {
+  if (!ts) return new Date();
+  if (ts instanceof Date) return ts;
+  if (ts instanceof Timestamp) return ts.toDate();
+  if (typeof ts === "object" && "seconds" in ts) {
+    return new Date(ts.seconds * 1000);
+  }
+  return new Date();
+}
 import { Button } from "@/components/ui/button";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
@@ -138,7 +150,7 @@ export function TransactionDetails({
   return (
     <div className="space-y-3">
       <FieldRow label="Date" labelWidth="w-32">
-        {format(transaction.date.toDate(), "MMM d, yyyy")}
+        {format(toDate(transaction.date), "MMM d, yyyy")}
       </FieldRow>
 
       <FieldRow label="Amount" labelWidth="w-32">
@@ -207,11 +219,11 @@ export function TransactionDetails({
           )}
 
           <FieldRow label="Created" labelWidth="w-32">
-            {format(transaction.createdAt.toDate(), "MMM d, yyyy HH:mm")}
+            {format(toDate(transaction.createdAt), "MMM d, yyyy HH:mm")}
           </FieldRow>
 
           <FieldRow label="Updated" labelWidth="w-32">
-            {format(transaction.updatedAt.toDate(), "MMM d, yyyy HH:mm")}
+            {format(toDate(transaction.updatedAt), "MMM d, yyyy HH:mm")}
           </FieldRow>
         </div>
       )}

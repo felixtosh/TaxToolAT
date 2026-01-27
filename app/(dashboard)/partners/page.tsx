@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { UserPartner, PartnerFilters } from "@/types/partner";
 import { parsePartnerFiltersFromUrl, buildPartnerFilterUrl } from "@/lib/filters/partner-url-params";
 import { cn } from "@/lib/utils";
+import { usePageTitle } from "@/hooks/use-page-title";
 
 const PANEL_WIDTH_KEY = "partnerDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 480;
@@ -83,6 +84,9 @@ function PartnersContent() {
     if (!selectedId || !partners.length) return null;
     return partners.find((p) => p.id === selectedId) || null;
   }, [selectedId, partners]);
+
+  // Set page title
+  usePageTitle("Partners", selectedPartner?.name);
 
   // Load panel width from localStorage
   useEffect(() => {

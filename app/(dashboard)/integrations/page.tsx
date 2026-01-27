@@ -29,11 +29,16 @@ import {
 import { useBrowserExtensionStatus } from "@/hooks/use-browser-extension";
 import { useEmailInbound } from "@/hooks/use-email-inbound";
 import { EmailIntegration } from "@/types/email-integration";
+import { usePageTitle } from "@/hooks/use-page-title";
 
 function IntegrationsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const extension = useBrowserExtensionStatus();
+
+  // Set page title
+  usePageTitle("Integrations");
+
   const {
     integrations,
     loading,
