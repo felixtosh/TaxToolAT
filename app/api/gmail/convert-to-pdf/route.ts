@@ -4,51 +4,12 @@ import { getAdminDb, getAdminBucket, getFirebaseStorageDownloadUrl } from "@/lib
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import { createHash, randomUUID } from "crypto";
-import puppeteer, { Browser } from "puppeteer";
+import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 
-// Singleton browser instance for performance - reused across requests
-let browserInstance: Browser | null = null;
-let browserLaunchPromise: Promise<Browser> | null = null;
-
-async function getBrowser(): Promise<Browser> {
-  if (browserInstance && browserInstance.connected) {
-    return browserInstance;
-  }
-
-  // Prevent multiple simultaneous launches
-  if (browserLaunchPromise) {
-    return browserLaunchPromise;
-  }
-
-  try {
-    browserLaunchPromise = puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
-    });
-
-    browserInstance = await browserLaunchPromise;
-    browserLaunchPromise = null;
-
-    // Handle browser disconnect
-    browserInstance.on('disconnected', () => {
-      browserInstance = null;
-    });
-
-    return browserInstance;
-  } catch (error) {
-    browserLaunchPromise = null;
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    // Check for Chrome not found error
-    if (errorMessage.includes('Could not find Chrome') || errorMessage.includes('Could not find browser')) {
-      throw new Error('PDF_CONVERSION_UNAVAILABLE: Chrome browser is not available in this environment. Email-to-PDF conversion is disabled.');
-    }
-    throw error;
-  }
+interface ConvertHtmlToPdfResponse {
+  success: boolean;
+  pdfBase64: string;
+  pageCount: number;
 }
 
 const db = getAdminDb();
@@ -371,7 +332,7 @@ function extractBodyContent(payload: GmailMessagePart | undefined): {
 }
 
 /**
- * Convert HTML to PDF using Puppeteer (preserves full HTML layout, tables, images)
+ * Convert HTML to PDF using Cloud Function (Puppeteer runs in Cloud Functions)
  */
 async function convertHtmlToPdf(
   html: string,
@@ -381,97 +342,32 @@ async function convertHtmlToPdf(
     date?: Date;
   }
 ): Promise<{ pdfBuffer: Buffer; pageCount: number }> {
-  const browser = await getBrowser();
-  const page = await browser.newPage();
+  const response = await callFirebaseFunction<
+    {
+      html: string;
+      metadata?: {
+        subject?: string;
+        from?: string;
+        date?: string;
+      };
+    },
+    ConvertHtmlToPdfResponse
+  >(
+    "convertHtmlToPdfCallable",
+    {
+      html,
+      metadata: metadata
+        ? {
+            subject: metadata.subject,
+            from: metadata.from,
+            date: metadata.date?.toISOString(),
+          }
+        : undefined,
+    }
+  );
 
-  try {
-    // Build a complete HTML document with email header
-    const headerHtml = metadata ? `
-      <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #ddd;">
-        ${metadata.subject ? `<h2 style="margin: 0 0 8px 0; font-size: 18px; color: #333;">${escapeHtml(metadata.subject)}</h2>` : ''}
-        ${metadata.from ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">From: ${escapeHtml(metadata.from)}</p>` : ''}
-        ${metadata.date && !isNaN(metadata.date.getTime()) ? `<p style="margin: 0; font-size: 12px; color: #666;">Date: ${metadata.date.toLocaleDateString("de-DE")}</p>` : ''}
-      </div>
-    ` : '';
-
-    const fullHtml = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8">
-          <style>
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-              font-size: 14px;
-              line-height: 1.5;
-              color: #333;
-              max-width: 100%;
-              padding: 20px;
-              box-sizing: border-box;
-            }
-            table {
-              border-collapse: collapse;
-              width: 100%;
-            }
-            td, th {
-              padding: 8px;
-              text-align: left;
-            }
-            img {
-              max-width: 100%;
-              height: auto;
-            }
-          </style>
-        </head>
-        <body>
-          ${headerHtml}
-          ${html}
-        </body>
-      </html>
-    `;
-
-    // Use 'domcontentloaded' instead of 'networkidle0' - don't wait for external images
-    // Email HTML often has broken cid: references and tracking pixels that never load
-    await page.setContent(fullHtml, {
-      waitUntil: 'domcontentloaded',
-      timeout: 10000
-    });
-
-    // Brief wait for any inline styles to apply
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: {
-        top: '20mm',
-        right: '15mm',
-        bottom: '20mm',
-        left: '15mm',
-      },
-    });
-
-    // Estimate page count (rough calculation based on buffer size)
-    // A typical A4 PDF page is ~3-5KB for text, more with images
-    const pageCount = Math.max(1, Math.ceil(pdfBuffer.length / 50000));
-
-    return {
-      pdfBuffer: Buffer.from(pdfBuffer),
-      pageCount,
-    };
-  } finally {
-    await page.close();
-  }
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  return {
+    pdfBuffer: Buffer.from(response.pdfBase64, "base64"),
+    pageCount: response.pageCount,
+  };
 }

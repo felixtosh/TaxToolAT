@@ -76,6 +76,7 @@ export {
 export { onGmailSyncComplete } from "./precision-search/onGmailSyncComplete";
 export { generateSearchQueriesCallable } from "./precision-search/generateSearchQueriesCallable";
 export { scoreAttachmentMatchCallable } from "./precision-search/scoreAttachmentMatchCallable";
+export { convertHtmlToPdfCallable } from "./precision-search/convertHtmlToPdfCallable";
 
 // Export inbound email functions
 export { receiveInboundEmail, testInboundEmail } from "./email-inbound/receiveEmail";
