@@ -15,6 +15,31 @@ const CORS_ORIGINS = [
 
 const db = getFirestore();
 
+/**
+ * Recursively remove undefined values from an object (Firestore doesn't accept undefined)
+ */
+function stripUndefined<T>(obj: T): T {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map((item) => stripUndefined(item)) as T;
+  }
+
+  if (typeof obj === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      if (value !== undefined) {
+        result[key] = stripUndefined(value);
+      }
+    }
+    return result as T;
+  }
+
+  return obj;
+}
+
 interface UserPartnerData {
   id: string;
   userId: string;
@@ -254,7 +279,7 @@ export const generatePromotionCandidates = onCall(
         if (!partnerData) continue;
 
         const candidateId = `candidate_${group.key.replace(/[^a-zA-Z0-9]/g, "_")}`;
-        batch.set(db.collection("promotionCandidates").doc(candidateId), {
+        batch.set(db.collection("promotionCandidates").doc(candidateId), stripUndefined({
           userPartner: {
             id: representative.id,
             userId: representative.userId,
@@ -277,7 +302,7 @@ export const generatePromotionCandidates = onCall(
           matchType: group.matchType,
           contributingUserIds: Array.from(group.userIds),
           createdAt: FieldValue.serverTimestamp(),
-        });
+        }));
 
         // Track added partners
         group.partners.forEach((p) => addedPartnerIds.add(p.id));
@@ -304,7 +329,7 @@ export const generatePromotionCandidates = onCall(
         const confidence = Math.min(80, 50 + Math.round(dataScore / 4));
 
         const candidateId = `single_${partner.id}`;
-        batch.set(db.collection("promotionCandidates").doc(candidateId), {
+        batch.set(db.collection("promotionCandidates").doc(candidateId), stripUndefined({
           userPartner: {
             id: partner.id,
             userId: partner.userId,
@@ -327,7 +352,7 @@ export const generatePromotionCandidates = onCall(
           matchType: "single",
           contributingUserIds: [partner.userId],
           createdAt: FieldValue.serverTimestamp(),
-        });
+        }));
 
         addedPartnerIds.add(partner.id);
         candidatesCreated++;

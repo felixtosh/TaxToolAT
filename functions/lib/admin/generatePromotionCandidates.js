@@ -12,6 +12,27 @@ const CORS_ORIGINS = [
 ];
 const db = (0, firestore_1.getFirestore)();
 /**
+ * Recursively remove undefined values from an object (Firestore doesn't accept undefined)
+ */
+function stripUndefined(obj) {
+    if (obj === null || obj === undefined) {
+        return obj;
+    }
+    if (Array.isArray(obj)) {
+        return obj.map((item) => stripUndefined(item));
+    }
+    if (typeof obj === "object") {
+        const result = {};
+        for (const [key, value] of Object.entries(obj)) {
+            if (value !== undefined) {
+                result[key] = stripUndefined(value);
+            }
+        }
+        return result;
+    }
+    return obj;
+}
+/**
  * Callable function to generate promotion candidates
  * Analyzes user partners across all users and identifies similar partners
  * that could be promoted to the global database
@@ -197,7 +218,7 @@ exports.generatePromotionCandidates = (0, https_1.onCall)({
             if (!partnerData)
                 continue;
             const candidateId = `candidate_${group.key.replace(/[^a-zA-Z0-9]/g, "_")}`;
-            batch.set(db.collection("promotionCandidates").doc(candidateId), {
+            batch.set(db.collection("promotionCandidates").doc(candidateId), stripUndefined({
                 userPartner: {
                     id: representative.id,
                     userId: representative.userId,
@@ -220,7 +241,7 @@ exports.generatePromotionCandidates = (0, https_1.onCall)({
                 matchType: group.matchType,
                 contributingUserIds: Array.from(group.userIds),
                 createdAt: firestore_1.FieldValue.serverTimestamp(),
-            });
+            }));
             // Track added partners
             group.partners.forEach((p) => addedPartnerIds.add(p.id));
             candidatesCreated++;
@@ -247,7 +268,7 @@ exports.generatePromotionCandidates = (0, https_1.onCall)({
             // Base confidence of 50 for single-user, plus data completeness bonus
             const confidence = Math.min(80, 50 + Math.round(dataScore / 4));
             const candidateId = `single_${partner.id}`;
-            batch.set(db.collection("promotionCandidates").doc(candidateId), {
+            batch.set(db.collection("promotionCandidates").doc(candidateId), stripUndefined({
                 userPartner: {
                     id: partner.id,
                     userId: partner.userId,
@@ -270,7 +291,7 @@ exports.generatePromotionCandidates = (0, https_1.onCall)({
                 matchType: "single",
                 contributingUserIds: [partner.userId],
                 createdAt: firestore_1.FieldValue.serverTimestamp(),
-            });
+            }));
             addedPartnerIds.add(partner.id);
             candidatesCreated++;
         }
