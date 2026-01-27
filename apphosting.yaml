@@ -6,6 +6,9 @@ runConfig:
   concurrency: 80
 
 env:
+  # App base URL for internal API calls
+  - variable: NEXT_PUBLIC_APP_URL
+    value: https://fibuki.com
   - variable: FIREBASE_SERVICE_ACCOUNT_KEY
     secret: FIREBASE_SERVICE_ACCOUNT_KEY
   - variable: ANTHROPIC_API_KEY
