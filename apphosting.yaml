@@ -1,0 +1,14 @@
+runConfig:
+  maxInstances: 10
+  minInstances: 0
+  cpu: 1
+  memoryMiB: 1024
+  concurrency: 80
+
+env:
+  - variable: FIREBASE_SERVICE_ACCOUNT_KEY
+    secret: FIREBASE_SERVICE_ACCOUNT_KEY
+  - variable: ANTHROPIC_API_KEY
+    secret: ANTHROPIC_API_KEY
+  - variable: GOOGLE_CLOUD_PROJECT
+    value: taxstudio-f12fb
