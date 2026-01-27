@@ -5,6 +5,8 @@
  * Admin only.
  */
 
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { getAdminDb, getAdminApp } from "@/lib/firebase/admin";
 import { getAuth } from "firebase-admin/auth";
