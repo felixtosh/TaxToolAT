@@ -294,13 +294,33 @@ function getSafeReturnTo(request: NextRequest): string | null {
   return returnTo;
 }
 
+function getBaseUrl(request: NextRequest): string {
+  // In production, use the forwarded host or a hardcoded domain
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const forwardedProto = request.headers.get("x-forwarded-proto") || "https";
+
+  if (forwardedHost) {
+    return `${forwardedProto}://${forwardedHost}`;
+  }
+
+  // Fallback to host header
+  const host = request.headers.get("host");
+  if (host && !host.startsWith("0.0.0.0") && !host.startsWith("127.0.0.1")) {
+    return `https://${host}`;
+  }
+
+  // Production fallback
+  return "https://fibuki.com";
+}
+
 function redirectWithParams(
   request: NextRequest,
   fallbackPath: string,
   params: Record<string, string>
 ): NextResponse {
   const returnTo = getSafeReturnTo(request);
-  const url = new URL(returnTo || fallbackPath, request.url);
+  const baseUrl = getBaseUrl(request);
+  const url = new URL(returnTo || fallbackPath, baseUrl);
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
   }
