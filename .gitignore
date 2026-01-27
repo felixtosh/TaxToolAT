@@ -46,3 +46,18 @@ storage-debug.log
 
 # Emulator data
 emulator-data/
+
+# Claude Code
+.claude/
+
+# MCP config
+.mcp.json
+
+# VSCode
+.vscode/
+
+# Node version
+.node-version
+
+# Firebase RC
+.firebaserc
