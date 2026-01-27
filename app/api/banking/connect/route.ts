@@ -4,15 +4,21 @@
  * Creates bank connections through any configured provider
  */
 
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+export const dynamic = "force-dynamic";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+export const dynamic = "force-dynamic";
 import {
   getBankingProvider,
   BankingProviderId,
   initializeBankingProviders,
 } from "@/lib/banking";
+export const dynamic = "force-dynamic";
 import { createBankConnection } from "@/lib/operations/banking-ops";
+export const dynamic = "force-dynamic";
 import { getAdminDb } from "@/lib/firebase/admin";
+export const dynamic = "force-dynamic";
 import { OperationsContext } from "@/lib/operations/types";
 
 // Initialize providers on module load

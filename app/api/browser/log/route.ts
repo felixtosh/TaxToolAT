@@ -1,4 +1,6 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+export const dynamic = "force-dynamic";
 import {
   addDoc,
   collection,
@@ -9,7 +11,9 @@ import {
   getDocs,
   where,
 } from "firebase/firestore";
+export const dynamic = "force-dynamic";
 import { getServerDb } from "@/lib/firebase/config-server";
+export const dynamic = "force-dynamic";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 const db = getServerDb();

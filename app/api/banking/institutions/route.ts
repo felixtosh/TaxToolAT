@@ -5,7 +5,9 @@
  * (GoCardless, TrueLayer) or a specific provider.
  */
 
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+export const dynamic = "force-dynamic";
 import {
   getBankingProvider,
   getEnabledBankingProviders,

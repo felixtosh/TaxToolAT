@@ -1,4 +1,6 @@
+export const dynamic = "force-dynamic";
 import fs from "fs";
+export const dynamic = "force-dynamic";
 import path from "path";
 
 export const runtime = "nodejs";

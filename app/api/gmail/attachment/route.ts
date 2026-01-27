@@ -1,8 +1,14 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+export const dynamic = "force-dynamic";
 import { getAdminDb, getAdminBucket, getFirebaseStorageDownloadUrl } from "@/lib/firebase/admin";
+export const dynamic = "force-dynamic";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
+export const dynamic = "force-dynamic";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+export const dynamic = "force-dynamic";
 import { GmailClient } from "@/lib/email-providers/gmail-client";
+export const dynamic = "force-dynamic";
 import { createHash, randomUUID } from "crypto";
 
 const db = getAdminDb();

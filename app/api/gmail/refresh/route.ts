@@ -1,5 +1,8 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+export const dynamic = "force-dynamic";
 import { getAdminDb } from "@/lib/firebase/admin";
+export const dynamic = "force-dynamic";
 import { Timestamp } from "firebase-admin/firestore";
 
 const db = getAdminDb();

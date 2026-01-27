@@ -5,14 +5,23 @@
  * Workers run as independent LangGraph agents with restricted toolsets.
  */
 
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+export const dynamic = "force-dynamic";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+export const dynamic = "force-dynamic";
 import { getAdminDb } from "@/lib/firebase/admin";
+export const dynamic = "force-dynamic";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
+export const dynamic = "force-dynamic";
 import { HumanMessage } from "@langchain/core/messages";
+export const dynamic = "force-dynamic";
 import { runWorkerGraph } from "@/lib/agent/worker-graph";
+export const dynamic = "force-dynamic";
 import { getWorkerConfig } from "@/lib/agent/worker-configs";
+export const dynamic = "force-dynamic";
 import { WorkerType, WorkerRunInput, WorkerMessage, WorkerRun } from "@/types/worker";
+export const dynamic = "force-dynamic";
 import { ModelProvider } from "@/lib/agent/model";
 
 const db = getAdminDb();

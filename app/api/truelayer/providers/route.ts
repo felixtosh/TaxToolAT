@@ -1,4 +1,6 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+export const dynamic = "force-dynamic";
 import { getProviders } from "@/lib/truelayer";
 
 /**

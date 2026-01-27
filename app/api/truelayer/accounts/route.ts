@@ -1,5 +1,8 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+export const dynamic = "force-dynamic";
 import { initializeApp, getApps } from "firebase/app";
+export const dynamic = "force-dynamic";
 import {
   getFirestore,
   connectFirestoreEmulator,
@@ -10,9 +13,13 @@ import {
   addDoc,
   Timestamp,
 } from "firebase/firestore";
+export const dynamic = "force-dynamic";
 import { getTrueLayerClient, getAccountIban } from "@/lib/truelayer";
+export const dynamic = "force-dynamic";
 import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
+export const dynamic = "force-dynamic";
 import { normalizeIban } from "@/lib/import/deduplication";
+export const dynamic = "force-dynamic";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
