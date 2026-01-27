@@ -24,16 +24,28 @@ const MAX_TOOL_RESULT_SIZE = 50000; // ~50KB per result
  * Truncate large tool results to prevent Firestore rules memory overflow
  */
 /**
- * Remove undefined values from an object (Firestore doesn't accept undefined)
+ * Recursively remove undefined values from an object (Firestore doesn't accept undefined)
  */
-function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (value !== undefined) {
-      result[key] = value;
-    }
+function stripUndefined<T>(obj: T): T {
+  if (obj === null || obj === undefined) {
+    return obj;
   }
-  return result as T;
+
+  if (Array.isArray(obj)) {
+    return obj.map((item) => stripUndefined(item)) as T;
+  }
+
+  if (typeof obj === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      if (value !== undefined) {
+        result[key] = stripUndefined(value);
+      }
+    }
+    return result as T;
+  }
+
+  return obj;
 }
 
 function sanitizeMessageForStorage(message: Omit<ChatMessage, "id" | "createdAt">): Omit<ChatMessage, "id" | "createdAt"> {
