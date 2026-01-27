@@ -181,9 +181,12 @@ export async function POST(request: NextRequest) {
     // Extract body content
     const { htmlBody, textBody } = extractBodyContent(message.payload);
 
+    // Get auth token from request headers to pass to Firebase function
+    const authToken = request.headers.get("Authorization") || "";
+
     // Convert to PDF
     const html = htmlBody || textBody || message.snippet || "";
-    const pdfResult = await convertHtmlToPdf(html, {
+    const pdfResult = await convertHtmlToPdf(html, authToken, {
       subject,
       from,
       date: emailDate,
@@ -336,6 +339,7 @@ function extractBodyContent(payload: GmailMessagePart | undefined): {
  */
 async function convertHtmlToPdf(
   html: string,
+  authToken: string,
   metadata?: {
     subject?: string;
     from?: string;
@@ -363,7 +367,8 @@ async function convertHtmlToPdf(
             date: metadata.date?.toISOString(),
           }
         : undefined,
-    }
+    },
+    authToken
   );
 
   return {
