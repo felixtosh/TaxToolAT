@@ -7,6 +7,8 @@
  * - Vercel AI SDK compatible response format
  */
 
+export const dynamic = "force-dynamic";
+
 import { createUIMessageStreamResponse } from "ai";
 import { toUIMessageStream } from "@ai-sdk/langchain";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";

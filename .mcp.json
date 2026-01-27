@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "taxstudio": {
+      "command": "npx",
+      "args": ["tsx", "./mcp-server/src/index.ts"],
+      "env": {
+        "USE_EMULATORS": "true"
+      }
+    }
+  }
+}
