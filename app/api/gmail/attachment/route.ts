@@ -108,10 +108,14 @@ export async function GET(request: NextRequest) {
     );
 
     // Return the attachment data with appropriate headers
+    // Use RFC 5987 encoding for non-ASCII filenames
+    const safeFilename = attachment.filename.replace(/[^\x20-\x7E]/g, "_");
+    const encodedFilename = encodeURIComponent(attachment.filename);
+
     return new NextResponse(new Uint8Array(attachment.data), {
       headers: {
         "Content-Type": normalizedMimeType,
-        "Content-Disposition": `inline; filename="${attachment.filename}"`,
+        "Content-Disposition": `inline; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`,
         "Content-Length": String(attachment.size),
       },
     });
