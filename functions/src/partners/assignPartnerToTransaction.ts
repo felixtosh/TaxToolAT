@@ -4,6 +4,7 @@
 
 import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { cancelPartnerWorkersForTransaction } from "../utils/cancelWorkers";
 
 interface AssignPartnerToTransactionRequest {
   transactionId: string;
@@ -89,6 +90,13 @@ export const assignPartnerToTransactionCallable = createCallable<
       console.log(
         `[assignPartnerToTransaction] Manual override: Partner ${partnerId} was previously rejected but user is re-adding via ${matchedBy}`
       );
+    }
+
+    // Cancel running partner automation when user manually assigns or accepts suggestion
+    if (matchedBy === "manual" || matchedBy === "suggestion") {
+      cancelPartnerWorkersForTransaction(ctx.userId, transactionId).catch((err) => {
+        console.error("[assignPartnerToTransaction] Failed to cancel partner workers:", err);
+      });
     }
 
     // Update transaction with partner assignment

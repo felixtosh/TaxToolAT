@@ -4,6 +4,7 @@
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { cancelPartnerWorkersForFile } from "../utils/cancelWorkers";
 
 interface UpdateFileRequest {
   fileId: string;
@@ -57,6 +58,17 @@ export const updateFileCallable = createCallable<
 
     if (fileSnap.data()!.userId !== ctx.userId) {
       throw new HttpsError("permission-denied", "Access denied");
+    }
+
+    // Cancel running partner automation when user manually assigns or accepts suggestion
+    const isManualPartnerAssignment =
+      data.partnerId &&
+      (data.partnerMatchedBy === "manual" || data.partnerMatchedBy === "suggestion");
+
+    if (isManualPartnerAssignment) {
+      cancelPartnerWorkersForFile(ctx.userId, fileId).catch((err) => {
+        console.error("[updateFile] Failed to cancel partner workers:", err);
+      });
     }
 
     // Build update object, converting dates and filtering undefined

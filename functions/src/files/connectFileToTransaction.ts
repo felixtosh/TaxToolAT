@@ -4,6 +4,10 @@
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import {
+  cancelFileWorkersForTransaction,
+  cancelTransactionWorkersForFile,
+} from "../utils/cancelWorkers";
 
 interface FileConnectionSourceInfo {
   sourceType?: string;
@@ -89,6 +93,18 @@ export const connectFileToTransactionCallable = createCallable<
         connectionId: existingQuery.docs[0].id,
         alreadyConnected: true,
       };
+    }
+
+    // Cancel running automation when user manually connects
+    if (connectionType === "manual") {
+      // Cancel file search workers for this transaction
+      cancelFileWorkersForTransaction(ctx.userId, transactionId).catch((err) => {
+        console.error("[connectFileToTransaction] Failed to cancel transaction workers:", err);
+      });
+      // Cancel transaction matching workers for this file
+      cancelTransactionWorkersForFile(ctx.userId, fileId).catch((err) => {
+        console.error("[connectFileToTransaction] Failed to cancel file workers:", err);
+      });
     }
 
     const now = Timestamp.now();
