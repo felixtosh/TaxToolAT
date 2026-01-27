@@ -6,11 +6,18 @@
 
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
 import { lookupCompany, lookupByVatId, callFirebaseFunction } from "@/lib/api/firebase-callable";
 
-const db = getAdminDb();
+// Lazy-load admin DB to avoid initialization at build time
+let _db: ReturnType<typeof import("@/lib/firebase/admin").getAdminDb> | null = null;
+async function getDb() {
+  if (!_db) {
+    const { getAdminDb } = await import("@/lib/firebase/admin");
+    _db = getAdminDb();
+  }
+  return _db;
+}
 
 // ============================================================================
 // Update Transaction
@@ -23,6 +30,7 @@ export const updateTransactionTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
     const txRef = db.collection("transactions").doc(transactionId);
     const txDoc = await txRef.get();
 
@@ -105,6 +113,7 @@ export const createSourceTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
     const sourceRef = await db.collection("sources").add({
       userId,
       name,
@@ -145,6 +154,7 @@ export const rollbackTransactionTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
     const txRef = db.collection("transactions").doc(transactionId);
     const txDoc = await txRef.get();
 
@@ -219,6 +229,8 @@ export const assignPartnerToTransactionTool = tool(
       return { error: "Auth header not provided" };
     }
 
+    const db = await getDb();
+
     try {
       // Call Cloud Function - handles validation, pattern learning, and receipt search
       const result = await callFirebaseFunction<
@@ -283,6 +295,8 @@ export const assignPartnerToFileTool = tool(
     if (!authHeader) {
       return { error: "Auth header not provided" };
     }
+
+    const db = await getDb();
 
     try {
       // Call updateFile Cloud Function to assign the partner
@@ -399,6 +413,8 @@ export const updatePartnerTool = tool(
     if (!authHeader) {
       return { error: "Auth header not provided" };
     }
+
+    const db = await getDb();
 
     // Get current partner for comparison (read-only)
     const partnerDoc = await db.collection("partners").doc(partnerId).get();
@@ -525,6 +541,8 @@ export const bulkAssignPartnerToTransactionsTool = tool(
       return { error: "No transaction IDs provided" };
     }
 
+    const db = await getDb();
+
     // Get partner name for response
     const partnerDoc = await db.collection("partners").doc(partnerId).get();
     if (!partnerDoc.exists) {
@@ -587,6 +605,8 @@ export const findOrCreatePartnerTool = tool(
     if (!userId || !authHeader) {
       return { error: "User ID or auth header not provided" };
     }
+
+    const db = await getDb();
 
     const searchTerm = nameOrUrl.trim();
     const isUrl = searchTerm.includes(".") && !searchTerm.includes(" ");

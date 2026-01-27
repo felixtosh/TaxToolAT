@@ -6,9 +6,18 @@
 
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { getAdminDb } from "@/lib/firebase/admin";
 import { classifyEmail } from "@/lib/email-providers/interface";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
+
+// Lazy-load admin DB to avoid initialization at build time
+let _db: ReturnType<typeof import("@/lib/firebase/admin").getAdminDb> | null = null;
+async function getDb() {
+  if (!_db) {
+    const { getAdminDb } = await import("@/lib/firebase/admin");
+    _db = getAdminDb();
+  }
+  return _db;
+}
 
 // Server-side attachment scoring types (matches scoreAttachmentMatchCallable)
 interface ScoreAttachmentRequest {
@@ -53,8 +62,6 @@ interface ScoreAttachmentResponse {
     reasons: string[];
   }>;
 }
-
-const db = getAdminDb();
 
 // Types for search query generation
 interface TypedSuggestion {
@@ -128,6 +135,8 @@ export const generateSearchSuggestionsTool = tool(
     if (!userId) {
       return { error: "User ID not provided" };
     }
+
+    const db = await getDb();
 
     // Get transaction
     const txDoc = await db.collection("transactions").doc(transactionId).get();
@@ -275,6 +284,8 @@ export const searchLocalFilesTool = tool(
     if (!userId) {
       return { error: "User ID not provided" };
     }
+
+    const db = await getDb();
 
     // Get transaction
     const txDoc = await db.collection("transactions").doc(transactionId).get();
@@ -497,6 +508,8 @@ export const searchGmailAttachmentsTool = tool(
     if (!userId) {
       return { error: "User ID not provided" };
     }
+
+    const db = await getDb();
 
     // Get transaction
     const txDoc = await db.collection("transactions").doc(transactionId).get();
@@ -896,6 +909,8 @@ export const searchGmailEmailsTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
+
     // Get transaction context if provided (for scoring)
     let tx = null;
     let partner = null;
@@ -1150,6 +1165,8 @@ export const analyzeEmailTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
+
     // Verify integration belongs to user
     const integrationDoc = await db.collection("emailIntegrations").doc(integrationId).get();
     if (!integrationDoc.exists || integrationDoc.data()?.userId !== userId) {
@@ -1267,6 +1284,8 @@ export const connectFileToTransactionTool = tool(
     if (!userId) {
       return { error: "User ID not provided" };
     }
+
+    const db = await getDb();
 
     // Verify file exists and belongs to user
     const fileDoc = await db.collection("files").doc(fileId).get();

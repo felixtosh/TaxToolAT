@@ -6,10 +6,17 @@
 
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
 
-const db = getAdminDb();
+// Lazy-load admin DB to avoid initialization at build time
+let _db: ReturnType<typeof import("@/lib/firebase/admin").getAdminDb> | null = null;
+async function getDb() {
+  if (!_db) {
+    const { getAdminDb } = await import("@/lib/firebase/admin");
+    _db = getAdminDb();
+  }
+  return _db;
+}
 
 // ============================================================================
 // List Transactions
@@ -36,6 +43,7 @@ export const listTransactionsTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
     let query = db
       .collection("transactions")
       .where("userId", "==", userId)
@@ -188,6 +196,7 @@ export const getTransactionTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
     const doc = await db.collection("transactions").doc(transactionId).get();
 
     if (!doc.exists) {
@@ -240,6 +249,7 @@ export const listSourcesTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
     let query = db.collection("sources").where("userId", "==", userId);
 
     if (!includeInactive) {
@@ -286,6 +296,7 @@ export const getSourceTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
     const doc = await db.collection("sources").doc(sourceId).get();
 
     if (!doc.exists) {
@@ -327,6 +338,8 @@ export const getTransactionHistoryTool = tool(
     if (!userId) {
       return { error: "User ID not provided" };
     }
+
+    const db = await getDb();
 
     // Verify transaction ownership
     const txDoc = await db.collection("transactions").doc(transactionId).get();
@@ -389,6 +402,8 @@ export const listFilesTool = tool(
     if (!userId) {
       return { error: "User ID not provided" };
     }
+
+    const db = await getDb();
 
     // Note: Can't filter deletedAt at query level since Firestore won't match
     // documents where the field doesn't exist. Filter client-side instead.
@@ -517,6 +532,7 @@ export const getFileTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
     const doc = await db.collection("files").doc(fileId).get();
 
     if (!doc.exists) {
@@ -599,6 +615,8 @@ export const waitForFileExtractionTool = tool(
     if (!userId) {
       return { error: "User ID not provided" };
     }
+
+    const db = await getDb();
 
     const pollIntervalMs = 2000; // Check every 2 seconds
     const maxAttempts = Math.ceil((timeoutSeconds * 1000) / pollIntervalMs);
@@ -735,6 +753,7 @@ export const listPartnersTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
     let query = db
       .collection("partners")
       .where("userId", "==", userId)
@@ -798,6 +817,7 @@ export const getPartnerTool = tool(
       return { error: "User ID not provided" };
     }
 
+    const db = await getDb();
     const doc = await db.collection("partners").doc(partnerId).get();
 
     if (!doc.exists) {

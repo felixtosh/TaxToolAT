@@ -62,12 +62,35 @@ export function getAdminApp(): App {
   } else {
     // Production: use service account
     const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-    if (serviceAccount) {
-      _adminApp = initializeApp({
-        credential: cert(JSON.parse(serviceAccount)),
-        projectId: "taxstudio-f12fb",
-        storageBucket,
-      });
+    if (serviceAccount && serviceAccount.length > 10) {
+      try {
+        // Clean the service account key:
+        // 1. Trim whitespace
+        // 2. Remove any non-printable characters at the end
+        // 3. Handle potential encoding issues
+        let cleanedServiceAccount = serviceAccount.trim();
+        // Remove any trailing non-JSON characters (handles BOM, null bytes, etc.)
+        const lastBrace = cleanedServiceAccount.lastIndexOf("}");
+        if (lastBrace > 0 && lastBrace < cleanedServiceAccount.length - 1) {
+          cleanedServiceAccount = cleanedServiceAccount.substring(0, lastBrace + 1);
+        }
+        const parsedCredential = JSON.parse(cleanedServiceAccount);
+        _adminApp = initializeApp({
+          credential: cert(parsedCredential),
+          projectId: "taxstudio-f12fb",
+          storageBucket,
+        });
+      } catch (parseError) {
+        console.error("[Firebase Admin] Failed to parse service account key:", parseError);
+        console.error("[Firebase Admin] Service account length:", serviceAccount?.length);
+        console.error("[Firebase Admin] First 50 chars:", serviceAccount?.substring(0, 50));
+        console.error("[Firebase Admin] Last 50 chars:", serviceAccount?.substring(serviceAccount.length - 50));
+        // Fall back to application default credentials
+        _adminApp = initializeApp({
+          projectId: "taxstudio-f12fb",
+          storageBucket,
+        });
+      }
     } else {
       // Fallback for environments where application default credentials are available
       _adminApp = initializeApp({

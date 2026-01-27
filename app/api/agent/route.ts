@@ -9,12 +9,13 @@ export const dynamic = "force-dynamic";
  * - Langfuse tracing for observability
  */
 
-
 import { NextRequest, NextResponse } from "next/server";
-import { HumanMessage, AIMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import { runAgentGraph, continueAfterConfirmation } from "@/lib/agent/graph";
-import { createLangfuseHandler, flushLangfuse } from "@/lib/agent/langfuse";
+
+// Dynamic imports to avoid build-time analysis issues with LangChain
+const getLangChainMessages = async () => import("@langchain/core/messages");
+const getAgentGraph = async () => import("@/lib/agent/graph");
+const getLangfuse = async () => import("@/lib/agent/langfuse");
 
 // ============================================================================
 // Types
@@ -48,7 +49,9 @@ interface RequestBody {
 // Message Conversion
 // ============================================================================
 
-function convertMessages(messages: MessageInput[]) {
+async function convertMessages(messages: MessageInput[]) {
+  const { HumanMessage, AIMessage, SystemMessage, ToolMessage } = await getLangChainMessages();
+
   return messages.map((msg) => {
     switch (msg.role) {
       case "user":
@@ -78,7 +81,9 @@ function convertMessages(messages: MessageInput[]) {
   });
 }
 
-function serializeMessages(messages: unknown[]) {
+async function serializeMessages(messages: unknown[]) {
+  const { HumanMessage, AIMessage, SystemMessage, ToolMessage } = await getLangChainMessages();
+
   return messages.map((msg) => {
     if (msg instanceof HumanMessage) {
       return { role: "user", content: msg.content };
@@ -123,11 +128,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // Dynamic imports at runtime
+    const { runAgentGraph, continueAfterConfirmation } = await getAgentGraph();
+    const { createLangfuseHandler, flushLangfuse } = await getLangfuse();
+
     const authHeader = request.headers.get("Authorization") || "";
     const body: RequestBody = await request.json();
 
     // Convert messages
-    const messages = convertMessages(body.messages);
+    const messages = await convertMessages(body.messages);
 
     // Create Langfuse handler for tracing
     const langfuseHandler = createLangfuseHandler({
@@ -167,7 +176,7 @@ export async function POST(request: NextRequest) {
 
     // Serialize response
     return NextResponse.json({
-      messages: serializeMessages(result.messages),
+      messages: await serializeMessages(result.messages),
       pendingConfirmation: result.pendingConfirmation,
     });
   } catch (error) {

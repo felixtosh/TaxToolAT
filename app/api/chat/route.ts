@@ -8,24 +8,18 @@ export const dynamic = "force-dynamic";
  * - Vercel AI SDK compatible response format
  */
 
-
-import { createUIMessageStreamResponse } from "ai";
-import { toUIMessageStream } from "@ai-sdk/langchain";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import { buildAgentGraph, ModelProvider } from "@/lib/agent/graph";
-import { getModelId, calculateCost } from "@/lib/agent/model";
-import { createLangfuseHandler, flushLangfuse } from "@/lib/agent/langfuse";
-import {
-  HumanMessage,
-  AIMessage,
-  AIMessageChunk,
-  SystemMessage,
-  ToolMessage,
-  BaseMessage,
-} from "@langchain/core/messages";
 import { SYSTEM_PROMPT } from "@/lib/chat/system-prompt";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
+
+// Dynamic imports to avoid build-time analysis issues
+const getAI = async () => import("ai");
+const getLangchainAdapter = async () => import("@ai-sdk/langchain");
+const getAgentGraph = async () => import("@/lib/agent/graph");
+const getAgentModel = async () => import("@/lib/agent/model");
+const getLangfuse = async () => import("@/lib/agent/langfuse");
+const getLangChainMessages = async () => import("@langchain/core/messages");
 
 const db = getAdminDb();
 
@@ -55,8 +49,9 @@ interface UIMessageInput {
 /**
  * Convert UI messages to LangChain message format
  */
-function convertToLangChainMessages(uiMessages: UIMessageInput[]): BaseMessage[] {
-  const result: BaseMessage[] = [];
+async function convertToLangChainMessages(uiMessages: UIMessageInput[]) {
+  const { HumanMessage, AIMessage, SystemMessage, ToolMessage } = await getLangChainMessages();
+  const result: InstanceType<typeof HumanMessage | typeof AIMessage | typeof SystemMessage | typeof ToolMessage>[] = [];
 
   for (const msg of uiMessages) {
     if (msg.role === "user") {
@@ -127,61 +122,32 @@ function convertToLangChainMessages(uiMessages: UIMessageInput[]): BaseMessage[]
   return result;
 }
 
-// ============================================================================
-// AI Usage Logging
-// ============================================================================
-
-async function logAIUsage(
-  userId: string,
-  params: {
-    function: string;
-    model: string;
-    modelProvider: ModelProvider;
-    inputTokens: number;
-    outputTokens: number;
-  }
-): Promise<void> {
-  const cost = calculateCost(params.modelProvider, params.inputTokens, params.outputTokens);
-
-  try {
-    await db.collection("aiUsage").add({
-      userId,
-      function: params.function,
-      model: params.model,
-      inputTokens: params.inputTokens,
-      outputTokens: params.outputTokens,
-      estimatedCost: cost,
-      createdAt: Timestamp.now(),
-      metadata: null,
-    });
-
-    console.log(`[AI Usage] ${params.function}`, {
-      model: params.model,
-      inputTokens: params.inputTokens,
-      outputTokens: params.outputTokens,
-      estimatedCost: `$${cost.toFixed(4)}`,
-    });
-  } catch (error) {
-    console.error("[AI Usage] Failed to log usage:", error);
-  }
-}
+// AI Usage Logging is now inline in POST handler to use dynamic imports
 
 // ============================================================================
 // API Handler
 // ============================================================================
 
 export async function POST(req: Request) {
+  // Dynamic imports at runtime
+  const { createUIMessageStreamResponse } = await getAI();
+  const { toUIMessageStream } = await getLangchainAdapter();
+  const { buildAgentGraph } = await getAgentGraph();
+  const { getModelId, calculateCost } = await getAgentModel();
+  const { createLangfuseHandler, flushLangfuse } = await getLangfuse();
+  const { SystemMessage } = await getLangChainMessages();
+
   const authHeader = req.headers.get("Authorization") || "";
   const userId = await getServerUserIdWithFallback(req);
   const { messages: rawMessages, modelProvider: requestedProvider } = await req.json();
 
   // Determine model provider (default to gemini for cost savings, anthropic as backup)
-  const modelProvider: ModelProvider = requestedProvider || "gemini";
+  const modelProvider: "anthropic" | "gemini" = requestedProvider || "gemini";
 
   console.log(`[Chat API] Starting LangGraph agent with ${modelProvider}, ${rawMessages.length} messages`);
 
   // Convert messages to LangChain format
-  const messages = convertToLangChainMessages(rawMessages);
+  const messages = await convertToLangChainMessages(rawMessages);
 
   // Add system message if not present
   const hasSystemMessage = messages.some((m) => m instanceof SystemMessage);
@@ -221,19 +187,20 @@ export async function POST(req: Request) {
   );
 
   // Wrap stream to capture token usage while preserving the langgraph format
-  // The graphStream with streamMode: ["messages"] yields tuples: ["messages", [AIMessageChunk, metadata]]
+  // The graphStream with streamMode: ["messages"] yields tuples: ["messages", [messageChunk, metadata]]
   // We must yield the FULL tuple for toUIMessageStream to detect it as langgraph format
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function* trackUsage(): AsyncGenerator<any> {
     for await (const chunk of graphStream) {
-      // Format: ["messages", [AIMessageChunk, metadata]]
+      // Format: ["messages", [messageChunk, metadata]]
       if (!Array.isArray(chunk) || chunk[0] !== "messages") {
         // Pass through non-messages chunks
         yield chunk;
         continue;
       }
 
-      const msgData = chunk[1] as [AIMessageChunk, unknown];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const msgData = chunk[1] as [any, unknown];
       if (!Array.isArray(msgData)) {
         yield chunk;
         continue;
@@ -306,15 +273,29 @@ export async function POST(req: Request) {
     onFinal: async () => {
       console.log("[Stream] Complete, tokens:", { totalInputTokens, totalOutputTokens });
 
-      // Log AI usage
+      // Log AI usage inline
       if (userId && (totalInputTokens > 0 || totalOutputTokens > 0)) {
-        await logAIUsage(userId, {
-          function: "chat",
-          model: getModelId(modelProvider),
-          modelProvider,
-          inputTokens: totalInputTokens,
-          outputTokens: totalOutputTokens,
-        });
+        const cost = calculateCost(modelProvider, totalInputTokens, totalOutputTokens);
+        try {
+          await db.collection("aiUsage").add({
+            userId,
+            function: "chat",
+            model: getModelId(modelProvider),
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            estimatedCost: cost,
+            createdAt: Timestamp.now(),
+            metadata: null,
+          });
+          console.log(`[AI Usage] chat`, {
+            model: getModelId(modelProvider),
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            estimatedCost: `$${cost.toFixed(4)}`,
+          });
+        } catch (error) {
+          console.error("[AI Usage] Failed to log usage:", error);
+        }
       }
 
       // Flush Langfuse
