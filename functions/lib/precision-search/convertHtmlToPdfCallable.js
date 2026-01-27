@@ -9,7 +9,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.convertHtmlToPdfCallable = void 0;
 const createCallable_1 = require("../utils/createCallable");
 const htmlToPdf_1 = require("./htmlToPdf");
-exports.convertHtmlToPdfCallable = (0, createCallable_1.createCallable)({ name: "convertHtmlToPdf" }, async (_ctx, request) => {
+exports.convertHtmlToPdfCallable = (0, createCallable_1.createCallable)({ name: "convertHtmlToPdf", memory: "1GiB", timeoutSeconds: 120 }, async (_ctx, request) => {
     const { html, metadata } = request;
     if (!html) {
         throw new createCallable_1.HttpsError("invalid-argument", "html is required");

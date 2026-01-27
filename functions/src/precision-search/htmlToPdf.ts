@@ -4,9 +4,12 @@
  * Converts email HTML content to PDF for storage as a receipt file.
  * Uses Puppeteer (headless Chrome) for high-quality rendering that preserves
  * HTML layout, tables, images, and CSS styling.
+ *
+ * Uses @sparticuz/chromium for serverless environments (Cloud Functions).
  */
 
-import puppeteer, { Browser } from "puppeteer";
+import chromium from "@sparticuz/chromium";
+import puppeteer, { Browser } from "puppeteer-core";
 
 export interface PdfConversionResult {
   pdfBuffer: Buffer;
@@ -27,15 +30,13 @@ async function getBrowser(): Promise<Browser> {
     return browserLaunchPromise;
   }
 
+  // Disable WebGL for better performance
+  chromium.setGraphicsMode = false;
+
   browserLaunchPromise = puppeteer.launch({
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--single-process", // Important for Cloud Functions
-    ],
+    args: chromium.args,
+    executablePath: await chromium.executablePath(),
+    headless: "shell",
   });
 
   browserInstance = await browserLaunchPromise;

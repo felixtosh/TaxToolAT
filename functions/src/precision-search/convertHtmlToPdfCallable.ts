@@ -27,7 +27,7 @@ export const convertHtmlToPdfCallable = createCallable<
   ConvertHtmlToPdfRequest,
   ConvertHtmlToPdfResponse
 >(
-  { name: "convertHtmlToPdf" },
+  { name: "convertHtmlToPdf", memory: "1GiB", timeoutSeconds: 120 },
   async (_ctx, request) => {
     const { html, metadata } = request;
 

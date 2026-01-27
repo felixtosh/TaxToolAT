@@ -39,6 +39,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.assignPartnerToTransactionCallable = void 0;
 const firestore_1 = require("firebase-admin/firestore");
 const createCallable_1 = require("../utils/createCallable");
+const cancelWorkers_1 = require("../utils/cancelWorkers");
 exports.assignPartnerToTransactionCallable = (0, createCallable_1.createCallable)({ name: "assignPartnerToTransaction" }, async (ctx, request) => {
     const { transactionId, partnerId, partnerType, matchedBy, confidence } = request;
     if (!transactionId) {
@@ -87,6 +88,12 @@ exports.assignPartnerToTransactionCallable = (0, createCallable_1.createCallable
     if (wasRejected) {
         // Manual/suggestion override of a previously rejected partner
         console.log(`[assignPartnerToTransaction] Manual override: Partner ${partnerId} was previously rejected but user is re-adding via ${matchedBy}`);
+    }
+    // Cancel running partner automation when user manually assigns or accepts suggestion
+    if (matchedBy === "manual" || matchedBy === "suggestion") {
+        (0, cancelWorkers_1.cancelPartnerWorkersForTransaction)(ctx.userId, transactionId).catch((err) => {
+            console.error("[assignPartnerToTransaction] Failed to cancel partner workers:", err);
+        });
     }
     // Update transaction with partner assignment
     await transactionRef.update({

@@ -5,6 +5,8 @@
  * Converts email HTML content to PDF for storage as a receipt file.
  * Uses Puppeteer (headless Chrome) for high-quality rendering that preserves
  * HTML layout, tables, images, and CSS styling.
+ *
+ * Uses @sparticuz/chromium for serverless environments (Cloud Functions).
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -12,7 +14,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.convertHtmlToPdf = convertHtmlToPdf;
 exports.isComplexHtml = isComplexHtml;
-const puppeteer_1 = __importDefault(require("puppeteer"));
+const chromium_1 = __importDefault(require("@sparticuz/chromium"));
+const puppeteer_core_1 = __importDefault(require("puppeteer-core"));
 // Singleton browser instance for performance - reused across requests
 let browserInstance = null;
 let browserLaunchPromise = null;
@@ -24,15 +27,12 @@ async function getBrowser() {
     if (browserLaunchPromise) {
         return browserLaunchPromise;
     }
-    browserLaunchPromise = puppeteer_1.default.launch({
-        headless: true,
-        args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--single-process", // Important for Cloud Functions
-        ],
+    // Disable WebGL for better performance
+    chromium_1.default.setGraphicsMode = false;
+    browserLaunchPromise = puppeteer_core_1.default.launch({
+        args: chromium_1.default.args,
+        executablePath: await chromium_1.default.executablePath(),
+        headless: "shell",
     });
     browserInstance = await browserLaunchPromise;
     browserLaunchPromise = null;

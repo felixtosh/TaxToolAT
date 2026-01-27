@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.connectFileToTransactionCallable = void 0;
 const firestore_1 = require("firebase-admin/firestore");
 const createCallable_1 = require("../utils/createCallable");
+const cancelWorkers_1 = require("../utils/cancelWorkers");
 exports.connectFileToTransactionCallable = (0, createCallable_1.createCallable)({ name: "connectFileToTransaction" }, async (ctx, request) => {
     const { fileId, transactionId, connectionType = "manual", matchConfidence, sourceInfo, } = request;
     if (!fileId || !transactionId) {
@@ -45,6 +46,17 @@ exports.connectFileToTransactionCallable = (0, createCallable_1.createCallable)(
             connectionId: existingQuery.docs[0].id,
             alreadyConnected: true,
         };
+    }
+    // Cancel running automation when user manually connects
+    if (connectionType === "manual") {
+        // Cancel file search workers for this transaction
+        (0, cancelWorkers_1.cancelFileWorkersForTransaction)(ctx.userId, transactionId).catch((err) => {
+            console.error("[connectFileToTransaction] Failed to cancel transaction workers:", err);
+        });
+        // Cancel transaction matching workers for this file
+        (0, cancelWorkers_1.cancelTransactionWorkersForFile)(ctx.userId, fileId).catch((err) => {
+            console.error("[connectFileToTransaction] Failed to cancel file workers:", err);
+        });
     }
     const now = firestore_1.Timestamp.now();
     const batch = ctx.db.batch();
