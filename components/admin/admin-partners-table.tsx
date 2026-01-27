@@ -11,6 +11,7 @@ import {
   DataTableHandle,
   DataTableSection,
 } from "@/components/ui/data-table";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Plus,
   Globe,
@@ -261,65 +262,67 @@ function AdminPartnersTableInner(
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-background">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b bg-background">
-        <SearchButton
-          value={searchValue}
-          onSearch={onSearchChange}
-          placeholder="Search partners..."
-        />
+    <TooltipProvider>
+      <div className="flex flex-col h-full overflow-hidden bg-background">
+        {/* Toolbar */}
+        <div className="flex items-center gap-2 px-4 py-2 border-b bg-background">
+          <SearchButton
+            value={searchValue}
+            onSearch={onSearchChange}
+            placeholder="Search partners..."
+          />
 
-        <div className="flex-1" />
+          <div className="flex-1" />
 
-        {onGenerateCandidates && (
-          <Button
-            onClick={handleGenerateCandidates}
-            size="sm"
-            variant="outline"
-            disabled={isGenerating}
-          >
-            <RefreshCw className={cn("h-4 w-4 mr-2", isGenerating && "animate-spin")} />
-            {isGenerating ? "Scanning..." : "Find Suggestions"}
+          {onGenerateCandidates && (
+            <Button
+              onClick={handleGenerateCandidates}
+              size="sm"
+              variant="outline"
+              disabled={isGenerating}
+            >
+              <RefreshCw className={cn("h-4 w-4 mr-2", isGenerating && "animate-spin")} />
+              {isGenerating ? "Scanning..." : "Find Suggestions"}
+            </Button>
+          )}
+
+          {onTogglePresetPartners && (
+            <Button
+              onClick={handleTogglePresetPartners}
+              size="sm"
+              variant={presetPartnersEnabled ? "destructive" : "outline"}
+              disabled={presetPartnersLoading}
+            >
+              <Database className={cn("h-4 w-4 mr-2", presetPartnersLoading && "animate-pulse")} />
+              {presetPartnersLoading
+                ? "Loading..."
+                : presetPartnersEnabled
+                ? "Disable Presets"
+                : "Enable Presets (250)"}
+            </Button>
+          )}
+
+          <Button onClick={onAdd} size="sm">
+            <Plus className="h-4 w-4 mr-2" />
+            Add Partner
           </Button>
-        )}
+        </div>
 
-        {onTogglePresetPartners && (
-          <Button
-            onClick={handleTogglePresetPartners}
-            size="sm"
-            variant={presetPartnersEnabled ? "destructive" : "outline"}
-            disabled={presetPartnersLoading}
-          >
-            <Database className={cn("h-4 w-4 mr-2", presetPartnersLoading && "animate-pulse")} />
-            {presetPartnersLoading
-              ? "Loading..."
-              : presetPartnersEnabled
-              ? "Disable Presets"
-              : "Enable Presets (250)"}
-          </Button>
-        )}
-
-        <Button onClick={onAdd} size="sm">
-          <Plus className="h-4 w-4 mr-2" />
-          Add Partner
-        </Button>
+        {/* Table */}
+        <div className="flex-1 overflow-hidden">
+          <ResizableDataTable
+            ref={tableRef}
+            columns={columns}
+            sections={sections}
+            onRowClick={handleRowClick}
+            selectedRowId={selectedId}
+            defaultColumnSizes={DEFAULT_ADMIN_PARTNER_COLUMN_SIZES}
+            getRowDataAttributes={getRowDataAttributes}
+            emptyMessage={searchValue ? "No partners match your search" : "No global partners yet"}
+          />
+        </div>
       </div>
-
-      {/* Table */}
-      <div className="flex-1 overflow-hidden">
-        <ResizableDataTable
-          ref={tableRef}
-          columns={columns}
-          sections={sections}
-          onRowClick={handleRowClick}
-          selectedRowId={selectedId}
-          defaultColumnSizes={DEFAULT_ADMIN_PARTNER_COLUMN_SIZES}
-          getRowDataAttributes={getRowDataAttributes}
-          emptyMessage={searchValue ? "No partners match your search" : "No global partners yet"}
-        />
-      </div>
-    </div>
+    </TooltipProvider>
   );
 }
 
