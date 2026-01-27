@@ -118,12 +118,12 @@ export function useWorkerQueue(options: UseWorkerQueueOptions = {}) {
           throw new Error(result.error || "Worker API request failed");
         }
 
-        // Mark as completed
+        // Mark as completed (only include summary if defined)
         await updateDoc(requestRef, {
           status: "completed",
           completedAt: Timestamp.now(),
           workerRunId: result.runId,
-          summary: result.summary,
+          ...(result.summary !== undefined && { summary: result.summary }),
         });
 
         // Update transaction automation history if this was a receipt search
