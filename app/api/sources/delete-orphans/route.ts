@@ -1,8 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-export const dynamic = "force-dynamic";
 import { initializeApp, getApps } from "firebase/app";
-export const dynamic = "force-dynamic";
 import {
   getFirestore,
   connectFirestoreEmulator,
@@ -13,7 +11,6 @@ import {
   deleteDoc,
   doc,
 } from "firebase/firestore";
-export const dynamic = "force-dynamic";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side

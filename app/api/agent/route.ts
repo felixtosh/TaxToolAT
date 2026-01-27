@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * LangGraph Agent API Route
  *
@@ -8,7 +9,6 @@
  * - Langfuse tracing for observability
  */
 
-export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { HumanMessage, AIMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";

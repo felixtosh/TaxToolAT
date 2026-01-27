@@ -1,6 +1,5 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-export const dynamic = "force-dynamic";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 
 // Types matching the callable response

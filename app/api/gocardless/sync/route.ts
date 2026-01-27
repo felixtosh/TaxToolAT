@@ -1,14 +1,9 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-export const dynamic = "force-dynamic";
 import { initializeApp, getApps } from "firebase/app";
-export const dynamic = "force-dynamic";
 import { getFirestore } from "firebase/firestore";
-export const dynamic = "force-dynamic";
 import { syncTransactions, getSyncStatus, checkReauthRequired } from "@/lib/operations";
-export const dynamic = "force-dynamic";
 import { ReauthRequiredError, RateLimitError } from "@/lib/gocardless";
-export const dynamic = "force-dynamic";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side

@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Chat API Route - Full LangGraph Implementation
  *
@@ -7,7 +8,6 @@
  * - Vercel AI SDK compatible response format
  */
 
-export const dynamic = "force-dynamic";
 
 import { createUIMessageStreamResponse } from "ai";
 import { toUIMessageStream } from "@ai-sdk/langchain";

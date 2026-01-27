@@ -1,12 +1,11 @@
+export const dynamic = "force-dynamic";
 /**
  * Banking Providers API
  *
  * Lists all available banking providers and their configuration status
  */
 
-export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-export const dynamic = "force-dynamic";
 import {
   getBankingProviderInfo,
   initializeBankingProviders,

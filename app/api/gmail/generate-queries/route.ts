@@ -1,6 +1,5 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-export const dynamic = "force-dynamic";
 import { VertexAI } from "@google-cloud/vertexai";
 
 const GEMINI_MODEL = "gemini-2.0-flash-lite-001";
