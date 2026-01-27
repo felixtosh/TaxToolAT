@@ -1111,7 +1111,13 @@ export const searchGmailEmailsTool = tool(
       return new Date(b.date).getTime() - new Date(a.date).getTime();
     });
 
-    const resultEmails = scoredEmails.slice(0, 20);
+    // Limit results and strip bodyText to avoid token explosion
+    // bodyText is only needed for server-side scoring, not for agent output
+    const resultEmails = scoredEmails.slice(0, 10).map(({ bodyText, ...rest }) => ({
+      ...rest,
+      // Provide truncated snippet if bodyText exists but snippet is empty
+      snippet: rest.snippet || (bodyText ? bodyText.slice(0, 200) + "..." : ""),
+    }));
 
     return {
       searchType: "gmail_emails",
