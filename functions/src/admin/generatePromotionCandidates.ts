@@ -6,6 +6,13 @@ import {
   calculateCompanyNameSimilarity,
 } from "../utils/partner-matcher";
 
+const CORS_ORIGINS = [
+  "https://fibuki.com",
+  "https://taxstudio-f12fb.firebaseapp.com",
+  "https://taxstudio-f12fb.web.app",
+  "http://localhost:3000",
+];
+
 const db = getFirestore();
 
 interface UserPartnerData {
@@ -35,6 +42,7 @@ interface PartnerGroup {
 export const generatePromotionCandidates = onCall(
   {
     region: "europe-west1",
+    cors: CORS_ORIGINS,
   },
   async () => {
     console.log("Starting promotion candidates generation...");

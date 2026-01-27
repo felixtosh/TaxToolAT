@@ -1,6 +1,13 @@
 import { onCall } from "firebase-functions/v2/https";
 import { getFirestore } from "firebase-admin/firestore";
 
+const CORS_ORIGINS = [
+  "https://fibuki.com",
+  "https://taxstudio-f12fb.firebaseapp.com",
+  "https://taxstudio-f12fb.web.app",
+  "http://localhost:3000",
+];
+
 const db = getFirestore();
 
 /**
@@ -199,7 +206,7 @@ const GLOBAL_PARTNER_PATTERNS: Record<string, Array<{ pattern: string; field: "p
  * Run this once to add patterns to existing global partners
  */
 export const migrateGlobalPartnerPatterns = onCall(
-  { region: "europe-west1" },
+  { region: "europe-west1", cors: CORS_ORIGINS },
   async (request) => {
     // Get all global partners
     const globalPartnersSnapshot = await db

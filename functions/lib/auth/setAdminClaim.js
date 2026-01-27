@@ -5,12 +5,19 @@ const https_1 = require("firebase-functions/v2/https");
 const identity_1 = require("firebase-functions/v2/identity");
 const auth_1 = require("firebase-admin/auth");
 const SUPER_ADMIN_EMAIL = "felix@i7v6.com";
+const CORS_ORIGINS = [
+    "https://fibuki.com",
+    "https://taxstudio-f12fb.firebaseapp.com",
+    "https://taxstudio-f12fb.web.app",
+    "http://localhost:3000",
+];
 /**
  * Callable function to set admin claim on a user
  * Only callable by existing admins or the super admin
  */
 exports.setAdminClaim = (0, https_1.onCall)({
     region: "europe-west1",
+    cors: CORS_ORIGINS,
 }, async (request) => {
     const { targetUid, isAdmin } = request.data;
     // Verify caller is authenticated
@@ -68,6 +75,7 @@ exports.beforeUserCreatedHandler = (0, identity_1.beforeUserCreated)({
  */
 exports.listAdmins = (0, https_1.onCall)({
     region: "europe-west1",
+    cors: CORS_ORIGINS,
 }, async (request) => {
     // Verify caller is admin
     if (!request.auth) {

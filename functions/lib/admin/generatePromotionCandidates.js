@@ -4,6 +4,12 @@ exports.generatePromotionCandidates = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
 const partner_matcher_1 = require("../utils/partner-matcher");
+const CORS_ORIGINS = [
+    "https://fibuki.com",
+    "https://taxstudio-f12fb.firebaseapp.com",
+    "https://taxstudio-f12fb.web.app",
+    "http://localhost:3000",
+];
 const db = (0, firestore_1.getFirestore)();
 /**
  * Callable function to generate promotion candidates
@@ -12,6 +18,7 @@ const db = (0, firestore_1.getFirestore)();
  */
 exports.generatePromotionCandidates = (0, https_1.onCall)({
     region: "europe-west1",
+    cors: CORS_ORIGINS,
 }, async () => {
     console.log("Starting promotion candidates generation...");
     try {

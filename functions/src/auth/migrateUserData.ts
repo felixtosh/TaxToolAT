@@ -1,6 +1,13 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
+const CORS_ORIGINS = [
+  "https://fibuki.com",
+  "https://taxstudio-f12fb.firebaseapp.com",
+  "https://taxstudio-f12fb.web.app",
+  "http://localhost:3000",
+];
+
 const db = getFirestore();
 const MIGRATION_EMAIL = "felix@i7v6.com";
 const OLD_USER_ID = "dev-user-123";
@@ -35,6 +42,7 @@ export const migrateUserData = onCall(
   {
     region: "europe-west1",
     timeoutSeconds: 540, // 9 minutes for large migrations
+    cors: CORS_ORIGINS,
   },
   async (request) => {
     // Verify caller is authenticated
@@ -162,6 +170,7 @@ export const migrateUserData = onCall(
 export const checkMigrationStatus = onCall(
   {
     region: "europe-west1",
+    cors: CORS_ORIGINS,
   },
   async (request) => {
     if (!request.auth) {

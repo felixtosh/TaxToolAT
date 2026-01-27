@@ -104,6 +104,14 @@ function calculateAICost(
  * );
  * ```
  */
+// CORS origins for callable functions
+const CORS_ORIGINS = [
+  "https://fibuki.com",
+  "https://taxstudio-f12fb.firebaseapp.com",
+  "https://taxstudio-f12fb.web.app",
+  "http://localhost:3000",
+];
+
 export function createCallable<TRequest, TResponse>(
   config: CallableConfig,
   handler: (ctx: HandlerContext, data: TRequest) => Promise<TResponse>
@@ -114,6 +122,7 @@ export function createCallable<TRequest, TResponse>(
       memory: config.memory || "256MiB",
       timeoutSeconds: config.timeoutSeconds || 60,
       secrets: config.secrets || [],
+      cors: CORS_ORIGINS,
     },
     async (request) => {
       // 1. Auth check

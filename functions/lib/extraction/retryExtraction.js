@@ -5,6 +5,12 @@ const https_1 = require("firebase-functions/v2/https");
 const params_1 = require("firebase-functions/params");
 const firestore_1 = require("firebase-admin/firestore");
 const extractionCore_1 = require("./extractionCore");
+const CORS_ORIGINS = [
+    "https://fibuki.com",
+    "https://taxstudio-f12fb.firebaseapp.com",
+    "https://taxstudio-f12fb.web.app",
+    "http://localhost:3000",
+];
 const anthropicApiKey = (0, params_1.defineSecret)("ANTHROPIC_API_KEY");
 const db = (0, firestore_1.getFirestore)();
 /**
@@ -18,6 +24,7 @@ exports.retryFileExtraction = (0, https_1.onCall)({
     timeoutSeconds: 120,
     memory: "512MiB",
     secrets: [anthropicApiKey],
+    cors: CORS_ORIGINS,
 }, async (request) => {
     const { fileId, force } = request.data;
     if (!fileId || typeof fileId !== "string") {

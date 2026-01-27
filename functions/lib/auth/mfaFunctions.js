@@ -8,6 +8,12 @@ const crypto_1 = require("crypto");
 const server_1 = require("@simplewebauthn/server");
 const SUPER_ADMIN_EMAIL = "felix@i7v6.com";
 const RP_NAME = "FiBuKI";
+const CORS_ORIGINS = [
+    "https://fibuki.com",
+    "https://taxstudio-f12fb.firebaseapp.com",
+    "https://taxstudio-f12fb.web.app",
+    "http://localhost:3000",
+];
 const RP_ID = process.env.FUNCTIONS_EMULATOR ? "localhost" : "taxstudio.app";
 const ORIGIN = process.env.FUNCTIONS_EMULATOR
     ? "http://localhost:3000"
@@ -22,7 +28,7 @@ const getPasskeyChallengePath = (userId) => `users/${userId}/passkeyChallenge/cu
  * Generate 10 backup codes for a user
  * Returns the plain codes (shown only once) and stores hashes
  */
-exports.generateBackupCodes = (0, https_1.onCall)({ region: "europe-west1" }, async (request) => {
+exports.generateBackupCodes = (0, https_1.onCall)({ region: "europe-west1", cors: CORS_ORIGINS }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
     }
@@ -92,7 +98,7 @@ exports.generateBackupCodes = (0, https_1.onCall)({ region: "europe-west1" }, as
  * Verify a backup code during MFA challenge
  * Consumes the code if valid
  */
-exports.verifyBackupCode = (0, https_1.onCall)({ region: "europe-west1" }, async (request) => {
+exports.verifyBackupCode = (0, https_1.onCall)({ region: "europe-west1", cors: CORS_ORIGINS }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
     }
@@ -152,7 +158,7 @@ exports.verifyBackupCode = (0, https_1.onCall)({ region: "europe-west1" }, async
 /**
  * Get comprehensive MFA status for a user
  */
-exports.getMfaStatus = (0, https_1.onCall)({ region: "europe-west1" }, async (request) => {
+exports.getMfaStatus = (0, https_1.onCall)({ region: "europe-west1", cors: CORS_ORIGINS }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
     }
@@ -200,7 +206,7 @@ exports.getMfaStatus = (0, https_1.onCall)({ region: "europe-west1" }, async (re
 /**
  * Admin function to reset MFA for a locked-out user
  */
-exports.adminResetMfa = (0, https_1.onCall)({ region: "europe-west1" }, async (request) => {
+exports.adminResetMfa = (0, https_1.onCall)({ region: "europe-west1", cors: CORS_ORIGINS }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
     }
@@ -275,7 +281,7 @@ exports.adminResetMfa = (0, https_1.onCall)({ region: "europe-west1" }, async (r
 /**
  * Generate WebAuthn registration options for passkey enrollment
  */
-exports.generatePasskeyRegistrationOptions = (0, https_1.onCall)({ region: "europe-west1" }, async (request) => {
+exports.generatePasskeyRegistrationOptions = (0, https_1.onCall)({ region: "europe-west1", cors: CORS_ORIGINS }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
     }
@@ -317,7 +323,7 @@ exports.generatePasskeyRegistrationOptions = (0, https_1.onCall)({ region: "euro
 /**
  * Verify passkey registration and store credential
  */
-exports.verifyPasskeyRegistration = (0, https_1.onCall)({ region: "europe-west1" }, async (request) => {
+exports.verifyPasskeyRegistration = (0, https_1.onCall)({ region: "europe-west1", cors: CORS_ORIGINS }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
     }
@@ -390,7 +396,7 @@ exports.verifyPasskeyRegistration = (0, https_1.onCall)({ region: "europe-west1"
 /**
  * Generate WebAuthn authentication options for passkey verification
  */
-exports.generatePasskeyAuthOptions = (0, https_1.onCall)({ region: "europe-west1" }, async (request) => {
+exports.generatePasskeyAuthOptions = (0, https_1.onCall)({ region: "europe-west1", cors: CORS_ORIGINS }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
     }
@@ -423,7 +429,7 @@ exports.generatePasskeyAuthOptions = (0, https_1.onCall)({ region: "europe-west1
 /**
  * Verify passkey authentication response
  */
-exports.verifyPasskeyAuth = (0, https_1.onCall)({ region: "europe-west1" }, async (request) => {
+exports.verifyPasskeyAuth = (0, https_1.onCall)({ region: "europe-west1", cors: CORS_ORIGINS }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
     }
@@ -527,7 +533,7 @@ exports.verifyPasskeyAuth = (0, https_1.onCall)({ region: "europe-west1" }, asyn
 /**
  * Delete a passkey
  */
-exports.deletePasskey = (0, https_1.onCall)({ region: "europe-west1" }, async (request) => {
+exports.deletePasskey = (0, https_1.onCall)({ region: "europe-west1", cors: CORS_ORIGINS }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
     }
@@ -576,7 +582,7 @@ exports.deletePasskey = (0, https_1.onCall)({ region: "europe-west1" }, async (r
  * Update TOTP enrollment status after Firebase MFA enrollment
  * Called by client after successful TOTP enrollment via Firebase Auth
  */
-exports.updateTotpStatus = (0, https_1.onCall)({ region: "europe-west1" }, async (request) => {
+exports.updateTotpStatus = (0, https_1.onCall)({ region: "europe-west1", cors: CORS_ORIGINS }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
     }

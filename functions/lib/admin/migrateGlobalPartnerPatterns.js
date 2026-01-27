@@ -3,6 +3,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.migrateGlobalPartnerPatterns = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
+const CORS_ORIGINS = [
+    "https://fibuki.com",
+    "https://taxstudio-f12fb.firebaseapp.com",
+    "https://taxstudio-f12fb.web.app",
+    "http://localhost:3000",
+];
 const db = (0, firestore_1.getFirestore)();
 /**
  * Pattern definitions for global partners
@@ -193,7 +199,7 @@ const GLOBAL_PARTNER_PATTERNS = {
  * Migrate patterns to existing globalPartners in Firestore
  * Run this once to add patterns to existing global partners
  */
-exports.migrateGlobalPartnerPatterns = (0, https_1.onCall)({ region: "europe-west1" }, async (request) => {
+exports.migrateGlobalPartnerPatterns = (0, https_1.onCall)({ region: "europe-west1", cors: CORS_ORIGINS }, async (request) => {
     // Get all global partners
     const globalPartnersSnapshot = await db
         .collection("globalPartners")

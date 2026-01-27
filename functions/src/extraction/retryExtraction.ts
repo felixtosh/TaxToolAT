@@ -3,6 +3,13 @@ import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { runExtraction } from "./extractionCore";
 
+const CORS_ORIGINS = [
+  "https://fibuki.com",
+  "https://taxstudio-f12fb.firebaseapp.com",
+  "https://taxstudio-f12fb.web.app",
+  "http://localhost:3000",
+];
+
 const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 const db = getFirestore();
 
@@ -18,6 +25,7 @@ export const retryFileExtraction = onCall(
     timeoutSeconds: 120,
     memory: "512MiB",
     secrets: [anthropicApiKey],
+    cors: CORS_ORIGINS,
   },
   async (request) => {
     const { fileId, force } = request.data;

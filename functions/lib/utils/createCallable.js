@@ -41,12 +41,20 @@ function calculateAICost(model, inputTokens, outputTokens) {
  * );
  * ```
  */
+// CORS origins for callable functions
+const CORS_ORIGINS = [
+    "https://fibuki.com",
+    "https://taxstudio-f12fb.firebaseapp.com",
+    "https://taxstudio-f12fb.web.app",
+    "http://localhost:3000",
+];
 function createCallable(config, handler) {
     return (0, https_1.onCall)({
         region: "europe-west1",
         memory: config.memory || "256MiB",
         timeoutSeconds: config.timeoutSeconds || 60,
         secrets: config.secrets || [],
+        cors: CORS_ORIGINS,
     }, async (request) => {
         // 1. Auth check
         if (!request.auth) {

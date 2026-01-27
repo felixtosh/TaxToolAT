@@ -18,6 +18,13 @@ import type {
 
 const SUPER_ADMIN_EMAIL = "felix@i7v6.com";
 const RP_NAME = "FiBuKI";
+
+const CORS_ORIGINS = [
+  "https://fibuki.com",
+  "https://taxstudio-f12fb.firebaseapp.com",
+  "https://taxstudio-f12fb.web.app",
+  "http://localhost:3000",
+];
 const RP_ID = process.env.FUNCTIONS_EMULATOR ? "localhost" : "taxstudio.app";
 const ORIGIN = process.env.FUNCTIONS_EMULATOR
   ? "http://localhost:3000"
@@ -38,7 +45,7 @@ const getPasskeyChallengePath = (userId: string) =>
  * Returns the plain codes (shown only once) and stores hashes
  */
 export const generateBackupCodes = onCall(
-  { region: "europe-west1" },
+  { region: "europe-west1", cors: CORS_ORIGINS },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be logged in");
@@ -126,7 +133,7 @@ export const generateBackupCodes = onCall(
  * Consumes the code if valid
  */
 export const verifyBackupCode = onCall(
-  { region: "europe-west1" },
+  { region: "europe-west1", cors: CORS_ORIGINS },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be logged in");
@@ -205,7 +212,7 @@ export const verifyBackupCode = onCall(
  * Get comprehensive MFA status for a user
  */
 export const getMfaStatus = onCall(
-  { region: "europe-west1" },
+  { region: "europe-west1", cors: CORS_ORIGINS },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be logged in");
@@ -269,7 +276,7 @@ export const getMfaStatus = onCall(
  * Admin function to reset MFA for a locked-out user
  */
 export const adminResetMfa = onCall(
-  { region: "europe-west1" },
+  { region: "europe-west1", cors: CORS_ORIGINS },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be logged in");
@@ -369,7 +376,7 @@ export const adminResetMfa = onCall(
  * Generate WebAuthn registration options for passkey enrollment
  */
 export const generatePasskeyRegistrationOptions = onCall(
-  { region: "europe-west1" },
+  { region: "europe-west1", cors: CORS_ORIGINS },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be logged in");
@@ -421,7 +428,7 @@ export const generatePasskeyRegistrationOptions = onCall(
  * Verify passkey registration and store credential
  */
 export const verifyPasskeyRegistration = onCall(
-  { region: "europe-west1" },
+  { region: "europe-west1", cors: CORS_ORIGINS },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be logged in");
@@ -519,7 +526,7 @@ export const verifyPasskeyRegistration = onCall(
  * Generate WebAuthn authentication options for passkey verification
  */
 export const generatePasskeyAuthOptions = onCall(
-  { region: "europe-west1" },
+  { region: "europe-west1", cors: CORS_ORIGINS },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be logged in");
@@ -563,7 +570,7 @@ export const generatePasskeyAuthOptions = onCall(
  * Verify passkey authentication response
  */
 export const verifyPasskeyAuth = onCall(
-  { region: "europe-west1" },
+  { region: "europe-west1", cors: CORS_ORIGINS },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be logged in");
@@ -687,7 +694,7 @@ export const verifyPasskeyAuth = onCall(
  * Delete a passkey
  */
 export const deletePasskey = onCall(
-  { region: "europe-west1" },
+  { region: "europe-west1", cors: CORS_ORIGINS },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be logged in");
@@ -751,7 +758,7 @@ export const deletePasskey = onCall(
  * Called by client after successful TOTP enrollment via Firebase Auth
  */
 export const updateTotpStatus = onCall(
-  { region: "europe-west1" },
+  { region: "europe-west1", cors: CORS_ORIGINS },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be logged in");

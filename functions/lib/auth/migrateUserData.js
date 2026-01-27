@@ -3,6 +3,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.checkMigrationStatus = exports.migrateUserData = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
+const CORS_ORIGINS = [
+    "https://fibuki.com",
+    "https://taxstudio-f12fb.firebaseapp.com",
+    "https://taxstudio-f12fb.web.app",
+    "http://localhost:3000",
+];
 const db = (0, firestore_1.getFirestore)();
 const MIGRATION_EMAIL = "felix@i7v6.com";
 const OLD_USER_ID = "dev-user-123";
@@ -34,6 +40,7 @@ const COLLECTIONS_TO_MIGRATE = [
 exports.migrateUserData = (0, https_1.onCall)({
     region: "europe-west1",
     timeoutSeconds: 540, // 9 minutes for large migrations
+    cors: CORS_ORIGINS,
 }, async (request) => {
     // Verify caller is authenticated
     if (!request.auth) {
@@ -139,6 +146,7 @@ exports.migrateUserData = (0, https_1.onCall)({
  */
 exports.checkMigrationStatus = (0, https_1.onCall)({
     region: "europe-west1",
+    cors: CORS_ORIGINS,
 }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "Must be logged in");
