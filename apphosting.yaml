@@ -12,3 +12,17 @@ env:
     secret: ANTHROPIC_API_KEY
   - variable: GOOGLE_CLOUD_PROJECT
     value: taxstudio-f12fb
+  # Google OAuth for Gmail integration
+  - variable: GOOGLE_CLIENT_ID
+    secret: GOOGLE_CLIENT_ID
+  - variable: GOOGLE_CLIENT_SECRET
+    secret: GOOGLE_CLIENT_SECRET
+  - variable: GOOGLE_OAUTH_REDIRECT_URI
+    value: https://fibuki.com/api/gmail/callback
+  # TrueLayer for Open Banking (optional)
+  - variable: TRUELAYER_CLIENT_ID
+    secret: TRUELAYER_CLIENT_ID
+  - variable: TRUELAYER_CLIENT_SECRET
+    secret: TRUELAYER_CLIENT_SECRET
+  - variable: TRUELAYER_REDIRECT_URL
+    value: https://fibuki.com/api/truelayer/callback
