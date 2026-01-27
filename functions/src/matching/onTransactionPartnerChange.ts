@@ -43,8 +43,9 @@ export const onTransactionPartnerChange = onDocumentUpdated(
       `Partner ${after.partnerId} assigned to transaction ${transactionId}, triggering automations`
     );
 
-    // Queue receipt search if transaction has no files
-    if (!hasFiles) {
+    // Queue receipt search if transaction has no files AND no no-receipt category
+    // Transactions with a no-receipt category are considered complete
+    if (!hasFiles && !hasCategory) {
       try {
         const { queueReceiptSearchForTransaction } = await import(
           "../workers/runReceiptSearchForTransaction"
