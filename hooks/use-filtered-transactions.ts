@@ -57,14 +57,28 @@ export function useFilteredTransactions(
     }
 
     // Date range filter
-    if (filters.dateFrom) {
-      const fromTime = filters.dateFrom.getTime();
-      result = result.filter((t) => t.date.toDate().getTime() >= fromTime);
+    // Handle case where dateFrom > dateTo (e.g., "Oct 27 - Jan 27" when both default to same year)
+    let effectiveDateFrom = filters.dateFrom;
+    let effectiveDateTo = filters.dateTo;
+    if (effectiveDateFrom && effectiveDateTo && effectiveDateFrom.getTime() > effectiveDateTo.getTime()) {
+      // Swap them - user likely meant the earlier date as "from"
+      [effectiveDateFrom, effectiveDateTo] = [effectiveDateTo, effectiveDateFrom];
     }
-    if (filters.dateTo) {
+
+    if (effectiveDateFrom) {
+      const fromTime = effectiveDateFrom.getTime();
+      result = result.filter((t) => {
+        const txDate = t.date?.toDate?.();
+        return txDate ? txDate.getTime() >= fromTime : true;
+      });
+    }
+    if (effectiveDateTo) {
       // Add one day to include the end date fully
-      const toTime = filters.dateTo.getTime() + 24 * 60 * 60 * 1000;
-      result = result.filter((t) => t.date.toDate().getTime() < toTime);
+      const toTime = effectiveDateTo.getTime() + 24 * 60 * 60 * 1000;
+      result = result.filter((t) => {
+        const txDate = t.date?.toDate?.();
+        return txDate ? txDate.getTime() < toTime : true;
+      });
     }
 
     // Amount type filter
