@@ -20,25 +20,35 @@ async function getBrowser(): Promise<Browser> {
     return browserLaunchPromise;
   }
 
-  browserLaunchPromise = puppeteer.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-    ],
-  });
+  try {
+    browserLaunchPromise = puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+      ],
+    });
 
-  browserInstance = await browserLaunchPromise;
-  browserLaunchPromise = null;
+    browserInstance = await browserLaunchPromise;
+    browserLaunchPromise = null;
 
-  // Handle browser disconnect
-  browserInstance.on('disconnected', () => {
-    browserInstance = null;
-  });
+    // Handle browser disconnect
+    browserInstance.on('disconnected', () => {
+      browserInstance = null;
+    });
 
-  return browserInstance;
+    return browserInstance;
+  } catch (error) {
+    browserLaunchPromise = null;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    // Check for Chrome not found error
+    if (errorMessage.includes('Could not find Chrome') || errorMessage.includes('Could not find browser')) {
+      throw new Error('PDF_CONVERSION_UNAVAILABLE: Chrome browser is not available in this environment. Email-to-PDF conversion is disabled.');
+    }
+    throw error;
+  }
 }
 
 const db = getAdminDb();

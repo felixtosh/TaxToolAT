@@ -161,10 +161,21 @@ export const convertEmailToPdfTool = tool(
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        const errorMsg = errorData.error || `HTTP ${response.status}`;
+
+        // Check if PDF conversion is unavailable (Chrome not installed)
+        if (errorMsg.includes('PDF_CONVERSION_UNAVAILABLE')) {
+          return {
+            success: false,
+            error: "PDF_CONVERSION_UNAVAILABLE",
+            message: "Email-to-PDF conversion is not available in this environment. The email cannot be converted to PDF, but you can still download any attachments from the email.",
+          };
+        }
+
         return {
           success: false,
-          error: errorData.error || `HTTP ${response.status}`,
-          message: `Failed to convert email to PDF: ${errorData.error || response.status}`,
+          error: errorMsg,
+          message: `Failed to convert email to PDF: ${errorMsg}`,
         };
       }
 
