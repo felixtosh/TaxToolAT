@@ -134,8 +134,8 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                     className={cn(
                       "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
                       isActive
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                        ? "bg-primary/8 text-primary"
+                        : "text-muted-foreground hover:text-foreground hover:bg-primary/5"
                     )}
                   >
                     <item.icon className="h-4 w-4" />
@@ -176,13 +176,13 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
-                  <Link href="/categories" className="flex items-center gap-2">
+                  <Link href="/settings/categories" className="flex items-center gap-2">
                     <Tag className="h-4 w-4" />
                     No-Receipt Categories
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
-                  <Link href="/integrations" className="flex items-center gap-2">
+                  <Link href="/settings/integrations" className="flex items-center gap-2">
                     <Link2 className="h-4 w-4" />
                     Integrations
                   </Link>
