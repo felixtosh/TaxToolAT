@@ -462,11 +462,11 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted.address).toBe('Say "hi", line1\nline2, café');
   });
 
-  // Reproduces the defect class reported against paperless-ap-1146.pdf
-  // (#231): a stray backslash deep inside a transcribed field, not at a
-  // structural boundary. The original response lives only on the reporter's
-  // machine, so this pins the failure mode rather than the exact bytes.
-  it("extracts a response carrying the paperless-ap-1146.pdf defect class (#231)", async () => {
+  // Reproduces the defect class from the report that opened #231: a stray
+  // backslash deep inside a transcribed field, not at a structural boundary.
+  // The original response lives only on the reporter's machine, so this pins
+  // the failure mode rather than the exact bytes.
+  it("extracts a response with a stray backslash deep inside a transcribed field (#231)", async () => {
     q(
       '{"extracted": {"partner": "Muster GmbH", ' +
         '"address": "C:\\Users\\muster\\Rechnungen\\2024", "amount": 12345}}',
