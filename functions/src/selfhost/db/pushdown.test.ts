@@ -209,6 +209,50 @@ describe("pushdown differential: flattened table vs JSONB reference", () => {
     expect(sql[0]).toContain(`id COLLATE "C" >`); // keyset, not a full scan
   });
 
+  it("the DESCENDING __name__ sweep pages the same way, on its own keyset branch", async () => {
+    const page = async (col: any, after?: any) => {
+      let q = col.where("userId", "==", "u1").orderBy("__name__", "desc").limit(2);
+      if (after) q = q.startAfter(after);
+      return q.get();
+    };
+    const perBackend: string[][] = [];
+    for (const collection of [FLAT, REF]) {
+      const col = db.collection(collection);
+      const all: string[] = [];
+      let snap = await page(col);
+      while (snap.docs.length > 0) {
+        all.push(...snap.docs.map((d: any) => d.id));
+        snap = await page(col, snap.docs[snap.docs.length - 1]);
+      }
+      perBackend.push(all);
+    }
+    expect(perBackend[0]).toEqual(perBackend[1]);
+    expect(perBackend[0]).toEqual(["s09", "s07", "s03", "s02", "s01"]);
+
+    // Descending compiles its own keyset comparator, so pin that it is bounded too.
+    const col = db.collection(FLAT);
+    const first = await page(col);
+    const sql = (
+      await capturedSql(async () => {
+        await page(col, first.docs[first.docs.length - 1]);
+      })
+    ).filter((s) => s.includes("FROM sources"));
+    expect(sql).toHaveLength(1);
+    expect(sql[0]).toContain(`ORDER BY id COLLATE "C" DESC`);
+    expect(sql[0]).toContain("LIMIT 2");
+    expect(sql[0]).toContain(`id COLLATE "C" <`);
+  });
+
+  it("a values-form __name__ cursor pages identically, bare or path-shaped", async () => {
+    // The compile-shape test pins that SQL resolves "sources/s02" to "s02";
+    // this pins that the JS pipeline resolves it the same way, so the two
+    // never disagree about where a page starts.
+    const bare = await expectSame((c) => c.orderBy("__name__").startAfter("s02").limit(3));
+    const path = await expectSame((c) => c.orderBy("__name__").startAfter("sources/s02").limit(3));
+    expect(bare).toEqual(["s03", "s04", "s05"]);
+    expect(path).toEqual(bare);
+  });
+
   it("a sweep ordered by a genuinely unmapped field still pages correctly on the JS path", async () => {
     const page = async (col: any, after?: any) => {
       let q = col.orderBy("balance", "asc").limit(3); // balance has no column
