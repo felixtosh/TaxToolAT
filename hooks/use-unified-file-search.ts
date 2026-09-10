@@ -22,11 +22,6 @@ export interface TransactionInfo {
   currency: string;
   partner?: string;
   partnerId?: string;
-  /**
-   * What the Files already connected to this Transaction explain, in cents
-   * (#239). Given it, candidates are scored against the Remainder.
-   */
-  documentedAmount?: number;
 }
 
 /**
@@ -337,8 +332,13 @@ export function useUnifiedFileSearch(
           body: JSON.stringify({
             attachments: itemsToScore.map((item) => item.apiInput),
             transaction: {
+              // The Transaction being scored against. The server derives
+              // Coverage from it (#239); nothing about the Remainder is
+              // computed on this side. Empty for the placeholder the overlay
+              // passes before a Transaction is selected, which scores against
+              // the full amount.
+              id: transactionInfo.id || null,
               amount: transactionInfo.amount,
-              documentedAmount: transactionInfo.documentedAmount ?? null,
               date: transactionInfo.date?.toISOString() ?? null,
               name: transactionInfo.partner ?? null,
               partner: transactionInfo.partner ?? null,

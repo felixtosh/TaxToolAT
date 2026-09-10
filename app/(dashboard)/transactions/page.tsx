@@ -19,7 +19,6 @@ import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { useTransactionFiles } from "@/hooks/use-files";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
-// Coverage is derived in one place, shared with the scorers (#239).
 import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
 import { functions, storage, db } from "@/lib/firebase/config";
 import { createFile, checkFileDuplicate, OperationsContext } from "@/lib/operations";
