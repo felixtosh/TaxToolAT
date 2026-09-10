@@ -12,6 +12,7 @@
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
+import { toDateSafe } from "../utils/toDateSafe";
 import { isTransactionDismissed } from "../matching/dismissedTransactions";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
@@ -1009,10 +1010,10 @@ async function executePartnerFilesStrategy(
         filename: file.fileName || "unknown",
         mimeType: file.fileType || "application/pdf",
         emailBodyText: file.extractedText, // Treat OCR text as body
-        emailDate: file.extractedDate?.toDate(),
+        emailDate: toDateSafe(file.extractedDate),
         // File extracted data for numeric comparison
         fileExtractedAmount: file.extractedAmount,
-        fileExtractedDate: file.extractedDate?.toDate(),
+        fileExtractedDate: toDateSafe(file.extractedDate),
         fileExtractedPartner: file.extractedPartner,
         // Transaction data
         transactionAmount: transaction.amount,
@@ -1169,10 +1170,10 @@ async function executeAmountFilesStrategy(
           filename: file.fileName || "unknown",
           mimeType: file.fileType || "application/pdf",
           emailBodyText: file.extractedText,
-          emailDate: file.extractedDate?.toDate(),
+          emailDate: toDateSafe(file.extractedDate),
           // File extracted data for numeric comparison
           fileExtractedAmount: file.extractedAmount,
-          fileExtractedDate: file.extractedDate?.toDate(),
+          fileExtractedDate: toDateSafe(file.extractedDate),
           fileExtractedPartner: file.extractedPartner,
           // Transaction data
           transactionAmount: transaction.amount,
