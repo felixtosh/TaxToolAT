@@ -39,7 +39,7 @@ function parseRoles(file: string): Record<string, string> {
   const src = readFileSync(file, "utf8");
   const out: Record<string, string> = {};
   for (const m of src.matchAll(
-    /\b(geminiLite|geminiFlash|chatAgent|claudeHaiku):\s*"([^"]+)"/g,
+    /\b(geminiLite|geminiFlash|chatAgent):\s*"([^"]+)"/g,
   )) {
     out[m[1]] = m[2];
   }

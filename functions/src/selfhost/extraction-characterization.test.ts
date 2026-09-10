@@ -97,7 +97,6 @@ beforeAll(() => {
   process.env.GCLOUD_PROJECT = "char-test-project";
   process.env.FIBUKI_STORAGE = "memory";
   process.env.ANTHROPIC_API_KEY = "test-anthropic-key";
-  delete process.env.EXTRACTION_PROVIDER; // default provider must be gemini
   delete process.env.GEMINI_MODEL;
 });
 
