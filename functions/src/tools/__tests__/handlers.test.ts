@@ -1439,6 +1439,50 @@ describe("Tool Registry Handlers", () => {
       ).rejects.toThrow(/must not be negative/);
     });
 
+    it("scores the hand-set tip onto its bank line, as the panel does (#217)", async () => {
+      // score_file_transaction_match is the agent's copy of the question the
+      // detail panel asks, and both have to answer it the same way: the card
+      // was charged Summe + Trinkgeld, so once a person records the tip the
+      // pair is an exact amount match rather than a 3,20 overpay.
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          extractedAmount: 5080,
+          extractedTipAmount: null,
+          extractedCurrency: "EUR",
+          extractedDate: { toDate: () => new Date("2026-02-20T00:00:00Z") },
+          extractedPartner: "Gasthaus Zur Post",
+        })
+      );
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        createTestTransaction({
+          userId,
+          amount: -5400,
+          date: { toDate: () => new Date("2026-02-20T00:00:00Z") },
+          currency: "EUR",
+          name: "GASTHAUS ZUR POST WIEN",
+        })
+      );
+
+      const before = await handlers.scoreFileTransactionMatch(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+      });
+      expect(before.matchSources).not.toContain("amount_exact");
+
+      await handlers.updateFileExtraction(userId, { fileId: "f-1", tipAmount: 320 });
+
+      const after = await handlers.scoreFileTransactionMatch(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+      });
+      expect(after.matchSources).toContain("amount_exact");
+    });
+
     it("ignores a key the schema does not name", async () => {
       store.setDoc("files", "f-1", createTestFile({ userId, extractedPartner: "ELDI Handels GmbH" }));
 
