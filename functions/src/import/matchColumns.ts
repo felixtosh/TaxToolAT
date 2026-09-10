@@ -169,7 +169,8 @@ const TRANSACTION_FIELDS: FieldDefinition[] = [
 // Valid format IDs
 const DATE_FORMATS = [
   "iso-datetime", "iso-datetime-t", "iso", "de", "de-short",
-  "us", "us-short", "eu-slash", "eu-slash-short", "dash-dmy", "text-short", "text-long",
+  "us", "us-short", "eu-slash", "eu-slash-short",
+  "dash-dmy", "dash-mdy", "dash-dmy-short", "dash-mdy-short", "text-short", "text-long",
 ];
 
 const AMOUNT_FORMATS = [
