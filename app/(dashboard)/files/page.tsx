@@ -14,6 +14,7 @@ import { FileViewerOverlay } from "@/components/files/file-viewer-overlay";
 import { ConnectTransactionOverlay } from "@/components/files/connect-transaction-overlay";
 import { UploadProgress, FileUploadStatus } from "@/components/files/upload-progress";
 import { FilesDataTableHandle } from "@/components/files/files-data-table";
+import { SelectionChangeMeta } from "@/components/ui/data-table";
 import { useFiles } from "@/hooks/use-files";
 import {
   readBankOriginalAmount,
@@ -31,6 +32,7 @@ import {
   toggleFileCheckbox,
   toggleSelectAll,
   getSelectAllCheckedState,
+  resolveSelectionChange,
 } from "@/lib/selection/bulk-file-selection";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SummaryToast, SummaryToastState } from "@/components/ui/summary-toast";
@@ -791,33 +793,23 @@ function FilesContent() {
     [router, filters, searchValue]
   );
 
-  // Multi-select: handle selection changes from table
-  // This receives: { primaryId, additionalIds } from the table
+  // Multi-select: handle selection changes from table. The table sends the
+  // full resulting set of selected IDs plus whether a plain (unmodified)
+  // click produced it; resolveSelectionChange decides what the primary (URL)
+  // and additional (bulk) selections should become from that - see its
+  // doc comment for why the resulting Set's size alone can't be trusted.
   const handleSelectionChange = useCallback(
-    (newSelectedIds: Set<string>) => {
-      // The table sends us the full set of selected IDs
-      // We need to figure out what changed
-
-      // If exactly one ID and it's different from current primary, it's a new primary click
-      if (newSelectedIds.size === 1) {
-        const [id] = newSelectedIds;
-        // Clear additional selections, update primary via URL
-        setAdditionalSelectedIds(new Set());
-        const params = buildFileSearchParams(filters, searchValue, id);
-        router.push(`/files?${params.toString()}`, { scroll: false });
-      } else if (newSelectedIds.size === 0) {
-        // Clear everything
-        setAdditionalSelectedIds(new Set());
-        const params = buildFileSearchParams(filters, searchValue, null);
+    (newSelectedIds: Set<string>, meta: SelectionChangeMeta) => {
+      const result = resolveSelectionChange({
+        newSelectedIds,
+        isPlainClick: meta.isPlainClick,
+        primarySelectedId,
+      });
+      setAdditionalSelectedIds(result.additionalSelectedIds);
+      if (result.primaryId !== primarySelectedId) {
+        const params = buildFileSearchParams(filters, searchValue, result.primaryId);
         const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
         router.push(newUrl, { scroll: false });
-      } else {
-        // Multiple selected - update additional selections (keep primary as-is)
-        const newAdditional = new Set(newSelectedIds);
-        if (primarySelectedId) {
-          newAdditional.delete(primarySelectedId); // Primary is in URL, not in additional
-        }
-        setAdditionalSelectedIds(newAdditional);
       }
     },
     [router, filters, searchValue, primarySelectedId]

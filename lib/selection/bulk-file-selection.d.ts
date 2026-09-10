@@ -31,3 +31,20 @@ export interface GetSelectAllCheckedStateInput {
 export function getSelectAllCheckedState(
   input: GetSelectAllCheckedStateInput,
 ): SelectAllCheckedState;
+
+export interface ResolveSelectionChangeInput {
+  newSelectedIds: Set<string>;
+  /** True for a plain (no modifier) row click; false for ctrl/cmd-click or shift-click. */
+  isPlainClick: boolean;
+  primarySelectedId: string | null;
+}
+
+export interface SelectionChangeResult {
+  /** The primary (URL) selection to end up with, or null to clear it. */
+  primaryId: string | null;
+  additionalSelectedIds: Set<string>;
+}
+
+export function resolveSelectionChange(
+  input: ResolveSelectionChangeInput,
+): SelectionChangeResult;
