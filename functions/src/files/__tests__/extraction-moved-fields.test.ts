@@ -156,6 +156,20 @@ describe("selectMovedCorrections", () => {
     ).toEqual({ invoiceDirection: "incoming" });
   });
 
+  it("reads an empty tip box and a zero as the same answer: no tip (#217)", () => {
+    // The panel posts the tip box on every save, so a document with no tip
+    // must not be stamped by the act of opening the form.
+    expect(selectMovedCorrections({ tipAmount: null }, {})).toEqual({});
+    expect(selectMovedCorrections({ tipAmount: 0 }, {})).toEqual({});
+    expect(selectMovedCorrections({ tipAmount: 0 }, { extractedTipAmount: null })).toEqual({});
+    expect(selectMovedCorrections({ tipAmount: 320 }, { extractedTipAmount: 320 })).toEqual({});
+    expect(selectMovedCorrections({ tipAmount: 320 }, {})).toEqual({ tipAmount: 320 });
+    // A printed tip really being removed is still a correction.
+    expect(selectMovedCorrections({ tipAmount: null }, { extractedTipAmount: 320 })).toEqual({
+      tipAmount: null,
+    });
+  });
+
   it("leaves a field the form did not send alone", () => {
     expect(selectMovedCorrections({ amount: 636000 }, storedRecord)).toEqual({ amount: 636000 });
   });

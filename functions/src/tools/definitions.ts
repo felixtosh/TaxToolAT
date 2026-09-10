@@ -391,6 +391,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             required: ["amount"],
           },
         },
+        tipAmount: {
+          type: ["number", "null"],
+          description:
+            "Freiwilliges Trinkgeld in cents that the document does NOT print — the terminal took it and the Beleg never says so, which is why the bank line is larger than the invoice. It is stored BESIDE the total and never taken out of it: on such a document the printed total already is the VAT-bearing figure, so subtracting the tip would shrink the VAT base and under-claim. Only a human sets it; it is never inferred from the bank/document gap. A tip the document DOES print is already extracted into this field and needs no correction. Zero and null both clear it; a negative is refused.",
+        },
         invoiceDirection: {
           type: ["string", "null"],
           enum: ["incoming", "outgoing", "unknown", null],

@@ -1395,6 +1395,50 @@ describe("Tool Registry Handlers", () => {
       );
     });
 
+    it("records a Trinkgeld the document never printed, beside the total (#217)", async () => {
+      // The agent's door onto the same field the panel writes. The Beleg is
+      // § 11-complete over 50,80 with its rate groups printed; the card was
+      // charged 54,00 because the terminal took a tip the receipt omits.
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          extractedAmount: 5080,
+          extractedTipAmount: null,
+          extractedRateGroups: [
+            { rate: 10, net: 3500, vat: 350, gross: 3850 },
+            { rate: 20, net: 1025, vat: 205, gross: 1230 },
+          ],
+        })
+      );
+
+      const result = await handlers.updateFileExtraction(userId, {
+        fileId: "f-1",
+        tipAmount: 320,
+      });
+
+      expect(result).toMatchObject({ success: true, changed: ["tipAmount"] });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.extractedTipAmount).toBe(320);
+      // Never subtracted: this total never included the tip, so taking it out
+      // would shrink the VAT base and under-claim.
+      expect(file?.extractedAmount).toBe(5080);
+      // A tip is outside the scope of VAT, so it says nothing against the
+      // printed block — which stays.
+      expect(file?.extractedRateGroups).toHaveLength(2);
+      expect(Object.keys(file?.extractionCorrectedFields as object)).toEqual(["tipAmount"]);
+    });
+
+    it("refuses a negative tip", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId, extractedAmount: 5080 }));
+
+      await expect(
+        handlers.updateFileExtraction(userId, { fileId: "f-1", tipAmount: -320 })
+      ).rejects.toThrow(/must not be negative/);
+    });
+
     it("ignores a key the schema does not name", async () => {
       store.setDoc("files", "f-1", createTestFile({ userId, extractedPartner: "ELDI Handels GmbH" }));
 

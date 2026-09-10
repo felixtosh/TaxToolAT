@@ -902,6 +902,9 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     file: {
       fileName: after.fileName ?? null,
       extractedAmount: after.extractedAmount ?? null,
+      // #217: reported beside the total precisely so a caller can see it was
+      // not taken out of it.
+      extractedTipAmount: after.extractedTipAmount ?? null,
       extractedVatAmount: after.extractedVatAmount ?? null,
       extractedVatPercent: after.extractedVatPercent ?? null,
       lineItemsUnreconciled: after.lineItemsUnreconciled ?? false,

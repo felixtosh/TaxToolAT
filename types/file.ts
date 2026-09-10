@@ -289,8 +289,14 @@ export interface TaxFile {
    * `extractedAmount + extractedTipAmount`, and that is the only figure that
    * reconciles against a bank line.
    *
-   * Absent on a file extracted before the field existed; null when the
-   * document prints no tip line.
+   * A tip the document does NOT print has the same shape and the opposite
+   * origin (#217): the terminal took it, the receipt is silent, so only a
+   * person can put it here — through the correction door, stamped like any
+   * other correction. There `extractedAmount` already is the VAT-bearing
+   * total, so this is added to it and never taken out of it.
+   *
+   * Absent on a file extracted before the field existed; null when neither
+   * the document nor a person recorded a tip.
    */
   extractedTipAmount?: number | null;
 
