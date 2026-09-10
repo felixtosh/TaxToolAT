@@ -41,9 +41,10 @@ export interface ExtractionResult {
 export interface ExtractionConfig {
   provider: ExtractionProvider;
   /**
-   * Unused by extraction since the vision-claude path was retired (#170). The
-   * callables still hold ANTHROPIC_API_KEY as a secret for the chat agent and
-   * pass it down here; unwiring that plumbing is a separate change.
+   * Unused by extraction since the vision-claude path was retired (#170) —
+   * nothing downstream of here reads it. The callables that run extraction
+   * still declare the ANTHROPIC_API_KEY secret and hand it down; unwiring that
+   * plumbing is a separate change.
    */
   anthropicApiKey?: string;
   // Gemini uses service account auth via Vertex AI (no API key needed)

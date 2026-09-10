@@ -57,8 +57,9 @@ import { directionReviewFields } from "../documents/directionReview";
 export interface ExtractionOptions {
   /**
    * Anthropic API key. Unused by extraction since the legacy vision-claude
-   * provider was retired (#170) — the callables still declare the secret for
-   * the chat agent and hand it down here.
+   * provider was retired (#170) — nothing downstream of here reads it. The
+   * callables that run extraction still declare the secret and hand it down;
+   * unwiring that plumbing is a separate change.
    */
   anthropicApiKey?: string;
   /** Skip two-phase classification (user has overridden AI classification) */
