@@ -111,6 +111,41 @@ describe("backfillFileTypesCallable", () => {
     expect(file("f-other").fileType).toBeUndefined();
   });
 
+  it("a record whose storage object is gone is skipped, not fatal to the rest", async () => {
+    store.setDoc(
+      "files",
+      "f-gone",
+      createTestFile({ userId, storagePath: "files/user-1/gone.pdf", fileType: undefined })
+    );
+    store.setDoc(
+      "files",
+      "f-ok",
+      createTestFile({ userId, storagePath: "files/user-1/a.pdf", fileType: undefined })
+    );
+    blobs.set("files/user-1/a.pdf", PDF_BYTES);
+
+    const result = await call();
+
+    expect(result.success).toBe(true);
+    expect(result.updated).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(file("f-ok").fileType).toBe("application/pdf");
+    expect(file("f-gone").fileType).toBeUndefined();
+  });
+
+  it("a record with no storagePath is skipped", async () => {
+    store.setDoc(
+      "files",
+      "f-nopath",
+      createTestFile({ userId, storagePath: undefined, fileType: undefined })
+    );
+
+    const result = await call();
+
+    expect(result.updated).toBe(0);
+    expect(result.skipped).toBe(1);
+  });
+
   it("after the backfill, no file of the calling user is missing a fileType", async () => {
     store.setDoc(
       "files",

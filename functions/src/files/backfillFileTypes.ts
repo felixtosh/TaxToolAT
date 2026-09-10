@@ -51,7 +51,18 @@ export const backfillFileTypesCallable = createCallable<
         continue;
       }
 
-      const [buffer] = await bucket.file(storagePath).download();
+      // One unreadable object must not abort the pass — the criterion is that
+      // every record that CAN be sniffed gets a fileType, and the loop is the
+      // only chance the rest of them get.
+      let buffer: Buffer;
+      try {
+        [buffer] = await bucket.file(storagePath).download();
+      } catch (error) {
+        console.warn(`[backfillFileTypes] File ${fileDoc.id} could not be downloaded from ${storagePath}, skipping`, error);
+        skipped++;
+        continue;
+      }
+
       const fileType = sniffMimeType(buffer, fileData.fileType as string | undefined);
 
       await fileDoc.ref.update({
