@@ -31,6 +31,12 @@ export interface ExtractionResult {
   extractedRaw?: ExtractedRawText;
   /** Additional fields extracted beyond standard invoice fields */
   additionalFields?: ExtractedAdditionalField[];
+  /**
+   * Fields the JSON repair had to read through an ambiguous escape (#275).
+   * Carried up so the stored record can say a value was guessed at; the
+   * vision-claude path never repairs, so it never sets this.
+   */
+  repairAmbiguousFields?: string[];
   /** Token usage for AI calls */
   usage?: { inputTokens: number; outputTokens: number; model: string };
 }
@@ -215,6 +221,7 @@ async function extractWithGemini(
     geminiBoundingBoxes: result.boundingBoxes,
     extractedRaw: result.extractedRaw,
     additionalFields: result.additionalFields,
+    repairAmbiguousFields: result.repairAmbiguousFields,
     usage: result.usage,
   };
 }

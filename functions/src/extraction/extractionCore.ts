@@ -50,6 +50,7 @@ import { classifyDocumentType } from "../documents/classifyDocumentType";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import { directionReviewFields } from "../documents/directionReview";
+import { repairReviewFields, reviewRepair } from "../documents/repairReview";
 
 /**
  * Options for running extraction
@@ -291,6 +292,9 @@ export async function runExtraction(
           conflictingTransactionIds: [],
           suggestedDirection: null,
         }),
+        // Nothing was transcribed on this pass, so no transcription was
+        // guessed at either — any flag an earlier pass left goes (#275).
+        ...repairReviewFields({ ambiguousFields: [], needsReview: false }),
         extractedText: "(classification only - not an invoice)",
         extractedFields: [],
         updatedAt: Timestamp.now(),
@@ -663,6 +667,23 @@ export async function runExtraction(
   // is already attached to. Folded into this write rather than run after it —
   // the record is in hand and a second write would re-fire every file trigger.
   Object.assign(updateData, await computeDirectionReviewFields(db, storedRecord));
+
+  // #275: the JSON repair is the only place that knows a value's escape was
+  // ambiguous, and it reports it here rather than leaving the guess invisible.
+  // Read off the parse result, not the stored record: what is stored is exactly
+  // the byte sequence the guess produced, and nothing in it says so.
+  const repairReview = reviewRepair({
+    ambiguousFields: result.repairAmbiguousFields,
+    isNotInvoice: updateData.isNotInvoice === true,
+  });
+  Object.assign(updateData, repairReviewFields(repairReview));
+  if (repairReview.needsReview) {
+    console.warn(
+      `[ExtractionCore] ${fileId} carries a repaired escape sequence in ` +
+      `${repairReview.ambiguousFields.join(", ")}; the stored text may not be ` +
+      "what the document prints. Flagged for review."
+    );
+  }
   if (rateReview.needsReview) {
     console.warn(
       `[ExtractionCore] ${fileId} prints VAT rate(s) outside the Austrian set: ` +

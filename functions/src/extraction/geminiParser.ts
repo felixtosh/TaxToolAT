@@ -123,6 +123,26 @@ function normalizeVatPercent(vatPercent: unknown): number | null {
 // (a Windows path, a `\d` in a reference number, a hand-typed separator).
 const JSON_SINGLE_CHAR_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"]);
 
+// The escapes that rewrite transcribed text into a control character when they
+// are read as syntax (#275). `\"` is structural and `\\` cannot be demoted
+// without it; `\/` yields `/` under either reading, so nothing is lost; a
+// `\uXXXX` is not plausible document text. These five are the set where "the
+// model escaped a real tab" and "the document prints a backslash and a t" are
+// the same two bytes.
+const AMBIGUOUS_ESCAPES = new Set(["b", "f", "n", "r", "t"]);
+
+/** What the backslash pass produced, and where it had to guess (#275). */
+interface BackslashRepair {
+  text: string;
+  /**
+   * The field names whose value came through an ambiguous escape: within one
+   * string literal the pass BOTH doubled a backslash AND left a `\b \f \n \r
+   * \t` standing. A literal the pass never had to touch is not suspect — the
+   * model escaped that one correctly, and its `\t` is a real tab.
+   */
+  ambiguousFields: string[];
+}
+
 /**
  * Walk a JSON string tracking string-literal boundaries, and neutralise any
  * backslash that is not part of a JSON-defined escape (`\" \\ \/ \b \f \n \r
@@ -130,23 +150,61 @@ const JSON_SINGLE_CHAR_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t
  * backslash instead of throwing "Bad escaped character" (#231) — the
  * offending byte survives into the extracted value instead of the whole
  * response being discarded.
+ *
+ * The two rules disagree inside one value whenever a document's own text
+ * carries a backslash followed by `b f n r t`: the undefined escapes around it
+ * are neutralised, that one is honoured, and the transcription is silently
+ * rewritten into a control character. The ambiguity is irreducible here — #231
+ * chose the JSON-correct reading and that stays — so the pass reports where it
+ * had to choose (#275). This is the only place that knows which literals it
+ * modified; a detector reading the parsed result instead would also flag the
+ * raw-newline repair below, which produces an identical-looking value.
  */
-function escapeInvalidBackslashes(jsonStr: string): string {
+function escapeInvalidBackslashes(jsonStr: string): BackslashRepair {
   let result = "";
   let inString = false;
+
+  // #275 bookkeeping. Per literal: where its content starts in `result`,
+  // whether the pass doubled anything in it, whether an ambiguous escape
+  // survived it, and whether it sits after a `:` (so it is a value, not a key).
+  let literalStart = 0;
+  let doubled = false;
+  let survivor = false;
+  let isValue = false;
+  // The last non-whitespace character seen OUTSIDE a literal, and the last
+  // literal that closed — together they name the key a value belongs to.
+  let prevNonSpace = "";
+  let lastLiteral = "";
+  let currentKey = "";
+  const ambiguousFields = new Set<string>();
 
   for (let i = 0; i < jsonStr.length; i++) {
     const ch = jsonStr[i];
 
     if (!inString) {
       result += ch;
-      if (ch === '"') inString = true;
+      if (ch === '"') {
+        inString = true;
+        literalStart = result.length;
+        doubled = false;
+        survivor = false;
+        isValue = prevNonSpace === ":";
+      } else if (ch === ":") {
+        currentKey = lastLiteral;
+      }
+      if (!/\s/.test(ch)) prevNonSpace = ch;
       continue;
     }
 
     if (ch === '"') {
+      lastLiteral = result.slice(literalStart);
       result += ch;
       inString = false;
+      prevNonSpace = ch;
+      if (doubled && survivor) {
+        // A suspect key names itself; a suspect value is named by its key.
+        ambiguousFields.add(isValue ? currentKey || "(unnamed)" : lastLiteral);
+      }
       continue;
     }
 
@@ -158,6 +216,7 @@ function escapeInvalidBackslashes(jsonStr: string): string {
     const next = jsonStr[i + 1];
     if (next !== undefined && JSON_SINGLE_CHAR_ESCAPES.has(next)) {
       result += ch + next;
+      if (AMBIGUOUS_ESCAPES.has(next)) survivor = true;
       i += 1;
       continue;
     }
@@ -172,22 +231,23 @@ function escapeInvalidBackslashes(jsonStr: string): string {
     // it survives the parse literally; `next` (if any) falls through to the
     // next iteration as an ordinary character.
     result += "\\\\";
+    doubled = true;
   }
 
-  return result;
+  return { text: result, ambiguousFields: [...ambiguousFields] };
 }
 
 /**
  * Attempt to repair malformed JSON from Gemini responses
  */
-function repairJson(jsonStr: string): string {
-  // Common fixes for Gemini JSON output issues
-  let repaired = jsonStr;
-
+function repairJson(jsonStr: string): { repaired: string; ambiguousFields: string[] } {
   // Neutralise invalid escape sequences before any other fix touches string
   // content — it relies on quote-tracking that assumes the escapes seen so
   // far are well-formed.
-  repaired = escapeInvalidBackslashes(repaired);
+  const escaped = escapeInvalidBackslashes(jsonStr);
+
+  // Common fixes for Gemini JSON output issues
+  let repaired = escaped.text;
 
   // Fix trailing commas before } or ]
   repaired = repaired.replace(/,(\s*[}\]])/g, "$1");
@@ -209,7 +269,7 @@ function repairJson(jsonStr: string): string {
     repaired += "}";
   }
 
-  return repaired;
+  return { repaired, ambiguousFields: escaped.ambiguousFields };
 }
 
 /**
@@ -604,6 +664,12 @@ export async function parseWithGemini(
   boundingBoxes: GeminiBoundingBox[];
   extractedRaw: ExtractedRawText;
   additionalFields: ExtractedAdditionalField[];
+  /**
+   * Fields whose value the JSON repair had to read through an ambiguous
+   * escape, so the stored text may not be what the document prints (#275).
+   * Empty on every response that parsed first time.
+   */
+  repairAmbiguousFields: string[];
   usage: { inputTokens: number; outputTokens: number; model: string };
 }> {
   const projectId = getProjectId();
@@ -893,6 +959,8 @@ JSON only, no markdown, no explanation.`;
 
   // Robust JSON parsing with repair fallback
   let parsed: GeminiResponse;
+  // #275: a response that parses first time was never guessed at.
+  let repairAmbiguousFields: string[] = [];
   try {
     parsed = JSON.parse(jsonStr) as GeminiResponse;
   } catch (firstError) {
@@ -904,10 +972,17 @@ JSON only, no markdown, no explanation.`;
       throw new Error(`Could not extract JSON from response: ${firstError}`);
     }
 
-    const repaired = repairJson(extractedJson);
+    const { repaired, ambiguousFields } = repairJson(extractedJson);
     try {
       parsed = JSON.parse(repaired) as GeminiResponse;
       console.log("[Gemini] JSON repair successful");
+      repairAmbiguousFields = ambiguousFields;
+      if (repairAmbiguousFields.length > 0) {
+        console.warn(
+          "[Gemini] JSON repair had to choose a reading for an escape sequence in: " +
+          `${repairAmbiguousFields.join(", ")}. Flagged for review (#275).`
+        );
+      }
     } catch (repairError) {
       // Log the raw response for debugging
       console.error("[Gemini] JSON repair failed. Raw response:", jsonStr.substring(0, 500));
@@ -1026,6 +1101,7 @@ JSON only, no markdown, no explanation.`;
     boundingBoxes: [], // Bounding boxes no longer extracted - using PDF text search
     extractedRaw,
     additionalFields,
+    repairAmbiguousFields,
     usage,
   };
 }
