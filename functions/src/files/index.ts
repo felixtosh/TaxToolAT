@@ -17,3 +17,4 @@ export { disconnectFileFromTransactionCallable } from "./disconnectFileFromTrans
 export { dismissTransactionSuggestionCallable } from "./dismissTransactionSuggestion";
 export { undismissTransactionSuggestionCallable } from "./undismissTransactionSuggestion";
 export { unrejectFileFromTransactionCallable } from "./unrejectFileFromTransaction";
+export { backfillFileTypesCallable } from "./backfillFileTypes";
