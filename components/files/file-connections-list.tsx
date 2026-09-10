@@ -19,7 +19,7 @@ import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { useEcbConverter } from "@/lib/currency";
 // The one tolerance that decides whether a Remainder is closed (#239).
-import { isRemainderClosed } from "@/functions/src/matching/coverage";
+import { filePaymentTotal, isRemainderClosed } from "@/functions/src/matching/coverage";
 import Link from "next/link";
 import {
   getTransactionMatchConfidenceColor,
@@ -276,8 +276,8 @@ function RemainderLine({ fileAmount, fileCurrency, transactions }: RemainderLine
   }
 
   const hasAllAmounts = !fileConversionFailed && !txConversionFailed;
-  const difference = convertedFileAmount - transactionsSum;
-  const isMatched = isRemainderClosed(difference);
+  const remainder = convertedFileAmount - transactionsSum;
+  const isMatched = isRemainderClosed(remainder);
   const wasConverted = fileCurrency !== targetCurrency;
 
   if (transactions.length === 0) {
@@ -297,9 +297,9 @@ function RemainderLine({ fileAmount, fileCurrency, transactions }: RemainderLine
         ) : (
           <span className={cn(
             "tabular-nums font-medium flex items-center gap-1 text-sm",
-            difference > 0 ? "text-amount-negative" : "text-amber-600"
+            remainder > 0 ? "text-amount-negative" : "text-amber-600"
           )}>
-            {wasConverted ? "~" : ""}{difference > 0 ? "-" : "+"}{formatAmount(Math.abs(difference), targetCurrency)}
+            {wasConverted ? "~" : ""}{remainder > 0 ? "-" : "+"}{formatAmount(Math.abs(remainder), targetCurrency)}
             <AlertTriangle className="h-3.5 w-3.5" />
           </span>
         )}
@@ -494,7 +494,11 @@ export function FileConnectionsList({
             {/* Remainder line at bottom */}
             {file.extractedAmount != null && (
               <RemainderLine
-                fileAmount={file.extractedAmount}
+                // The payment total, not the raw extracted amount, so a printed
+                // Trinkgeld counts here exactly as it does in the Transaction's
+                // Files section (#172). Passing extractedAmount made the two
+                // panels print different Remainders for the same pair.
+                fileAmount={filePaymentTotal(file.extractedAmount, file.extractedTipAmount)!}
                 fileCurrency={currency}
                 transactions={transactions}
               />

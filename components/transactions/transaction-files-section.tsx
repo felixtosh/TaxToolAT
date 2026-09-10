@@ -172,11 +172,11 @@ function RemainderLine({ transactionAmount, transactionCurrency, transactionDate
 
   // Transaction amount is negative for expenses, positive for income
   // File amounts are always positive (invoice amounts)
-  const { remainder: difference } = deriveCoverage(
+  const { remainder } = deriveCoverage(
     transactionAmount,
     documentedAmountOf(paymentTotals)
   );
-  const isMatched = isRemainderClosed(difference);
+  const isMatched = isRemainderClosed(remainder);
 
   // Don't show if extracting or no amounts yet
   if (isExtracting || filesWithAmounts.length === 0) {
@@ -197,9 +197,9 @@ function RemainderLine({ transactionAmount, transactionCurrency, transactionDate
         ) : (
           <span className={cn(
             "tabular-nums font-medium flex items-center gap-1 text-sm",
-            difference > 0 ? "text-amount-negative" : "text-amber-600"
+            remainder > 0 ? "text-amount-negative" : "text-amber-600"
           )}>
-            {difference > 0 ? "-" : "+"}{formatAmount(Math.abs(difference), transactionCurrency)}
+            {remainder > 0 ? "-" : "+"}{formatAmount(Math.abs(remainder), transactionCurrency)}
             <AlertTriangle className="h-3.5 w-3.5" />
           </span>
         )}
