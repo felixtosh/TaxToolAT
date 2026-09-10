@@ -40,6 +40,18 @@ The cross-user record a Partner may link to, built from what many users contribu
 Suggests identifying data; never owns a user's decisions.
 _Avoid_: master partner, global vendor
 
+**Merge**:
+Folding one Partner into another because they are the same business. The survivor keeps
+the values it has, fills its empty ones from the loser, takes the loser's name as an
+alias, and takes over what pointed at the loser. What an issued Invoice froze at issue
+time stays frozen. One way: there is no unmerge.
+_Avoid_: dedupe, combine, link partners
+
+**Merged Partner**:
+What a merge leaves behind: an inactive Partner that names its survivor, so an ID handed
+out before the merge still resolves. Never a match candidate, never in the Partner list.
+_Avoid_: deleted partner, ghost partner, alias record
+
 ## Money coming in
 
 **Source**:
@@ -67,6 +79,12 @@ whose Extraction failed, is still a File.
 _Avoid_: document, receipt, attachment, Beleg (in code and English copy). The single
 exception is **Document Type**, where "document" names the File itself; the word appears
 nowhere else in that sense. **Documentation State** is unrelated — see its entry.
+
+**Purge**:
+Destroying a deleted File for good: the document and its stored bytes are gone, and only
+the keys that stop it being imported again survive. Deleting a File hides it and can be
+undone; purging is the only act in the system that cannot.
+_Avoid_: hard delete, permanent delete, wipe
 
 **Document Type**:
 What a File is under § 11 UStG: `invoice`, `receipt`, `other`, or `unknown`. Decides
