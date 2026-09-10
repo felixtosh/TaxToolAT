@@ -997,4 +997,239 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
     expect(request).toHaveBeenCalledTimes(takenBefore + 1);
     expect(readStored(w)).toMatchObject({ refresh_token: "rt-2", rotates: true });
   });
+
+  /* ---------------------------------------------------------------- */
+  /* #216 — the refresh whose response never arrives                   */
+  /*                                                                   */
+  /* A rotating provider consumes the presented refresh_token when it  */
+  /* ISSUES the response, not when the client reads it. So a fetch     */
+  /* that REJECTS (connection dropped, TLS reset, laptop suspended     */
+  /* mid-flight) leaves a token that is already dead server-side       */
+  /* stored as if it were current. Every later refresh replayed it —   */
+  /* one suspicious_request per attempt, until the session died.       */
+  /* ---------------------------------------------------------------- */
+
+  const LEASE_KEY = "fibuki.oidc.refresh-lease";
+
+  /** A token endpoint whose answer never arrives, recording what was spent. */
+  function lostResponseFetch(spent: string[], onGrant?: () => void): typeof fetch {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        spent.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
+        onGrant?.();
+        // What a browser gives you when the connection dies mid-flight.
+        throw new TypeError("Failed to fetch");
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+  }
+
+  it("a rejecting fetch is caught, and marks the token it presented", async () => {
+    const spent: string[] = [];
+    const w = installOidcEnv(lostResponseFetch(spent));
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    // Pre-fix the raw TypeError escaped the refresh routine, past every
+    // recovery path, and the token-saving step below it never ran.
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      name: "FirebaseError",
+      code: "auth/network-request-failed",
+    });
+    // A lost response says nothing about the session (fork #77), so keep it —
+    // but record that rt-1 went out unanswered.
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1", refresh_unconfirmed: "rt-1" });
+    expect(spent).toEqual(["rt-1"]);
+  });
+
+  it("honours the mark after a reload, so a fresh tab does not replay it either", async () => {
+    // The mark lives in localStorage precisely so it outlives the tab that made
+    // it: a reload, or any other tab on this origin, has to refuse the same
+    // token too, or the replay just moves to whichever tab looks next.
+    const spent: string[] = [];
+    const w = installOidcEnv(lostResponseFetch(spent));
+    seedTokens(w, staleSet("rt-1", { rotates: true, refresh_unconfirmed: "rt-1" }));
+
+    const reloaded = await openTab();
+    await tick();
+
+    await expect(reloaded.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/user-token-expired",
+    });
+    expect(spent).toEqual([]);
+    expect(reloaded.getAuth().currentUser).toBeNull();
+    expect(readStored(w)).toBeNull();
+  });
+
+  it("a rejecting discovery fetch fails as an auth error, not a raw TypeError", async () => {
+    const rejectingFetch = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+    const w = installOidcEnv(rejectingFetch);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    // Discovery is the other fetch on the refresh path. Nothing was presented,
+    // so there is nothing to mark — but the rejection still must not escape.
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      name: "FirebaseError",
+      code: "auth/network-request-failed",
+    });
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });
+    expect(readStored(w)?.refresh_unconfirmed).toBeUndefined();
+  });
+
+  it("a second refresh after a lost response re-authenticates instead of replaying", async () => {
+    const spent: string[] = [];
+    const w = installOidcEnv(lostResponseFetch(spent));
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/network-request-failed",
+    });
+    // Nothing newer was written by a peer, and the id_token is stale: the only
+    // honest move left is the login screen.
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/user-token-expired",
+    });
+    // The whole ticket in one assertion — rt-1 went out exactly once, ever.
+    expect(spent).toEqual(["rt-1"]);
+    expect(tab.getAuth().currentUser).toBeNull();
+    expect(readStored(w)).toBeNull();
+  });
+
+  it("a forced refresh on a marked set hands back the still-valid id_token", async () => {
+    // auth-provider forces a refresh on every visibilitychange. A network blip
+    // must not spend the marked token, and must not sign the user out while the
+    // id_token they hold is still good.
+    const spent: string[] = [];
+    const w = installOidcEnv(lostResponseFetch(spent));
+    const liveIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    seedTokens(w, {
+      id_token: liveIdToken,
+      refresh_token: "rt-1",
+      expires_at: Date.now() + 3_600_000,
+      rotates: true,
+      refresh_unconfirmed: "rt-1",
+    });
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken(true)).resolves.toBe(liveIdToken);
+    expect(spent).toEqual([]);
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+  });
+
+  it("adopts a peer's set written while our lost refresh was in flight", async () => {
+    const peerIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    const spent: string[] = [];
+    let w!: FakeWindow;
+
+    // The peer rotated and stored a good set; our answer never came back.
+    const fetchImpl = lostResponseFetch(spent, () => {
+      seedTokens(w, {
+        id_token: peerIdToken,
+        refresh_token: "rt-2",
+        expires_at: Date.now() + 3_600_000,
+        rotates: true,
+      });
+    });
+
+    w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).resolves.toBe(peerIdToken);
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    // The peer's set is the truth now, so our doubt must not be stamped on it.
+    const stored = readStored(w);
+    expect(stored).toMatchObject({ refresh_token: "rt-2" });
+    expect(stored?.refresh_unconfirmed).toBeUndefined();
+  });
+
+  it("adopts a peer's newer set stored after our response was lost", async () => {
+    const rotatedIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    const spent: string[] = [];
+
+    // rt-1's answer never arrives; anything else the provider answers normally.
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        const rt = new URLSearchParams(String(init?.body)).get("refresh_token") ?? "";
+        spent.push(rt);
+        if (rt === "rt-1") throw new TypeError("Failed to fetch");
+        return new Response(
+          JSON.stringify({ id_token: rotatedIdToken, refresh_token: "rt-3", expires_in: 3600 }),
+          { status: 200 },
+        );
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/network-request-failed",
+    });
+
+    // A peer refreshes afterwards and stores its set — itself stale again by
+    // the time we come back, so we really do have to refresh from it.
+    seedTokens(w, staleSet("rt-2", { rotates: true }));
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).resolves.toBe(rotatedIdToken);
+    // The peer's token was spent; ours was never spent twice.
+    expect(spent).toEqual(["rt-1", "rt-2"]);
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-3", rotates: true });
+  });
+
+  it("fails the caller when the lease lock times out, rather than refreshing unlocked", async () => {
+    const spent: string[] = [];
+    const w = installOidcEnv(lostResponseFetch(spent));
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+    // A peer holds the lease with a claim that never ages past LEASE_TTL_MS, so
+    // no amount of polling can steal it. (No navigator.locks here, so the
+    // localStorage lease is the lock — the fallback path.)
+    w.localStorage.setItem(
+      LEASE_KEY,
+      JSON.stringify({ owner: "peer-tab", at: Date.now() + 3_600_000 }),
+    );
+
+    const tab = await openTab();
+    await tick();
+
+    vi.useFakeTimers();
+    try {
+      const pending = tab.getAuth().currentUser!.getIdToken();
+      const settled = expect(pending).rejects.toMatchObject({ code: "auth/timeout" });
+      await vi.advanceTimersByTimeAsync(6_000); // past LEASE_MAX_WAIT_MS
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // Pre-fix the timeout ran the refresh unguarded — the unserialised replay
+    // this ticket exists to remove. Nothing was spent, nothing was lost.
+    expect(spent).toEqual([]);
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });
+  });
 });
