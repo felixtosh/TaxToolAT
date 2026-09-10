@@ -559,7 +559,11 @@ function ResizableDataTableInner<TData extends { id: string }>(
           }
         }
 
-        onSelectionChange?.(newSelection, { isPlainClick: false });
+        onSelectionChange?.(newSelection, {
+          isPlainClick: false,
+          isRangeClick: true,
+          clickedRowId: row.id,
+        });
         // Don't update lastSelectedRowId on shift-click to allow extending selection
       } else if (isModifierClick) {
         // CMD/Ctrl+click: toggle individual selection
@@ -570,12 +574,20 @@ function ResizableDataTableInner<TData extends { id: string }>(
           newSelection.add(row.id);
         }
 
-        onSelectionChange?.(newSelection, { isPlainClick: false });
+        onSelectionChange?.(newSelection, {
+          isPlainClick: false,
+          isRangeClick: false,
+          clickedRowId: row.id,
+        });
         setLastSelectedRowId(row.id);
       } else {
         // Regular click: clear ALL selection and select only this row
         const newSelection = new Set([row.id]);
-        onSelectionChange?.(newSelection, { isPlainClick: true });
+        onSelectionChange?.(newSelection, {
+          isPlainClick: true,
+          isRangeClick: false,
+          clickedRowId: row.id,
+        });
         setLastSelectedRowId(row.id);
       }
     },

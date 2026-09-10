@@ -815,6 +815,8 @@ function FilesContent() {
         newSelectedIds,
         isPlainClick: meta.isPlainClick,
         primarySelectedId,
+        clickedRowId: meta.clickedRowId,
+        isRangeClick: meta.isRangeClick,
       });
       setAdditionalSelectedIds(result.additionalSelectedIds);
       if (result.primaryId !== primarySelectedId) {

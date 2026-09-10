@@ -33,6 +33,14 @@ export interface RowClickModifiers {
  */
 export interface SelectionChangeMeta {
   isPlainClick: boolean;
+  /**
+   * The row the user actually clicked. A modified click can promote it to the
+   * primary (panel) selection, which the resulting Set alone cannot express —
+   * it says which rows are selected, never which one was just acted on.
+   */
+  clickedRowId?: string;
+  /** True for shift-click, which selects a range and promotes its clicked end. */
+  isRangeClick?: boolean;
 }
 
 export interface ResizableDataTableProps<TData extends { id: string }> {

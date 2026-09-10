@@ -188,24 +188,67 @@ test("resolveSelectionChange: ctrl-click deselecting down to one row stays a bul
   assert.deepEqual([...result.additionalSelectedIds], ["b"]);
 });
 
-test("resolveSelectionChange: the first ctrl-click from an empty selection does not open the detail panel", () => {
+test("resolveSelectionChange: the first ctrl-click from an empty selection opens the detail panel on that row", () => {
   const result = resolveSelectionChange({
     newSelectedIds: new Set(["a"]),
     isPlainClick: false,
     primarySelectedId: null,
+    clickedRowId: "a",
+    isRangeClick: false,
+  });
+  assert.equal(result.primaryId, "a");
+  assert.deepEqual([...result.additionalSelectedIds], []);
+});
+
+test("resolveSelectionChange: a ctrl-click with a panel already open does NOT move it", () => {
+  const result = resolveSelectionChange({
+    newSelectedIds: new Set(["a", "b"]),
+    isPlainClick: false,
+    primarySelectedId: "a",
+    clickedRowId: "b",
+    isRangeClick: false,
+  });
+  assert.equal(result.primaryId, "a");
+  assert.deepEqual([...result.additionalSelectedIds], ["b"]);
+});
+
+test("resolveSelectionChange: a ctrl-click that DESELECTS a row promotes nothing", () => {
+  // The clicked row is not in the resulting set, so there is nothing to show.
+  const result = resolveSelectionChange({
+    newSelectedIds: new Set(["a"]),
+    isPlainClick: false,
+    primarySelectedId: null,
+    clickedRowId: "b",
+    isRangeClick: false,
   });
   assert.equal(result.primaryId, null);
   assert.deepEqual([...result.additionalSelectedIds], ["a"]);
 });
 
-test("resolveSelectionChange: shift-click range collapsing to a single row is still a bulk selection", () => {
+test("resolveSelectionChange: shift-click promotes the clicked end of its range to primary", () => {
+  // Decided 2026-09-10: a shift-click moves the detail panel to the row it
+  // was made on, and the rest of the range is the bulk selection.
+  const result = resolveSelectionChange({
+    newSelectedIds: new Set(["a", "b", "c"]),
+    isPlainClick: false,
+    primarySelectedId: "a",
+    clickedRowId: "c",
+    isRangeClick: true,
+  });
+  assert.equal(result.primaryId, "c");
+  assert.deepEqual([...result.additionalSelectedIds].sort(), ["a", "b"]);
+});
+
+test("resolveSelectionChange: shift-click collapsing to one row promotes that row", () => {
   const result = resolveSelectionChange({
     newSelectedIds: new Set(["c"]),
     isPlainClick: false,
     primarySelectedId: "a",
+    clickedRowId: "c",
+    isRangeClick: true,
   });
-  assert.equal(result.primaryId, "a");
-  assert.deepEqual([...result.additionalSelectedIds], ["c"]);
+  assert.equal(result.primaryId, "c");
+  assert.deepEqual([...result.additionalSelectedIds], []);
 });
 
 test("resolveSelectionChange: ctrl-click deselecting the last selected row clears everything", () => {

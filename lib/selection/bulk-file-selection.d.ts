@@ -37,6 +37,10 @@ export interface ResolveSelectionChangeInput {
   /** True for a plain (no modifier) row click; false for ctrl/cmd-click or shift-click. */
   isPlainClick: boolean;
   primarySelectedId: string | null;
+  /** The row the click landed on, if the caller knows it. */
+  clickedRowId?: string;
+  /** True for shift-click, which promotes the clicked end of its range. */
+  isRangeClick?: boolean;
 }
 
 export interface SelectionChangeResult {
