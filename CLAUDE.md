@@ -188,7 +188,7 @@ export function useCategories() {
 - `connectFileToTransactionCallable` - Connect file to transaction
 - `disconnectFileFromTransactionCallable` - Disconnect file from transaction
 - `updateFileCallable` - Update file metadata
-- `deleteFileCallable` - Soft or hard delete a file
+- `deleteFileCallable` - Delete a file: hides it, undone by `restoreFile`, never touches the stored bytes
 
 **Imports:**
 - `bulkCreateTransactionsCallable` - Bulk create transactions from CSV

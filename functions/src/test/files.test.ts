@@ -149,7 +149,7 @@ describe("File Cloud Functions", () => {
   });
 
   describe("deleteFile", () => {
-    it("should soft delete a file by default", async () => {
+    it("should hide the file and keep it restorable", async () => {
       const userId = "user-123";
       const fileId = "file-456";
       store.setDoc("files", fileId, createTestFile({ userId }));
@@ -161,10 +161,7 @@ describe("File Cloud Functions", () => {
         logAIUsage: vi.fn(),
       };
 
-      const result = await deleteFileCallable(ctx as any, {
-        fileId,
-        hardDelete: false,
-      });
+      const result = await deleteFileCallable(ctx as any, { fileId });
 
       expect(result.success).toBe(true);
       const file = store.getDoc("files", fileId);
@@ -172,25 +169,37 @@ describe("File Cloud Functions", () => {
       expect(file?.deletedAt).toBeDefined(); // But marked as deleted
     });
 
-    it("should hard delete a file when specified", async () => {
+    it("should leave the stored document alone, whatever the file's source", async () => {
       const userId = "user-123";
-      const fileId = "file-456";
-      store.setDoc("files", fileId, createTestFile({ userId }));
 
-      const ctx = {
-        userId,
-        db: createMockFirestore(),
-        request: { auth: { uid: userId }, data: {} },
-        logAIUsage: vi.fn(),
-      };
+      for (const sourceType of ["upload", "gmail_attachment"]) {
+        const fileId = `file-${sourceType}`;
+        store.setDoc(
+          "files",
+          fileId,
+          createTestFile({
+            userId,
+            sourceType,
+            storagePath: `files/${userId}/${fileId}.pdf`,
+          })
+        );
 
-      const result = await deleteFileCallable(ctx as any, {
-        fileId,
-        hardDelete: true,
-      });
+        const ctx = {
+          userId,
+          db: createMockFirestore(),
+          request: { auth: { uid: userId }, data: {} },
+          logAIUsage: vi.fn(),
+        };
 
-      expect(result.success).toBe(true);
-      expect(store.getDoc("files", fileId)).toBeUndefined();
+        await deleteFileCallable(ctx as any, { fileId });
+
+        // The row survives — a Sync-sourced file dedupes against it, and every
+        // file restores from it — and the bytes it points at are untouched.
+        const file = store.getDoc("files", fileId);
+        expect(file?.deletedAt).toBeDefined();
+        expect(file?.storagePath).toBe(`files/${userId}/${fileId}.pdf`);
+        expect(file?.downloadUrl).toBe("https://storage.example.com/test.pdf");
+      }
     });
   });
 

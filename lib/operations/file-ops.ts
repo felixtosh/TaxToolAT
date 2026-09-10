@@ -8,7 +8,6 @@ import {
   doc,
   updateDoc,
   addDoc,
-  deleteDoc,
   Timestamp,
   writeBatch,
   arrayUnion,
@@ -734,8 +733,10 @@ export async function reextractFilesForPartner(
 }
 
 /**
- * Soft delete a file (Gmail files) - marks as deleted but keeps for deduplication
- * This prevents the file from being re-imported from Gmail
+ * Delete a file: hide it, keep the record, leave the stored document alone.
+ * The record is what a later Sync deduplicates against, so a deleted Gmail file
+ * is not re-imported, and it is what `restoreFile` brings back.
+ * See docs/adr/0006-deleting-a-file-is-reversible.md.
  */
 export async function softDeleteFile(
   ctx: OperationsContext,
@@ -784,28 +785,6 @@ export async function restoreFile(
     deletedAt: null,
     updatedAt: Timestamp.now(),
   });
-}
-
-/**
- * Hard delete a file and all its connections (permanent deletion)
- */
-export async function deleteFile(
-  ctx: OperationsContext,
-  fileId: string
-): Promise<{ deletedConnections: number }> {
-  const existing = await getFile(ctx, fileId);
-  if (!existing) {
-    throw new Error(`File ${fileId} not found or access denied`);
-  }
-
-  // 1. Delete all connections and update transactions
-  const connectionsResult = await deleteFileConnections(ctx, fileId);
-
-  // 2. Delete the file document
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  await deleteDoc(docRef);
-
-  return { deletedConnections: connectionsResult.deleted };
 }
 
 /**

@@ -1,7 +1,8 @@
 # Deleting a File is reversible; only a Purge destroys
 
-_Status: accepted; the implementation is filed as tickets. Today the UI still hard-deletes
-by default — that is #258, and this ADR is what pins its fix._
+_Status: accepted. The reversible default landed with #258, so deleting from the UI now
+hides a File whatever its source. The Purge itself, and the deleted-files view that reaches
+it, are #268._
 
 Deleting a File hides it and can be undone. The stored document is destroyed only by a
 **Purge**, which is reachable from the deleted-files view and from nowhere else — not from

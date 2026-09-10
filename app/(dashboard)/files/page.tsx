@@ -25,6 +25,10 @@ import { useTransactions } from "@/hooks/use-transactions";
 import { TaxFile, FileFilters } from "@/types/file";
 import { PartnerFormData } from "@/types/partner";
 import { parseFileFiltersFromUrl, buildFileSearchParams } from "@/lib/filters/file-url-params";
+import {
+  fileDeleteConfirmation,
+  bulkFileDeleteConfirmation,
+} from "@/lib/files/delete-confirmation";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
 import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
 import {
@@ -701,13 +705,8 @@ function FilesContent() {
 
   const handleDelete = useCallback(async () => {
     if (!selectedFile) return;
-    const isGmailFile = selectedFile.sourceType?.startsWith("gmail");
-    const message = isGmailFile
-      ? `Delete "${selectedFile.fileName}"? It will be hidden but won't be re-imported from Gmail.`
-      : `Permanently delete "${selectedFile.fileName}"? This will also remove all connections.`;
-    if (!confirm(message)) return;
-    // Use soft delete for Gmail files to prevent re-import
-    await remove(selectedFile.id, isGmailFile);
+    if (!confirm(fileDeleteConfirmation(selectedFile.fileName))) return;
+    await remove(selectedFile.id);
     handleCloseDetail();
   }, [selectedFile, remove, handleCloseDetail]);
 
@@ -832,7 +831,7 @@ function FilesContent() {
   const handleBulkDelete = useCallback(async () => {
     if (allSelectedIds.size === 0) return;
     const fileIds = Array.from(allSelectedIds);
-    if (!confirm(`Delete ${fileIds.length} files? This cannot be undone.`)) return;
+    if (!confirm(bulkFileDeleteConfirmation(fileIds.length))) return;
 
     setIsBulkDeleting(true);
     setBulkProgress({ completed: 0, total: fileIds.length });
@@ -840,10 +839,8 @@ function FilesContent() {
     let failureCount = 0;
     try {
       for (const fileId of fileIds) {
-        const file = files.find((f) => f.id === fileId);
-        const isGmailFile = file?.sourceType?.startsWith("gmail");
         try {
-          await remove(fileId, isGmailFile);
+          await remove(fileId);
           successCount++;
         } catch (error) {
           console.error(`Failed to delete file ${fileId}:`, error);
@@ -867,7 +864,7 @@ function FilesContent() {
       setIsBulkDeleting(false);
       setBulkProgress(null);
     }
-  }, [allSelectedIds, files, remove, router, filters, searchValue]);
+  }, [allSelectedIds, remove, router, filters, searchValue]);
 
   // Multi-select: bulk mark as not invoice
   const handleBulkMarkAsNotInvoice = useCallback(async () => {
