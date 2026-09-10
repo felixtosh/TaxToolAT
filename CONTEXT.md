@@ -71,6 +71,12 @@ nowhere else in that sense. **Documentation State** is unrelated — see its ent
 **Document Type**:
 What a File is under § 11 UStG: `invoice`, `receipt`, `other`, or `unknown`. Decides
 whether the File can carry a VAT deduction. A reverse-charge document is an invoice.
+**Derived, never hand-set**: the § 11 classifier is its only writer, and it re-decides on
+every classification. The user's one lever is `isNotInvoice`, a stored flag that is an
+*input* to that classifier rather than a rival field — it reaches `other` and nothing
+else. A user can say "this is not a financial document", which they know better than the
+classifier does; they cannot declare a document § 11-complete, because that judgement is
+what the tool is for and a wrong one becomes a wrong Vorsteuer claim in their own name.
 _Avoid_: kind, category (a **Category** is the booking category)
 
 **Receipt**:
