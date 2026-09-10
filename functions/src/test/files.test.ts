@@ -34,6 +34,7 @@ vi.mock("../utils/cancelWorkers", () => ({
 // Import handlers after mocking
 const { updateFileCallable } = await import("../files/updateFile");
 const { deleteFileCallable } = await import("../files/deleteFile");
+const { restoreFileCallable } = await import("../files/restoreFile");
 const { connectFileToTransactionCallable } = await import("../files/connectFileToTransaction");
 const { disconnectFileFromTransactionCallable } = await import("../files/disconnectFileFromTransaction");
 const { markFileAsNotInvoiceCallable } = await import("../files/markFileAsNotInvoice");
@@ -200,6 +201,51 @@ describe("File Cloud Functions", () => {
         expect(file?.storagePath).toBe(`files/${userId}/${fileId}.pdf`);
         expect(file?.downloadUrl).toBe("https://storage.example.com/test.pdf");
       }
+    });
+
+    it("can be undone by restoreFile, though the File Connections stay gone", async () => {
+      const userId = "user-123";
+      const fileId = "file-456";
+      const txId = "tx-789";
+
+      store.setDoc("files", fileId, createTestFile({ userId, transactionIds: [txId] }));
+      store.setDoc(
+        "transactions",
+        txId,
+        createTestTransaction({ userId, fileIds: [fileId], isComplete: true })
+      );
+      store.setDoc("fileConnections", "conn-1", {
+        userId,
+        fileId,
+        transactionId: txId,
+        connectionType: "manual",
+      });
+
+      const ctx = {
+        userId,
+        db: createMockFirestore(),
+        request: { auth: { uid: userId }, data: {} },
+        logAIUsage: vi.fn(),
+      };
+
+      await deleteFileCallable(ctx as any, { fileId });
+      expect(store.getDoc("files", fileId)?.deletedAt).toBeDefined();
+
+      await restoreFileCallable(ctx as any, { fileId });
+
+      // The File is visible again, with everything it was stored with.
+      const file = store.getDoc("files", fileId);
+      expect(file?.deletedAt).toBeFalsy();
+      expect(file?.fileName).toBe("test-invoice.pdf");
+      expect(file?.storagePath).toBe("files/test-user/test.pdf");
+
+      // Its File Connections are not rebuilt, which is exactly what the delete
+      // confirmation warns about.
+      expect(file?.transactionIds).toEqual([]);
+      expect(
+        store.queryDocs("fileConnections", [{ field: "fileId", op: "==", value: fileId }])
+      ).toHaveLength(0);
+      expect(store.getDoc("transactions", txId)?.fileIds).toEqual([]);
     });
   });
 
