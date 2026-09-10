@@ -850,7 +850,11 @@ function runParitySuite(
       const page2 = await base.limit(2).startAfter(page1.docs[1]).get();
       expect(page2.docs.map((doc: any) => doc.id)).toEqual(["d3"]);
 
-      expect(idsOf(await col.orderBy("__name__", "desc").get())).toEqual(["d4", "d3", "d2", "d1"]);
+      // No descending case here on purpose: real Firestore answers
+      // orderBy("__name__", "desc") with FAILED_PRECONDITION ("does not
+      // support descending key scans"), so asserting it in the PARITY suite
+      // would pin the shim to something production cannot do. The shim's own
+      // descending keyset is covered in db/pushdown.test.ts instead.
     });
 
     // The app never calls .settings(), so firebase-admin's default rejection
