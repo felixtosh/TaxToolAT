@@ -565,8 +565,9 @@ export function deriveRateGroups(
     }
 
     // Reconcile bank amount vs the SUM of the connected documents (R6).
-    // A printed Trinkgeld is part of what the card was charged and no part of
-    // the VAT base (#172), so it joins the total here and nowhere else: the
+    // A Trinkgeld is part of what the card was charged and no part of the VAT
+    // base — transcribed where the Beleg prints it (#172), hand-set where it
+    // does not (#217) — so it joins the total here and nowhere else: the
     // reconcile comes out exact and no tolerance rung is involved.
     const invoiceTotal =
       reconcileTotal ??
@@ -585,10 +586,11 @@ export function deriveRateGroups(
         // An overpay the connected documents do not account for. R5 used to
         // classify a small one at a restaurant-class partner as a tip and
         // claim the full invoice portion, but nothing ever wrote partnerClass
-        // — it read like coverage and provided none (#172). A tip the Beleg
-        // PRINTS is now its own extracted figure, already inside invoiceTotal
-        // above; an unexplained delta goes to the review bucket, which is
-        // where a cash tip nobody wrote on the document belongs.
+        // — it read like coverage and provided none (#172). A tip is now its
+        // own extracted figure, already inside invoiceTotal above, whether the
+        // Beleg printed it or a person recorded the one it never printed
+        // (#217). A delta nobody has explained still goes to the review
+        // bucket: a person says a tip was taken, this arithmetic never does.
         return {
           ok: false,
           reason: "amount-mismatch",

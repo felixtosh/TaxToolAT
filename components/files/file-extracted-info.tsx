@@ -172,6 +172,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   const [editedFields, setEditedFields] = useState<EditableExtractedFields>({
     date: "",
     amount: "",
+    tipAmount: "",
     vatPercent: "",
     partner: "",
     vatId: "",
@@ -204,6 +205,9 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
       // and seeding it with a derivation stamped the derived value as
       // hand-corrected on every save of a file whose rows disagree with it.
       amount: file.extractedAmount != null ? (file.extractedAmount / 100).toString() : "",
+      // #217: seeded from the stored figure so a printed Trinkgeld is not
+      // cleared by a save that never touched the box.
+      tipAmount: file.extractedTipAmount != null ? (file.extractedTipAmount / 100).toString() : "",
       vatPercent: file.extractedVatPercent != null ? file.extractedVatPercent.toString() : "",
       partner: file.extractedPartner || "",
       vatId: file.extractedVatId || "",
@@ -616,6 +620,30 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
               return amountDisplay;
             })()}
           </FieldRow>
+
+          {/*
+            Trinkgeld (#217). The tip a card terminal took and the Beleg never
+            printed has no other writer: extraction can only transcribe what is
+            on the page, so without this box the bank line stays larger than the
+            document forever and the reconciliation refuses the file. Shown when
+            there is one to show, and whenever the form is open.
+
+            It sits BESIDE the amount above and is never taken out of it. On a
+            document that printed its own tip the extractor has already stripped
+            it from the total; on one that did not, the total IS the VAT base.
+          */}
+          {(isEditing || file.extractedTipAmount != null) && (
+            <FieldRow
+              label="Tip"
+              isEditing={isEditing}
+              editValue={editedFields.tipAmount}
+              onEditChange={updateField("tipAmount")}
+              inputType="number"
+              placeholder="Trinkgeld in EUR"
+            >
+              {formatDocumentAmount(file.extractedTipAmount, file.extractedCurrency)}
+            </FieldRow>
+          )}
 
           {/*
             Direction (#233). Until this row existed the field was rendered

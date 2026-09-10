@@ -82,6 +82,7 @@ function form(overrides: Record<string, unknown> = {}) {
   return {
     date: "2026-03-04",
     amount: "3180,00",
+    tipAmount: "",
     vatPercent: "20",
     partner: "ACME GmbH",
     vatId: "ATU12345678",
@@ -136,6 +137,20 @@ describe("updateFileExtractedFields (client operation)", () => {
     await updateFileExtractedFields(ctx, "file-1", form({ amount: "", vatPercent: "", date: "" }));
 
     expect(payload().correction).toMatchObject({ amount: null, vatPercent: null, date: null });
+  });
+
+  it("sends a hand-set tip beside the amount, never out of it (#217)", async () => {
+    await updateFileExtractedFields(ctx, "file-1", form({ amount: "50,80", tipAmount: "3,20" }));
+
+    // The document printed no tip, so its total already is the VAT base: the
+    // amount goes over untouched and the tip goes over beside it.
+    expect(payload().correction).toMatchObject({ amount: 5080, tipAmount: 320 });
+  });
+
+  it("sends an empty tip box as no tip, so a printed one can be removed", async () => {
+    await updateFileExtractedFields(ctx, "file-1", form());
+
+    expect(payload().correction).toMatchObject({ tipAmount: null });
   });
 
   it("omits a value it could not parse rather than clearing the stored one", async () => {

@@ -455,6 +455,12 @@ export interface EditableLineItem {
 export interface EditableExtractedFields {
   date: string; // yyyy-MM-dd format
   amount: string; // number as string (in currency units, not cents)
+  /**
+   * Trinkgeld the document does not print (#217), in currency units. Empty is
+   * "no tip" — and it is seeded from the stored value, so a tip the Beleg DID
+   * print survives a save that did not touch this box.
+   */
+  tipAmount: string;
   vatPercent: string; // number as string
   partner: string;
   vatId: string;
@@ -626,6 +632,18 @@ export async function updateFileExtractedFields(
     }
   } else {
     correction.amount = null;
+  }
+
+  // #217: sent beside the amount, never taken out of it. On a document whose
+  // total never included the tip, that total already is the VAT base — a
+  // subtraction here would shrink it and under-claim the return.
+  if (fields.tipAmount) {
+    const tipNum = parseNumberInput(fields.tipAmount);
+    if (tipNum !== null) {
+      correction.tipAmount = Math.round(tipNum * 100);
+    }
+  } else {
+    correction.tipAmount = null;
   }
 
   if (fields.vatPercent) {

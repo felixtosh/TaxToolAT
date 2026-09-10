@@ -902,6 +902,9 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     file: {
       fileName: after.fileName ?? null,
       extractedAmount: after.extractedAmount ?? null,
+      // #217: reported beside the total precisely so a caller can see it was
+      // not taken out of it.
+      extractedTipAmount: after.extractedTipAmount ?? null,
       extractedVatAmount: after.extractedVatAmount ?? null,
       extractedVatPercent: after.extractedVatPercent ?? null,
       lineItemsUnreconciled: after.lineItemsUnreconciled ?? false,
@@ -2549,6 +2552,11 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
   const result = scoreTransaction(
     {
       extractedAmount: fileData.extractedAmount,
+      // #217/#172: the bank was charged the total PLUS the Trinkgeld, so a
+      // scorer that cannot see the tip reads the restaurant Beleg as an
+      // amount mismatch — the answer the UI's scorer stopped giving. Both
+      // surfaces have to score the same file the same way.
+      extractedTipAmount: fileData.extractedTipAmount,
       extractedCurrency: fileData.extractedCurrency,
       extractedDate: fileData.extractedDate,
       extractedPartner: fileData.extractedPartner,

@@ -159,6 +159,59 @@ describe("buildExtractionCorrection", () => {
     ]);
   });
 
+  // #217: the tip the document never printed. The failure this guards against
+  // is quiet — a VAT base short by the tip under-claims the return.
+  describe("a hand-set Trinkgeld (#217)", () => {
+    it("stores the tip beside the total without touching it", () => {
+      const { updates, changed } = buildExtractionCorrection({ tipAmount: 320 });
+
+      expect(changed).toEqual(["tipAmount"]);
+      expect(updates.extractedTipAmount).toBe(320);
+      expect("extractedAmount" in updates).toBe(false);
+    });
+
+    it("does not subtract the tip from a total the document set beside it", () => {
+      // A § 11-complete restaurant invoice over 50,80 that printed no tip; the
+      // card was charged 54,00. The invoice total already IS the VAT-bearing
+      // figure, so the correction leaves it exactly where it was.
+      const { updates } = buildExtractionCorrection(
+        { tipAmount: 320 },
+        { extractedAmount: 5080, extractedVatAmount: 555 }
+      );
+
+      expect("extractedAmount" in updates).toBe(false);
+      expect("extractedVatAmount" in updates).toBe(false);
+    });
+
+    it("leaves the printed rate groups standing — a tip is outside VAT", () => {
+      // Listing tipAmount as VAT-bearing would clear the block that proves what
+      // the total contains, which is the evidence the printed-tip rule reads.
+      const { updates } = buildExtractionCorrection({ tipAmount: 320 });
+
+      expect("extractedRateGroups" in updates).toBe(false);
+      expect("lineItemsUnreconciled" in updates).toBe(false);
+      expect("vatSourceDowngraded" in updates).toBe(false);
+    });
+
+    it("stamps it, so re-extraction refuses the file rather than dropping it", () => {
+      const { updates } = buildExtractionCorrection({ tipAmount: 320 });
+
+      expect(Object.keys(updates.extractionCorrectedFields as object)).toEqual(["tipAmount"]);
+    });
+
+    it("reads zero and null as the same answer: no tip", () => {
+      expect(buildExtractionCorrection({ tipAmount: null }).updates.extractedTipAmount).toBeNull();
+      expect(buildExtractionCorrection({ tipAmount: 0 }).updates.extractedTipAmount).toBeNull();
+    });
+
+    it("refuses a negative tip instead of storing one nothing reads", () => {
+      expect(() => buildExtractionCorrection({ tipAmount: -320 })).toThrow(/must not be negative/);
+      expect(() => buildExtractionCorrection({ tipAmount: "3,20" as never })).toThrow(
+        /finite number of cents/
+      );
+    });
+  });
+
   it("refuses a correction that corrects nothing", () => {
     expect(() => buildExtractionCorrection({})).toThrow(ExtractionCorrectionError);
   });

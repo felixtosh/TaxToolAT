@@ -107,7 +107,8 @@ export function isRemainderClosed(gap: number): boolean {
 
 /**
  * What the bank was charged for a document: the VAT-bearing total plus any
- * printed Trinkgeld (#172).
+ * Trinkgeld, whether the document printed it (#172) or a person recorded the
+ * one it never printed (#217).
  *
  * `extractedAmount` is the Summe the printed rate groups add up to, which is
  * deliberately NOT the figure on the bank line for a restaurant Beleg with a
