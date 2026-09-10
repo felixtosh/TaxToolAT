@@ -888,7 +888,11 @@ export interface SearchGmailDirectParams {
 
 /**
  * Direct Gmail search for use within Cloud Functions (automation).
- * Uses the EXACT same logic as the callable - single source of truth.
+ *
+ * Shares the callable's query compilation (`buildGmailSearchQuery`), not its
+ * whole path: the callable also forks on the integration's provider (#240) and
+ * defaults `hasAttachments` to true, where automation callers here default it
+ * to false and pass a raw Gmail `query` of their own. Gmail only.
  */
 export async function searchGmailDirect(
   params: SearchGmailDirectParams

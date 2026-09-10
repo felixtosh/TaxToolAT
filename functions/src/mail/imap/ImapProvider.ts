@@ -205,7 +205,10 @@ export class ImapProvider implements MailProvider {
    * When the server rejects the keyword search — dovecot and friends do reject
    * BODY searches on some mailboxes — the fall-back is a bounded fetch of the
    * newest MAX_IMAP_SCAN_MESSAGES envelopes in the window, matched locally.
-   * Bounded, because an unbounded walk of a large mailbox is a hang.
+   * Bounded, because an unbounded walk of a large mailbox is a hang, and
+   * narrower than the search it replaces: an envelope carries no body, so the
+   * scan matches Subject and From where the server matched Subject and body.
+   * Both the bound and the lost field are reported in `limitations`.
    */
   async search(opts: MailSearchOptions): Promise<MailSearchPage> {
     const client = await this.connect();
@@ -301,13 +304,27 @@ export class ImapProvider implements MailProvider {
     const inWindow = (found || []).slice().sort((a, b) => b - a);
     const scanned = inWindow.slice(0, MAX_IMAP_SCAN_MESSAGES);
 
-    limitations.push({
-      // Which key the server choked on is not knowable from the rejection, so
-      // the report names the one that was actually re-applied locally.
-      constraint: keywords.length > 0 ? "keywords" : "from",
-      handling: "scanned",
-      detail: `Server rejected the search keys; matched Subject/From locally over the newest ${scanned.length} messages in the window.`,
-    });
+    // Which key the server choked on is not knowable from the rejection, so
+    // every key that was re-applied locally is reported — both of them when a
+    // search names keywords AND a sender, which the single entry this replaced
+    // used to hide.
+    //
+    // The local pass is NOT the server pass done here: the server searches
+    // Subject or body (`keywordClause`), the scan can only read the envelope it
+    // fetched, so it matches Subject or From. A mail whose keyword appears only
+    // in the body was found before the fall-back and is not found by it. That
+    // is a recall difference, so it is reported rather than left implied by the
+    // scan bound.
+    const scannedNote =
+      `Server rejected the search keys; matched locally over the newest ` +
+      `${scanned.length} messages in the window, against Subject and From only ` +
+      `— a match that appears solely in a message body is not found this way.`;
+    if (keywords.length > 0) {
+      limitations.push({ constraint: "keywords", handling: "scanned", detail: scannedNote });
+    }
+    if (from) {
+      limitations.push({ constraint: "from", handling: "scanned", detail: scannedNote });
+    }
     if (inWindow.length > scanned.length) {
       limitations.push({
         constraint: "dateWindow",
@@ -331,7 +348,9 @@ export class ImapProvider implements MailProvider {
       const subject = (msg.envelope?.subject || "").toLowerCase();
       const fromHeader = formatFrom(msg.envelope?.from).toLowerCase();
       // Same ALL/ANY split the server-side query makes: named keywords must all
-      // hit, the invoice sweep needs one.
+      // hit, the invoice sweep needs one. NOT the same fields, though — the
+      // server searches Subject or body, and an envelope fetch has no body to
+      // search, so this matches Subject or From. Reported as a limitation.
       const hit = (k: string) => subject.includes(k) || fromHeader.includes(k);
       const keywordHit =
         needles.length === 0 || (matchAll ? needles.every(hit) : needles.some(hit));

@@ -5,6 +5,7 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase/config";
 import { EmailMessage, EmailSearchParams, EmailAttachment } from "@/types/email-integration";
 import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
+import type { MailSearchLimitation } from "@/functions/src/mail/provider";
 
 // ============================================================================
 // Cloud Function Types
@@ -49,6 +50,8 @@ interface SearchGmailResponse {
   messages: GmailMessageResult[];
   nextPageToken?: string;
   totalEstimate?: number;
+  /** Constraints the provider could not execute as asked (#240). */
+  limitations?: MailSearchLimitation[];
 }
 
 const searchGmailFn = httpsCallable<SearchGmailRequest, SearchGmailResponse>(

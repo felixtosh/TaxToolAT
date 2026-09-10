@@ -48,10 +48,38 @@ describe("termsFromQuery", () => {
     });
   });
 
-  it("strips Gmail's grouping punctuation, which means nothing once lowered", () => {
+  it("strips Gmail's grouping, which turns an OR query into an AND one", () => {
+    // Recorded rather than hidden: the parens and the bare OR are dropped and
+    // both words become ordinary keywords, which buildGmailQuery then ANDs. So
+    // this query NARROWS — a mail carrying only "rechnung" was returned before
+    // and is not returned now. Named keywords have to AND (see the AND test
+    // below), and nothing in the vocabulary says "any of these", so the two
+    // cannot both be had until that is decided. See #240.
     expect(termsFromQuery("(rechnung OR invoice)")).toEqual({
       keywords: ["rechnung", "invoice"],
     });
+    expect(buildGmailQuery(termsFromQuery("(rechnung OR invoice)"))).toBe(
+      "rechnung invoice has:attachment"
+    );
+  });
+
+  it("drops a Gmail-only operator instead of smuggling it through as a keyword", () => {
+    // #240's first acceptance criterion: the request carries no provider
+    // syntax. Held as free text these are re-emitted unquoted, so Gmail reads
+    // them back as the operators they always were and IMAP searches for the
+    // literal string. Dropping only widens the search.
+    expect(termsFromQuery("label:Rechnungen invoice")).toEqual({ keywords: ["invoice"] });
+    expect(termsFromQuery("is:unread rechnung")).toEqual({ keywords: ["rechnung"] });
+    expect(termsFromQuery("after:2024/01/01 rechnung")).toEqual({ keywords: ["rechnung"] });
+    expect(termsFromQuery("to:me@example.at rechnung")).toEqual({ keywords: ["rechnung"] });
+    expect(termsFromQuery("newer_than:7d beleg")).toEqual({ keywords: ["beleg"] });
+    expect(termsFromQuery("older_than:1y beleg")).toEqual({ keywords: ["beleg"] });
+  });
+
+  it("keeps a colon that is part of an ordinary search term", () => {
+    // An invoice number is text, not an operator, and Gmail reads it as text
+    // too. This is why the operators are listed rather than matched by shape.
+    expect(termsFromQuery("RE:2024-88")).toEqual({ keywords: ["RE:2024-88"] });
   });
 
   it("drops a negated term rather than searching for a literal dash-word", () => {

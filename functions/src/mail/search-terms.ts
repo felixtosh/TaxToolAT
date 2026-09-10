@@ -26,6 +26,18 @@ function unquote(value: string): string {
 }
 
 /**
+ * The operators this module reads off a written query.
+ *
+ * Four have a neutral equivalent (`from`, `filename`, `subject`, `has`). The
+ * rest are Gmail's alone and are dropped — they are listed rather than matched
+ * by shape so that a colon inside an ordinary search term survives: an invoice
+ * number written `RE:2024-88` is text, not an operator, and Gmail reads it as
+ * text too.
+ */
+const OPERATOR =
+  /^(from|filename|subject|has|to|cc|bcc|label|is|in|list|category|deliveredto|rfc822msgid|size|larger|smaller|after|before|older|newer|older_than|newer_than)\s*:\s*(.+)$/i;
+
+/**
  * Read one written query as terms.
  *
  * Operators that have a neutral equivalent become it (`from:`, `filename:`,
@@ -34,8 +46,13 @@ function unquote(value: string): string {
  * search. A negated term is dropped, because no provider term says "not" and a
  * literal "-word" would match nothing. Anything else is free text.
  *
- * Gmail's grouping punctuation (parens, a bare `OR`) carries no meaning once
- * the terms are ORed by construction, so it is stripped rather than honoured.
+ * Gmail's grouping punctuation (parens, a bare `OR`) is stripped, and the terms
+ * it grouped become ordinary keywords — which `buildGmailQuery` then ANDs. That
+ * NARROWS a query that meant "either word": `(rechnung OR invoice)` goes out as
+ * `rechnung invoice`. Named keywords have to AND, because `${partner} rechnung`
+ * is what the pattern layer emits constantly and it means both words; there is
+ * no term in the vocabulary for "any of these" that would not also widen that.
+ * Recording the trade rather than hiding it — see the discussion on #240.
  */
 export function termsFromQuery(query: string): MailSearchTerms {
   const keywords: string[] = [];
@@ -53,7 +70,7 @@ export function termsFromQuery(query: string): MailSearchTerms {
     // for. Wider is the honest failure of the two.
     if (token.startsWith("-")) continue;
 
-    const operator = /^(from|filename|subject|has)\s*:\s*(.+)$/i.exec(token);
+    const operator = OPERATOR.exec(token);
     if (!operator) {
       const text = unquote(token);
       if (text) keywords.push(text);
@@ -71,9 +88,19 @@ export function termsFromQuery(query: string): MailSearchTerms {
       case "subject":
         if (value) keywords.push(value);
         break;
-      default:
+      case "has":
         // `has:attachment`; any other `has:` value is Gmail-only and dropped.
         if (value.toLowerCase() === "attachment") hasAttachment = true;
+        break;
+      default:
+        // A Gmail-only operator with no neutral equivalent. Dropped, never kept
+        // as a keyword: `label:Rechnungen` held as free text is re-emitted
+        // unquoted, so Gmail reads it back as the operator it always was and
+        // IMAP searches for the literal string — provider syntax smuggled
+        // through a request that is supposed to carry none (#240's first
+        // acceptance criterion). Dropping it only widens the search, which is
+        // this module's standing choice for a term it cannot express.
+        break;
     }
   }
 

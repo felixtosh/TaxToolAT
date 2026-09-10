@@ -250,6 +250,35 @@ describe("ImapProvider.search", () => {
     expect(reported).toContain("dateWindow:scanned");
   });
 
+  it("reports every key the scan re-applied, not just the first", async () => {
+    // A search naming keywords AND a sender has both re-applied locally when
+    // the server rejects the query. Reporting only one left the other looking
+    // server-side (#240 review).
+    state.searchThrows = true;
+    state.searchResult = [12];
+    state.fetchList = [
+      {
+        uid: 12,
+        envelope: { subject: "Rechnung", from: [{ address: "billing@netflix.com" }] },
+      },
+    ];
+
+    const page = await new ImapProvider(cfg()).search({
+      keywords: ["rechnung"],
+      from: "netflix.com",
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+    });
+
+    const reported = (page.limitations ?? []).map((l) => `${l.constraint}:${l.handling}`);
+    expect(reported).toContain("keywords:scanned");
+    expect(reported).toContain("from:scanned");
+    // And the report says which fields the local pass could actually read, so
+    // the lost body match is not left implied by the scan bound alone.
+    const scanned = (page.limitations ?? []).find((l) => l.constraint === "keywords");
+    expect(scanned?.detail).toMatch(/Subject and From only/);
+  });
+
   it("returns an empty page when the server matches nothing", async () => {
     state.searchResult = false;
     const provider = new ImapProvider(cfg());
