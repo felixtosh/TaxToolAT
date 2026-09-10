@@ -341,6 +341,23 @@ export interface ManualFileRemoval {
 }
 
 /**
+ * One single-valued field where a merged-away Partner disagreed with its
+ * survivor. Recorded on the Merged Partner, not the survivor: the survivor's
+ * record is the live one and says what it holds, the tombstone is where the
+ * discarded half of the conflict belongs.
+ */
+export interface PartnerMergeConflict {
+  /** The `UserPartner` field that conflicted, e.g. "vatId". */
+  field: string;
+
+  /** The value this Partner held at merge time. */
+  value: unknown;
+
+  /** The value the survivor kept. */
+  survivorValue: unknown;
+}
+
+/**
  * User-specific partner
  * Collection: /partners/{id} with userId field
  */
@@ -461,6 +478,26 @@ export interface UserPartner {
 
   /** Active status (soft delete) */
   isActive: boolean;
+
+  /**
+   * Set when this Partner was merged away: the id of the survivor it was folded
+   * into. A Partner carrying this is a **Merged Partner** — inactive, absent
+   * from the Partner list, never a match candidate, and read back as itself so
+   * a caller holding the stale id learns once that it has to update. Never
+   * chained: merging a survivor onward rewrites every Merged Partner that
+   * pointed at it, so this is always one hop from a live Partner.
+   */
+  mergedInto?: string;
+
+  /** When this Partner was merged away. */
+  mergedAt?: Timestamp;
+
+  /**
+   * Single values this Partner held that the survivor already had and kept.
+   * A consolidation exists to preserve identifying data, so a loser's value
+   * that lost a straight conflict is recorded here rather than dropped.
+   */
+  mergeConflicts?: PartnerMergeConflict[];
 
   /**
    * If set, this partner is derived from identity settings and auto-syncs.
