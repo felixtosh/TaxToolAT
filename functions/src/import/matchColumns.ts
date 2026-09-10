@@ -166,8 +166,13 @@ const TRANSACTION_FIELDS: FieldDefinition[] = [
   },
 ];
 
-// Valid format IDs
-const DATE_FORMATS = [
+// Valid format IDs. The date ids are the ids of DATE_PARSERS in
+// lib/import/date-parsers.ts, hand-duplicated because functions/tsconfig.json
+// pins rootDir: "src" and cannot reach the app tree. date-parsers.test.ts
+// fails the build if the two drift: an id missing here is a format the AI can
+// never suggest, and one that lingers here is a format it can suggest and no
+// parser can read (#167).
+export const DATE_FORMATS = [
   "iso-datetime", "iso-datetime-t", "iso", "de", "de-short",
   "us", "us-short", "eu-slash", "eu-slash-short",
   "dash-dmy", "dash-mdy", "dash-dmy-short", "dash-mdy-short", "text-short", "text-long",

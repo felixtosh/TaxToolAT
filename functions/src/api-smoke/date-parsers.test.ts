@@ -28,6 +28,7 @@ import {
 } from "@/lib/import/date-parsers";
 import { autoMatchColumnsRuleBased } from "@/lib/import/field-matcher";
 import { detectCSVFormat, parseCSV } from "@/lib/import/csv-parser";
+import { DATE_FORMATS } from "../import/matchColumns";
 
 describe("analyzeDayMonthOrder", () => {
   it("proves day-first when a first component exceeds 12", () => {
@@ -531,6 +532,14 @@ describe("dashed dates that are not DD-MM-YYYY", () => {
     // Same for the month-first pair.
     expect(yearOf(`02-01-${below}`, "dash-mdy-short")).toBe(yearOf(`02/01/${below}`, "us-short"));
     expect(yearOf(`02-01-${at}`, "dash-mdy-short")).toBe(yearOf(`02/01/${at}`, "us-short"));
+  });
+
+  it("is reachable by the AI column matcher, not only by the dropdown", () => {
+    // The callable coerces a suggestion it does not recognise to "de", so a
+    // format missing from this list is one auto-detection can never name — the
+    // dashed rows would be dropdown-only. The list is hand-duplicated across
+    // the rootDir boundary, so pin it to the table in both directions.
+    expect([...DATE_FORMATS].sort()).toEqual(DATE_PARSERS.map((p) => p.id).sort());
   });
 
   it("carries a time, as the slash formats do", () => {
