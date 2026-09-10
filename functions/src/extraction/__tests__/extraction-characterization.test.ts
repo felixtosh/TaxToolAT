@@ -427,6 +427,17 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted.confidence).toBe(0.9);
   });
 
+  // The third defect the repair pass has always handled, and the only one of
+  // the three that had no test. The invalid-escape pass added for #231 now
+  // runs ahead of it over the same string content, so pin it rather than
+  // assume it.
+  it("repairs a raw newline inside a string value", async () => {
+    q('{"extracted": {"address": "Wien\nAustria", "amount": 5}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe("Wien\nAustria");
+    expect(res.extracted.amount).toBe(5);
+  });
+
   // #157/#231: a backslash the model transcribed as data (a Windows path, a
   // `\d` in a reference number, a hand-typed separator) is not a JSON escape.
   // The old repair pass copied it through untouched and the second parse
@@ -476,6 +487,29 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted.amount).toBe(42);
   });
 
+  // The test above covers `\"`, `\n` and `\uXXXX`; the criterion is "every
+  // escape sequence JSON does define". `\\` matters most — a pass that doubled
+  // indiscriminately would turn one escaped backslash into two literal ones
+  // and corrupt the field silently, without ever failing the parse.
+  it("carries the remaining JSON-defined escapes through the repair intact (#231)", async () => {
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "C:\\\\Users\\\\muster\\ttab\\rcr\\bbs\\fff\\/slash"}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.invoiceNumber).toBe("bad\\zescape");
+    expect(res.extracted.address).toBe("C:\\Users\\muster\ttab\rcr\bbs\fff/slash");
+  });
+
+  // `\u` only introduces an escape when four hex digits follow it. Anything
+  // else is a transcribed backslash like any other.
+  it("treats a malformed \\uXXXX sequence as a literal backslash (#231)", async () => {
+    q('{"extracted": {"address": "caf\\uZZZZ", "amount": 9}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe("caf\\uZZZZ");
+    expect(res.extracted.amount).toBe(9);
+  });
+
   it("rejects when no JSON object can be found or repaired", async () => {
     q("totally not json");
     await expect(parseWithGemini(BUF, "application/pdf")).rejects.toThrow(
@@ -483,6 +517,14 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     );
 
     q('{"a": <<<}');
+    await expect(parseWithGemini(BUF, "application/pdf")).rejects.toThrow(
+      /JSON parse failed even after repair/,
+    );
+
+    // Truncated mid-string, so the response ends on a lone backslash.
+    // Doubling it does not terminate the string: the escape pass must not
+    // rescue this into something parseable-but-wrong (#231).
+    q('{"extracted": {"address": "C:\\Users\\x');
     await expect(parseWithGemini(BUF, "application/pdf")).rejects.toThrow(
       /JSON parse failed even after repair/,
     );
