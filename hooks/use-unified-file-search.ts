@@ -12,6 +12,7 @@ import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 import { termsFromQuery } from "@/functions/src/mail/search-terms";
 import { useAuth } from "@/components/auth";
 import { toDateSafe } from "@/lib/utils";
+import { classifyFileStrict } from "@/lib/files/file-kind";
 
 /**
  * Transaction info for smart search/ranking
@@ -426,12 +427,13 @@ export function useUnifiedFileSearch(
           });
         }
 
-        // Only include PDFs and images
-        filteredFiles = filteredFiles.filter(
-          (f) =>
-            f.fileType === "application/pdf" ||
-            f.fileType.startsWith("image/")
-        );
+        // Only include PDFs and images. Some records were written without a
+        // fileType (#248) — normalised so this doesn't crash on `.startsWith`.
+        // See lib/files/file-kind.js.
+        filteredFiles = filteredFiles.filter((f) => {
+          const { isPdf, isImage } = classifyFileStrict(f.fileType);
+          return isPdf || isImage;
+        });
 
         // Filter by search query and track matched fields
         let localFilesWithMatches: Array<{ file: TaxFile; matchedFields: string[] }>;
