@@ -404,6 +404,20 @@ export interface TaxFile {
   vatRatesOutsideSet?: number[];
 
   /**
+   * A value on this file came through an ambiguous escape (#275). The model's
+   * response did not parse, the repair pass had to neutralise a backslash in a
+   * string that also carried a `\b \f \n \r \t`, and it read that one as JSON
+   * defines it — so the stored text may be a control character where the
+   * document prints a backslash. Written at extraction time, queryable as a
+   * review list. Records written before the detector stay unflagged: the raw
+   * response is gone, so the ambiguity is unrecoverable.
+   */
+  needsRepairReview?: boolean;
+
+  /** Which fields those are, so the record reads without opening the PDF. */
+  repairAmbiguousFields?: string[];
+
+  /**
    * The document names a Leistungsempfänger who is not the user (#229), on a
    * document the user did not issue. § 11 can be perfectly satisfied and § 12
    * still not reached: the supply was rendered to somebody else's Unternehmen,

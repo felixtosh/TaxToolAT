@@ -28,6 +28,7 @@ import {
 import {
   describeDirectionReview,
   describeForeignRecipient,
+  describeRepairAmbiguity,
   describeInvoiceDirection,
   INVOICE_DIRECTIONS,
 } from "@/lib/documents/document-type-presentation";
@@ -165,6 +166,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   const directionPresentation = describeInvoiceDirection(file.invoiceDirection);
   const directionReview = describeDirectionReview(file);
   const foreignRecipient = describeForeignRecipient(file.foreignRecipient);
+  const repairAmbiguity = describeRepairAmbiguity(file);
   const [showMore, setShowMore] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editedFields, setEditedFields] = useState<EditableExtractedFields>({
@@ -502,6 +504,15 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
             {foreignRecipient.label}
           </Badge>
           <p className="text-xs text-muted-foreground">{foreignRecipient.text}</p>
+        </div>
+      )}
+
+      {repairAmbiguity && (
+        <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 space-y-1">
+          <Badge variant="outline" className="text-xs">
+            {repairAmbiguity.label}
+          </Badge>
+          <p className="text-xs text-muted-foreground">{repairAmbiguity.text}</p>
         </div>
       )}
 

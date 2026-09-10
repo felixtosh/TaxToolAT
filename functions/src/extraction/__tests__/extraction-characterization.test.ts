@@ -492,6 +492,103 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted.amount).toBe(9);
   });
 
+  // -------------------------------------------------------------------------
+  // #275: the repair pass says where it had to guess
+  //
+  // `\t` in a response is either an escape the model wrote or two characters
+  // the document prints, and those are the same two bytes. #231 settled that
+  // JSON's reading wins; what is pinned here is that the choice is RECORDED.
+  // The extracted values below are exactly what the repair produced before
+  // this — the flag is a signal alongside them, never a change to them.
+  // -------------------------------------------------------------------------
+
+  it("names the field when a \\t survives a string the pass had to modify (#275)", async () => {
+    q('{"extracted": {"address": "C:\\Users\\test", "amount": 5}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    // Unchanged from #231: `\U` is not an escape and survives literally, `\t`
+    // is one and becomes a TAB. That is the corruption nobody could see.
+    expect(res.extracted.address).toBe("C:\\Users\test");
+    expect(res.extracted.amount).toBe(5);
+    expect(res.repairAmbiguousFields).toEqual(["address"]);
+  });
+
+  it("flags each of \\b \\f \\n \\r \\t the same way (#275)", async () => {
+    const ambiguous = [
+      ["b", "\b"],
+      ["f", "\f"],
+      ["n", "\n"],
+      ["r", "\r"],
+      ["t", "\t"],
+    ] as const;
+
+    for (const [letter, control] of ambiguous) {
+      q(`{"extracted": {"address": "C:\\zone\\${letter}wo"}}`);
+      const res = await parseWithGemini(BUF, "application/pdf");
+      expect(res.extracted.address).toBe(`C:\\zone${control}wo`);
+      expect(res.repairAmbiguousFields).toEqual(["address"]);
+    }
+  });
+
+  it("names every affected field, and only those (#275)", async () => {
+    q(
+      '{"extracted": {"address": "C:\\Users\\test", ' +
+        '"invoiceNumber": "RE-2024\\d001", "partner": "Muster GmbH"}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    // invoiceNumber was modified but carries no ambiguous escape, and partner
+    // was never touched — neither was guessed at.
+    expect(res.extracted.invoiceNumber).toBe("RE-2024\\d001");
+    expect(res.extracted.partner).toBe("Muster GmbH");
+    expect(res.repairAmbiguousFields).toEqual(["address"]);
+  });
+
+  it("does not flag a \\t in a string the pass never had to modify (#275)", async () => {
+    // The repair path is forced by the invalid escape in `invoiceNumber`. The
+    // address escaped its tab correctly, so its `\t` is a real tab.
+    q('{"extracted": {"invoiceNumber": "bad\\zescape", "address": "col1\\tcol2"}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.address).toBe("col1\tcol2");
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
+  it("does not flag a response repaired only by the raw-newline heuristic (#275)", async () => {
+    // The false positive a detector reading the PARSED result produces: this
+    // value carries a control character too, and nothing was guessed at.
+    q('{"extracted": {"address": "Wien\nAustria", "amount": 5}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.address).toBe("Wien\nAustria");
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
+  it("does not flag a response repaired only for commas or braces (#275)", async () => {
+    q('{"extracted": {"amount": 500,}}');
+    expect((await parseWithGemini(BUF, "application/pdf")).repairAmbiguousFields).toEqual([]);
+
+    q('{"extracted": {"amount": 777, "confidence": 0.9');
+    expect((await parseWithGemini(BUF, "application/pdf")).repairAmbiguousFields).toEqual([]);
+  });
+
+  it("does not flag unambiguous invalid escapes — nothing was guessed (#275)", async () => {
+    q('{"extracted": {"address": "C:\\Rechnungen\\2024", "invoiceNumber": "RE\\d1"}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.address).toBe("C:\\Rechnungen\\2024");
+    expect(res.extracted.invoiceNumber).toBe("RE\\d1");
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
+  it("does not flag a response that parsed first time (#275)", async () => {
+    q({ extracted: { address: "C:\\Users\\muster\ttab", amount: 42 } });
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.address).toBe("C:\\Users\\muster\ttab");
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
   it("rejects when no JSON object can be found or repaired", async () => {
     q("totally not json");
     await expect(parseWithGemini(BUF, "application/pdf")).rejects.toThrow(
@@ -714,6 +811,16 @@ describe("characterization: documentExtractor", () => {
       confidence: 0.66, // classification confidence is passed through
       fieldSpans: {},
     });
+  });
+
+  it("gemini: carries the repair-ambiguity field names up to the result (#275)", async () => {
+    q('{"extracted": {"address": "C:\\Users\\test", "amount": 5}}');
+    const res = await extractDocument(BUF, "image/jpeg", {
+      provider: "gemini",
+      skipClassification: true,
+    });
+
+    expect(res.repairAmbiguousFields).toEqual(["address"]);
   });
 
   it("gemini: skipClassification goes straight to extraction (single API call)", async () => {
