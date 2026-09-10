@@ -30,9 +30,13 @@ interface AttachmentInput {
 }
 
 interface TransactionInput {
+  /**
+   * The Transaction being scored against. The server derives Coverage from it
+   * (#239); nothing about the Remainder is computed on this side. Absent for a
+   * Transaction with no id yet, which scores against the full amount.
+   */
+  id?: string | null;
   amount?: number | null;
-  /** What the Files already on this transaction explain, in cents (#239). */
-  documentedAmount?: number | null;
   date?: string | null; // ISO string
   name?: string | null;
   reference?: string | null;
@@ -126,8 +130,8 @@ export async function POST(request: NextRequest) {
           classification: att.classification,
         })),
         transaction: {
+          id: transaction.id,
           amount: transaction.amount,
-          documentedAmount: transaction.documentedAmount,
           date: transaction.date,
           name: transaction.name,
           reference: transaction.reference,

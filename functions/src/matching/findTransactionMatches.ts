@@ -295,7 +295,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
     // What the Files already on each candidate explain (#239). The trigger
     // resolves its Remainders through the same helper, so this dialog and the
     // stored suggestions cannot disagree about which figure is open.
-    const documentedAmounts = await loadDocumentedAmounts(candidates, fileId);
+    const documentedAmounts = await loadDocumentedAmounts(candidates.map((c) => c.id), fileId);
 
     // Score each transaction
     const allScores: TransactionMatchScore[] = candidates.map((doc) => {

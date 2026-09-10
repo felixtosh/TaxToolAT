@@ -37,13 +37,16 @@ vi.mock("firebase-admin/firestore", async () => {
   });
 
   const query = (collection: string) => {
-    // The only filtered read that matters here is loadDocumentedAmounts'
-    // `where("__name__", "in", [...])` over files; everything else is
-    // answered from the seeded state regardless of the clauses.
+    // Two filtered reads matter here, both inside loadDocumentedAmounts:
+    // `where("transactionId", "in", [...])` over fileConnections, and
+    // `where("__name__", "in", [...])` over the files those name. Everything
+    // else is answered from the seeded state regardless of the clauses.
     let ids: string[] | null = null;
+    let transactionIds: string[] | null = null;
     const q = {
       where: (field: string, _op: string, value: unknown) => {
         if (field === "__name__") ids = value as string[];
+        if (field === "transactionId") transactionIds = value as string[];
         return q;
       },
       orderBy: () => q,
@@ -51,6 +54,21 @@ vi.mock("firebase-admin/firestore", async () => {
       get: async () => {
         if (collection === "transactions") {
           const docs = state.transactions.map((t) => snap(t.id, t.data));
+          return { docs, empty: docs.length === 0 };
+        }
+        if (collection === "fileConnections") {
+          // Connections are materialised from the `fileIds` a test seeds on its
+          // transactions: one row per connected File, which is the shape
+          // production stores. The seed stays readable, and the code under test
+          // still goes through the real `fileConnections` read.
+          const wanted = transactionIds;
+          const docs = state.transactions
+            .filter((t) => !wanted || wanted.includes(t.id))
+            .flatMap((t) =>
+              ((t.data.fileIds as string[] | undefined) ?? []).map((fileId) =>
+                snap(`${t.id}:${fileId}`, { transactionId: t.id, fileId })
+              )
+            );
           return { docs, empty: docs.length === 0 };
         }
         if (collection === "files" && ids) {

@@ -4,6 +4,7 @@
  */
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { loadDocumentedAmounts } from "../matching/documentedAmounts";
 import {
   scoreAttachmentMatch,
   ScoreAttachmentInput,
@@ -36,13 +37,14 @@ interface ScoreAttachmentRequest {
     } | null;
   }>;
   transaction: {
-    amount?: number | null;
     /**
-     * What the Files already on this transaction explain, in cents (#239).
-     * Supplied by the caller, which is the side that holds them; without it
-     * the candidate is scored against the full amount as before.
+     * The Transaction being scored against. Needed so the server can derive
+     * Coverage itself (#239) — see the note in the handler. Optional only
+     * because callers that score against a Transaction not yet saved have no
+     * id to give; those score against the full amount, as before.
      */
-    documentedAmount?: number | null;
+    id?: string | null;
+    amount?: number | null;
     date?: string | null; // ISO string
     name?: string | null;
     reference?: string | null;
@@ -96,6 +98,20 @@ export const scoreAttachmentMatchCallable = onCall<
 
     const transactionDate = transaction?.date ? new Date(transaction.date) : null;
 
+    // Derived here, never accepted from the caller.
+    //
+    // What the Files already on this Transaction explain decides whether a
+    // candidate is scored against the full amount or against the Remainder
+    // (#239), so it is a scoring input like any other. CLAUDE.md's Server-Side
+    // Scoring Only rule exists because the UI and the background trigger must
+    // produce identical scores, and a figure computed in the browser and posted
+    // here is the one way that guarantee breaks: the trigger derives its own
+    // from `fileConnections` and the two answers can differ. Same read, same
+    // source of truth, same answer.
+    const documentedAmount = transaction?.id
+      ? (await loadDocumentedAmounts([transaction.id])).get(transaction.id) ?? 0
+      : 0;
+
     const scores = attachments.map((att) => {
       const input: ScoreAttachmentInput = {
         filename: att.filename,
@@ -113,7 +129,7 @@ export const scoreAttachmentMatchCallable = onCall<
         fileExtractedPartner: att.fileExtractedPartner,
         // Transaction data
         transactionAmount: transaction?.amount,
-        transactionDocumentedAmount: transaction?.documentedAmount,
+        transactionDocumentedAmount: documentedAmount,
         transactionDate,
         transactionName: transaction?.name,
         transactionReference: transaction?.reference,

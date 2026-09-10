@@ -19,27 +19,45 @@ const db = getFirestore();
  * Transactions with no Files are absent from the map, which callers read as
  * zero — nothing connected, score against the full amount.
  *
- * `excludeFileId` is the File being matched: it may already appear in a
- * candidate's `fileIds`, and a File cannot count towards the Remainder it is
- * being scored against.
+ * `excludeFileId` is the File being matched: it may already be connected to a
+ * candidate, and a File cannot count towards the Remainder it is being scored
+ * against.
  *
- * `fileIds` on the transaction is the same list both detail panels render, so
- * the scorers and the display count the same Files.
+ * **Reads the `fileConnections` collection, not the transaction's `fileIds`.**
+ * `fileConnections` is what `isTransactionCovered` read before this was
+ * extracted (#239) and it stays the record of truth for "which Files sit on
+ * this Transaction". `fileIds` is a denormalised copy maintained alongside it;
+ * scoring off the copy would silently answer differently wherever the two
+ * drift, and picking a new source of truth is not this ticket's decision to
+ * make. The batching below exists because that read was per-candidate before.
  */
 export async function loadDocumentedAmounts(
-  transactionDocs: Array<{ id: string; data: () => FirebaseFirestore.DocumentData }>,
+  transactionIds: string[],
   excludeFileId?: string
 ): Promise<Map<string, number>> {
   const fileIdsByTransaction = new Map<string, string[]>();
   const wantedFileIds = new Set<string>();
 
-  for (const doc of transactionDocs) {
-    const fileIds: string[] = (doc.data().fileIds || []).filter(
-      (id: string) => id && id !== excludeFileId
-    );
-    if (fileIds.length === 0) continue;
-    fileIdsByTransaction.set(doc.id, fileIds);
-    for (const id of fileIds) wantedFileIds.add(id);
+  // Firestore 'in' takes at most 30 values, so the candidates are chunked. One
+  // query per 30 candidates, rather than the one query per candidate this read
+  // used to cost.
+  for (let i = 0; i < transactionIds.length; i += 30) {
+    const chunk = transactionIds.slice(i, i + 30);
+    const connections = await db
+      .collection("fileConnections")
+      .where("transactionId", "in", chunk)
+      .get();
+
+    for (const connection of connections.docs) {
+      const { transactionId, fileId } = connection.data();
+      // The File being scored cannot document the Remainder it is scored against.
+      if (!transactionId || !fileId || fileId === excludeFileId) continue;
+      const forTransaction = fileIdsByTransaction.get(transactionId) ?? [];
+      if (forTransaction.includes(fileId)) continue; // duplicate connection rows
+      forTransaction.push(fileId);
+      fileIdsByTransaction.set(transactionId, forTransaction);
+      wantedFileIds.add(fileId);
+    }
   }
 
   const documented = new Map<string, number>();

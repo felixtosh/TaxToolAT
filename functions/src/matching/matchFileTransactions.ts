@@ -550,7 +550,7 @@ export async function runTransactionMatching(
   // What the Files already sitting on each candidate explain (#239). Only the
   // candidates that hold Files cost a read; the rest are scored against their
   // full amount exactly as before.
-  const documentedAmounts = await loadDocumentedAmounts(eligibleTransactions, fileId);
+  const documentedAmounts = await loadDocumentedAmounts(eligibleTransactions.map((t) => t.id), fileId);
   if (documentedAmounts.size > 0) {
     console.log(
       `[TxMatch] ${documentedAmounts.size} candidate(s) already hold files — scoring those against their remainder`

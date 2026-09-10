@@ -20,7 +20,6 @@ import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { useTransactionFiles } from "@/hooks/use-files";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
 // Coverage is derived in one place, shared with the scorers (#239).
-import { documentedAmountOf, filePaymentTotal } from "@/functions/src/matching/coverage";
 import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
 import { functions, storage, db } from "@/lib/firebase/config";
 import { createFile, checkFileDuplicate, OperationsContext } from "@/lib/operations";
@@ -205,15 +204,6 @@ function TransactionsContent() {
   // Get files connected to selected transaction (for overlay)
   const { files: connectedFiles, connectFile } = useTransactionFiles(selectedTransaction?.id || "");
   const connectedFileIds = useMemo(() => connectedFiles.map(f => f.id), [connectedFiles]);
-  // What those Files explain, so the Connect dialog scores candidates against
-  // the Transaction's Remainder rather than its full amount (#239).
-  const documentedAmount = useMemo(
-    () =>
-      documentedAmountOf(
-        connectedFiles.map((f) => filePaymentTotal(f.extractedAmount, f.extractedTipAmount))
-      ),
-    [connectedFiles]
-  );
 
   // Open/close connect file overlay via URL param
   const openConnectFileOverlay = useCallback(() => {
@@ -535,7 +525,6 @@ function TransactionsContent() {
               onSelect={handleConnectFile}
               connectedFileIds={connectedFileIds}
               transaction={selectedTransaction}
-              documentedAmount={documentedAmount}
             />
           )}
 

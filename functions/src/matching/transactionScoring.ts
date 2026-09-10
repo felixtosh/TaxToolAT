@@ -879,7 +879,13 @@ export function scoreTransaction(
   let documentation: DocumentationAssessment | undefined;
   if (txData.documentationState) {
     const assessment = assessDocumentation(fileData.documentType, txData.documentationState);
-    // #239: redundancy asks "does the target already hold a document of this
+    // #239 relaxes #104's rule here. That is a change to a DIFFERENT ticket's
+    // behaviour, so it was put to the maintainer in review rather than taken as
+    // read, and accepted on 2026-09-10: without it the pair this ticket exists
+    // to surface stays suppressed, so #239 cannot work while #104 stands as
+    // written.
+    //
+    // Redundancy asks "does the target already hold a document of this
     // class?", which presumes this candidate would document the same payment.
     // One that closes the Remainder documents a DIFFERENT part of the line —
     // the second half of a split invoice is not a duplicate of the first — so

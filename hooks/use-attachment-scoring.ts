@@ -33,14 +33,13 @@ export interface AttachmentToScore {
 }
 
 export interface TransactionForScoring {
-  amount?: number | null;
   /**
-   * What the Files already connected to this Transaction explain, in cents
-   * (#239). Given it, candidates are scored against the Remainder rather than
-   * the full amount — see `documentedAmountOf` in
-   * `functions/src/matching/coverage.ts`.
+   * The Transaction being scored against. The server derives Coverage from it
+   * (#239); nothing about the Remainder is computed on this side. Absent for a
+   * Transaction with no id yet, which scores against the full amount.
    */
-  documentedAmount?: number | null;
+  id?: string | null;
+  amount?: number | null;
   date?: Date | null;
   name?: string | null;
   reference?: string | null;
@@ -111,8 +110,8 @@ export function useAttachmentScoring() {
               classification: att.classification,
             })),
             transaction: {
+              id: transaction.id,
               amount: transaction.amount,
-              documentedAmount: transaction.documentedAmount,
               date: transaction.date?.toISOString() || null,
               name: transaction.name,
               reference: transaction.reference,
