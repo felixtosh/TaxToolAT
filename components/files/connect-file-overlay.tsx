@@ -419,6 +419,7 @@ export function ConnectFileOverlay({
       scoreAttachments(
         attachmentsToScore,
         {
+          id: transaction?.id,
           amount: transaction?.amount,
           date: transactionDate,
           name: transaction?.name,
@@ -506,6 +507,7 @@ export function ConnectFileOverlay({
     scoreAttachments(
       emailsToScore,
       {
+        id: transaction.id,
         amount: transaction.amount,
         date: transactionDate,
         name: transaction.name,

@@ -332,6 +332,12 @@ export function useUnifiedFileSearch(
           body: JSON.stringify({
             attachments: itemsToScore.map((item) => item.apiInput),
             transaction: {
+              // The Transaction being scored against. The server derives
+              // Coverage from it (#239); nothing about the Remainder is
+              // computed on this side. Empty for the placeholder the overlay
+              // passes before a Transaction is selected, which scores against
+              // the full amount.
+              id: transactionInfo.id || null,
               amount: transactionInfo.amount,
               date: transactionInfo.date?.toISOString() ?? null,
               name: transactionInfo.partner ?? null,

@@ -144,6 +144,23 @@ An established pairing of a File and a Transaction — the record that says this
 documents this line.
 _Avoid_: match (that is the candidate), attachment, link
 
+**Coverage**:
+How much of a Transaction its connected Files explain — their payment totals against the
+bank line, as a ratio. At or above the coverage tolerance the Transaction counts as
+documented and stops taking auto-connections. A ratio and not a sum, because it has to
+hold for a 12 EUR line and a 12 000 EUR line alike.
+_Avoid_: covered amount, matched amount, completeness, percentage matched
+
+**Remainder**:
+The part of a Transaction its connected Files do not yet explain: the bank line minus
+what those Files come to. It is the figure both detail panels print
+(the line used to be labelled "Difference"), and what a further candidate File is scored
+against — a File that closes it is a Match on
+the Remainder, never an amount mismatch against the full line. At or below zero the
+Transaction is fully documented, and scoring goes back to the full amount. A Match scored
+against a Remainder is a suggestion, never an auto-connection.
+_Avoid_: difference, open amount, balance, remaining amount, delta
+
 **Rejection**:
 The standing "this File and this Transaction do not belong together", whoever recorded it
 — a click, an agent, an MCP call. Survives re-scoring and re-extraction; a rejected pair
