@@ -26,6 +26,19 @@ describe("toDateSafe (functions copy)", () => {
     expect(toDateSafe({ seconds: "1700000000" })).toBeNull();
   });
 
+  it("keeps a genuine zero seconds, which is a date and not an absence", () => {
+    // The tempting one-line fix for the epoch bug is `if (!ts.seconds) return null`,
+    // which would also throw away 1970-01-01 itself — a real, storable instant.
+    expect(toDateSafe({ seconds: 0, nanoseconds: 0 })).toEqual(new Date(0));
+    // Negative seconds are pre-1970, equally real.
+    expect(toDateSafe({ seconds: -86400, nanoseconds: 0 })).toEqual(new Date(-86400000));
+  });
+
+  it("returns null for seconds that are numeric but not finite", () => {
+    expect(toDateSafe({ seconds: NaN })).toBeNull();
+    expect(toDateSafe({ seconds: Infinity })).toBeNull();
+  });
+
   it("still returns the correct Date, to the millisecond, for a valid pair", () => {
     expect(toDateSafe({ seconds: when.getTime() / 1000, nanoseconds: 500_000_000 })).toEqual(
       new Date(when.getTime() + 500)
