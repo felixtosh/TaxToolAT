@@ -183,6 +183,13 @@ interface ConnectFileOverlayProps {
   ) => Promise<void>;
   connectedFileIds?: string[];
   transaction?: Transaction | null;
+  /**
+   * What the Files already connected to this Transaction explain, in cents
+   * (#239). Candidates are then scored against the Transaction's Remainder,
+   * so the File that closes a split reaches the top of the list instead of
+   * reading as an amount mismatch against the full bank line.
+   */
+  documentedAmount?: number;
 }
 
 interface EmailWithContent extends EmailMessage {
@@ -205,6 +212,7 @@ export function ConnectFileOverlay({
   onSelect,
   connectedFileIds = [],
   transaction,
+  documentedAmount,
 }: ConnectFileOverlayProps) {
   const { userId } = useAuth();
 
@@ -309,8 +317,9 @@ export function ConnectFileOverlay({
       currency: transaction.currency,
       partner: transaction.partner || undefined,
       partnerId: transaction.partnerId || undefined,
+      documentedAmount,
     };
-  }, [transaction]);
+  }, [transaction, documentedAmount]);
 
   // Local files search hook
   const {
@@ -420,6 +429,7 @@ export function ConnectFileOverlay({
         attachmentsToScore,
         {
           amount: transaction?.amount,
+          documentedAmount,
           date: transactionDate,
           name: transaction?.name,
           reference: transaction?.reference,
@@ -471,6 +481,7 @@ export function ConnectFileOverlay({
     transaction?.partner,
     transaction?.reference,
     transactionDate?.getTime(),
+    documentedAmount,
   ]);
 
   // Use the state-based signals map
@@ -507,6 +518,7 @@ export function ConnectFileOverlay({
       emailsToScore,
       {
         amount: transaction.amount,
+        documentedAmount,
         date: transactionDate,
         name: transaction.name,
         reference: transaction.reference,
@@ -539,6 +551,7 @@ export function ConnectFileOverlay({
     transaction?.partner,
     transaction?.reference,
     transactionDate?.getTime(),
+    documentedAmount,
     partner?.id,
     partner?.name,
   ]);

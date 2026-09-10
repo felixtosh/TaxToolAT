@@ -22,6 +22,11 @@ export interface TransactionInfo {
   currency: string;
   partner?: string;
   partnerId?: string;
+  /**
+   * What the Files already connected to this Transaction explain, in cents
+   * (#239). Given it, candidates are scored against the Remainder.
+   */
+  documentedAmount?: number;
 }
 
 /**
@@ -333,6 +338,7 @@ export function useUnifiedFileSearch(
             attachments: itemsToScore.map((item) => item.apiInput),
             transaction: {
               amount: transactionInfo.amount,
+              documentedAmount: transactionInfo.documentedAmount ?? null,
               date: transactionInfo.date?.toISOString() ?? null,
               name: transactionInfo.partner ?? null,
               partner: transactionInfo.partner ?? null,

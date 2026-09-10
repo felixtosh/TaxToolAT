@@ -13,7 +13,18 @@ import {
   type BankOriginalAmount,
 } from "../fx/bankOriginalAmount";
 import { selectEffectiveCycleForAmount, ResolvedEffectiveCycle } from "./billingCycle";
+import {
+  COVERAGE_RATIO,
+  REMAINDER_CLOSE_TOLERANCE,
+  deriveCoverage,
+  filePaymentTotal,
+  isRemainderClosed,
+} from "./coverage";
 import type { DocumentType, DocumentationState } from "../documents/types";
+
+// The payment total is Coverage's figure too, so it lives with Coverage (#239).
+// Re-exported here because this is where every caller already imports it from.
+export { filePaymentTotal } from "./coverage";
 
 // === Configuration ===
 
@@ -40,6 +51,19 @@ export const SCORING_CONFIG = {
   MAX_SUGGESTIONS: 5,
   /** Max results to return from callable */
   MAX_RESULTS: 20,
+  /**
+   * Coverage: how much of a Transaction its connected Files must explain
+   * before it counts as documented and stops taking auto-connections (#239).
+   * A ratio, because it has to hold for a 12 EUR line and a 12 000 EUR line
+   * alike.
+   */
+  COVERAGE_RATIO,
+  /**
+   * Cents. Does a candidate File close a Transaction's Remainder? Absolute,
+   * because rounding and Trinkgeld are absolute (#239). The detail panels
+   * read this same number.
+   */
+  REMAINDER_CLOSE_TOLERANCE,
 };
 
 // === Types ===
@@ -52,7 +76,14 @@ export type TransactionMatchSource =
   | "partner"
   | "iban"
   | "reference"
-  | "precision_hint";
+  | "precision_hint"
+  /**
+   * The amount was judged against the Transaction's Remainder, not its full
+   * amount (#239). Never alone: it accompanies whatever the amount ladder
+   * said, so a 214,20 File on a 500,00 line reads as an exact hit against a
+   * 214,20 Remainder rather than as a scorer bug.
+   */
+  | "amount_remainder";
 
 export interface ScoreBreakdown {
   amount: number;
@@ -63,6 +94,13 @@ export interface ScoreBreakdown {
   hint: number;
   /** Combination bonus for exact amount + exact/close date (see HARD_FACTS_BONUS_*) */
   hardFacts: number;
+  /**
+   * Present only when `amount` above was scored against the Transaction's
+   * Remainder (#239); the figure it was scored against, in cents. Absent
+   * means the full amount, which is what every pre-#239 breakdown means.
+   * This is what makes a stored Match identifiable as a Remainder Match.
+   */
+  scoredAgainstRemainder?: number;
 }
 
 export interface TransactionPreview {
@@ -158,6 +196,13 @@ export interface TransactionData {
    * exact scores.
    */
   documentationState?: DocumentationState | null;
+  /**
+   * What the Files already connected to this transaction explain, in cents
+   * (#239) — `documentedAmountOf` over their payment totals. Absent means
+   * the caller does not know, which is scored exactly as "nothing connected",
+   * so every pre-#239 caller keeps its scores.
+   */
+  documentedAmount?: number | null;
 }
 
 // === Utility Functions ===
@@ -240,6 +285,38 @@ function scoreSameCurrencyLadder(
   if (difference <= tolerance * 0.01) return { score: 38, source: "amount_close" };
   if (difference <= tolerance * 0.05) return { score: 30, source: "amount_close" };
   if (difference <= tolerance * 0.1) return { score: 20, source: "amount_close" };
+  return { score: 0, source: null };
+}
+
+/**
+ * The amount ladder for a candidate File against a Transaction's Remainder
+ * (#239).
+ *
+ * Same relative ladder as a full-amount comparison, plus one absolute rung:
+ * a gap inside REMAINDER_CLOSE_TOLERANCE closes the Remainder. The absolute
+ * rung is what makes the small end work — a 5,00 File against a 5,80
+ * Remainder is 16% off and scores nothing relatively, while being exactly the
+ * rounding-or-Trinkgeld gap the tolerance exists to forgive. It is scored as
+ * `amount_close` (30) rather than as an exact hit, because it is not one.
+ *
+ * Currency is the caller's problem: a Remainder has no bank-stated original
+ * amount behind it, so `scoreTransaction` only takes this path when document
+ * and bank line already agree on currency.
+ */
+export function calculateRemainderAmountScore(
+  filePayment: number,
+  remainder: number
+): { score: number; source: TransactionMatchSource | null } {
+  const absFile = Math.abs(filePayment);
+  const absRemainder = Math.abs(remainder);
+  if (absFile === 0 || absRemainder === 0) return { score: 0, source: null };
+
+  const ladder = scoreSameCurrencyLadder(absFile, absRemainder);
+  if (ladder.source) return ladder;
+
+  if (isRemainderClosed(absRemainder - absFile)) {
+    return { score: 30, source: "amount_close" };
+  }
   return { score: 0, source: null };
 }
 
@@ -550,29 +627,25 @@ export function buildScoringOptions(
 }
 
 /**
- * What the bank was charged for a document: the VAT-bearing total plus any
- * printed Trinkgeld (#172).
- *
- * `extractedAmount` is the Summe the printed rate groups add up to, which is
- * deliberately NOT the figure on the bank line for a restaurant Beleg with a
- * terminal-added tip. Every comparison against a bank amount goes through
- * here so the two readings cannot drift apart.
+ * Is this a Remainder Match — one whose amount was judged against what the
+ * Transaction still has open rather than against its full amount (#239)?
+ * Read off the stored breakdown, so a Match read back out of Firestore
+ * answers the same as one just scored.
  */
-export function filePaymentTotal(
-  extractedAmount: number | null | undefined,
-  extractedTipAmount: number | null | undefined
-): number | null {
-  if (extractedAmount == null) return null;
-  const tip = extractedTipAmount ?? 0;
-  if (tip <= 0) return extractedAmount;
-  // A credit note carries the sign on the document total; the tip follows it.
-  return extractedAmount < 0 ? extractedAmount - tip : extractedAmount + tip;
+export function isRemainderMatch(match: TransactionMatchScore): boolean {
+  return match.breakdown.scoredAgainstRemainder != null;
 }
 
-/** Map a transaction Firestore doc's data into the shape `scoreTransaction` expects. */
+/**
+ * Map a transaction Firestore doc's data into the shape `scoreTransaction`
+ * expects. `documentedAmount` is what the Files already connected to this
+ * transaction explain (#239); leave it out and the pair is scored against the
+ * full amount, as it was before Coverage reached the scorer.
+ */
 export function toTransactionData(
   id: string,
-  data: FirebaseFirestore.DocumentData
+  data: FirebaseFirestore.DocumentData,
+  documentedAmount?: number
 ): TransactionData {
   return {
     id,
@@ -590,6 +663,7 @@ export function toTransactionData(
     // #104: what the target already holds decides whether this file is a
     // duplicate to suppress or the invoice that upgrades the line.
     documentationState: data.documentationState,
+    documentedAmount,
   };
 }
 
@@ -654,7 +728,34 @@ export function scoreTransaction(
   // #172: the bank was charged Summe + Trinkgeld, so that is the figure the
   // bank line is scored against — not the VAT-bearing total on its own.
   const filePayment = filePaymentTotal(fileData.extractedAmount, fileData.extractedTipAmount);
-  if (filePayment != null) {
+
+  // #239: a Transaction that already holds Files is only unexplained up to its
+  // Remainder, so that is what a further candidate is judged against. The
+  // split part-invoice and the fee-plus-invoice pair used to read as amount
+  // mismatches against the full bank line and never cleared the threshold.
+  //
+  // Only when the two agree on currency: a Remainder is a derived figure with
+  // no bank-stated original behind it (#112), so the FX paths below have
+  // nothing to anchor on. A foreign-currency document keeps scoring against
+  // the full amount.
+  const coverage = deriveCoverage(txData.amount, txData.documentedAmount ?? 0);
+  const againstRemainder =
+    coverage.againstRemainder && isSameCurrency(fileData.extractedCurrency, txData.currency);
+
+  // Did this candidate actually explain what was left over? Used again by the
+  // documentation rule below, which was written for a candidate documenting
+  // the SAME payment.
+  let closesRemainder = false;
+  if (filePayment != null && againstRemainder) {
+    const result = calculateRemainderAmountScore(filePayment, coverage.remainder);
+    amountScore = result.score;
+    amountExact = result.source === "amount_exact";
+    closesRemainder = result.source !== null;
+    if (result.source) matchSources.push(result.source);
+    // Said whether or not it scored: a pair judged against the Remainder and
+    // found wanting is as much a Remainder Match as one that hit.
+    matchSources.push("amount_remainder");
+  } else if (filePayment != null) {
     const result = calculateAmountScore(
       filePayment,
       txData.amount,
@@ -778,8 +879,20 @@ export function scoreTransaction(
   let documentation: DocumentationAssessment | undefined;
   if (txData.documentationState) {
     const assessment = assessDocumentation(fileData.documentType, txData.documentationState);
-    confidence = applyDocumentationOutcome(scoredConfidence, assessment.outcome);
-    documentation = { ...assessment, confidenceBefore: scoredConfidence };
+    // #239: redundancy asks "does the target already hold a document of this
+    // class?", which presumes this candidate would document the same payment.
+    // One that closes the Remainder documents a DIFFERENT part of the line —
+    // the second half of a split invoice is not a duplicate of the first — so
+    // suppressing it would keep the pair this ticket exists to surface off the
+    // list entirely. It is still not established enough to connect itself,
+    // which is exactly what "capped" says; and a Remainder Match is
+    // suggestion-only regardless. Only a candidate that actually closed the
+    // Remainder earns this: one merely scored against a Remainder and found
+    // wanting is redundant in the plain #104 sense.
+    const outcome =
+      closesRemainder && assessment.outcome === "suppressed" ? "capped" : assessment.outcome;
+    confidence = applyDocumentationOutcome(scoredConfidence, outcome);
+    documentation = { ...assessment, outcome, confidenceBefore: scoredConfidence };
   }
 
   return {
@@ -795,6 +908,10 @@ export function scoreTransaction(
       reference: referenceScore,
       hint: hintScore,
       hardFacts: hardFactsScore,
+      // Conditional, not `undefined`: this breakdown is written to Firestore.
+      ...(filePayment != null && againstRemainder
+        ? { scoredAgainstRemainder: coverage.remainder }
+        : {}),
     },
     preview: {
       date: txData.date,
@@ -818,5 +935,8 @@ export function formatScoreBreakdown(breakdown: ScoreBreakdown): string {
   if (breakdown.reference > 0) parts.push(`ref:${breakdown.reference}`);
   if (breakdown.hint > 0) parts.push(`hint:${breakdown.hint}`);
   if (breakdown.hardFacts > 0) parts.push(`facts:${breakdown.hardFacts}`);
+  if (breakdown.scoredAgainstRemainder != null) {
+    parts.push(`vs-remainder:${(breakdown.scoredAgainstRemainder / 100).toFixed(2)}`);
+  }
   return parts.join(" + ");
 }

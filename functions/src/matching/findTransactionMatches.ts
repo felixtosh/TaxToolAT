@@ -8,6 +8,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
+import { loadDocumentedAmounts } from "./documentedAmounts";
 import {
   SCORING_CONFIG,
   scoreTransaction,
@@ -291,6 +292,11 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
 
     const totalCandidates = candidates.length;
 
+    // What the Files already on each candidate explain (#239). The trigger
+    // resolves its Remainders through the same helper, so this dialog and the
+    // stored suggestions cannot disagree about which figure is open.
+    const documentedAmounts = await loadDocumentedAmounts(candidates, fileId);
+
     // Score each transaction
     const allScores: TransactionMatchScore[] = candidates.map((doc) => {
       const txData = doc.data();
@@ -320,6 +326,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           partnerIban: txData.partnerIban,
           reference: txData.reference,
           documentationState: txData.documentationState,
+          documentedAmount: documentedAmounts.get(doc.id),
         },
         partnerAliases
       );

@@ -37,6 +37,12 @@ interface ScoreAttachmentRequest {
   }>;
   transaction: {
     amount?: number | null;
+    /**
+     * What the Files already on this transaction explain, in cents (#239).
+     * Supplied by the caller, which is the side that holds them; without it
+     * the candidate is scored against the full amount as before.
+     */
+    documentedAmount?: number | null;
     date?: string | null; // ISO string
     name?: string | null;
     reference?: string | null;
@@ -60,6 +66,8 @@ interface ScoreAttachmentResponse {
     score: number;
     label: "Strong" | "Likely" | null;
     reasons: string[];
+    /** Scored against the transaction's Remainder — suggestion only (#239). */
+    scoredAgainstRemainder: boolean;
   }>;
 }
 
@@ -105,6 +113,7 @@ export const scoreAttachmentMatchCallable = onCall<
         fileExtractedPartner: att.fileExtractedPartner,
         // Transaction data
         transactionAmount: transaction?.amount,
+        transactionDocumentedAmount: transaction?.documentedAmount,
         transactionDate,
         transactionName: transaction?.name,
         transactionReference: transaction?.reference,
@@ -128,6 +137,7 @@ export const scoreAttachmentMatchCallable = onCall<
         score: result.score,
         label: result.label,
         reasons: result.reasons,
+        scoredAgainstRemainder: result.scoredAgainstRemainder,
       };
     });
 

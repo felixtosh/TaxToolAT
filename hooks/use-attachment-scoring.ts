@@ -34,6 +34,13 @@ export interface AttachmentToScore {
 
 export interface TransactionForScoring {
   amount?: number | null;
+  /**
+   * What the Files already connected to this Transaction explain, in cents
+   * (#239). Given it, candidates are scored against the Remainder rather than
+   * the full amount — see `documentedAmountOf` in
+   * `functions/src/matching/coverage.ts`.
+   */
+  documentedAmount?: number | null;
   date?: Date | null;
   name?: string | null;
   reference?: string | null;
@@ -55,6 +62,8 @@ export interface ScoredAttachment {
   score: number;
   label: "Strong" | "Likely" | null;
   reasons: string[];
+  /** Scored against the Transaction's Remainder — suggestion only (#239). */
+  scoredAgainstRemainder?: boolean;
 }
 
 /**
@@ -103,6 +112,7 @@ export function useAttachmentScoring() {
             })),
             transaction: {
               amount: transaction.amount,
+              documentedAmount: transaction.documentedAmount,
               date: transaction.date?.toISOString() || null,
               name: transaction.name,
               reference: transaction.reference,

@@ -18,6 +18,8 @@ import { cn, toDateSafe } from "@/lib/utils";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { useEcbConverter } from "@/lib/currency";
+// The one tolerance that decides whether a Remainder is closed (#239).
+import { isRemainderClosed } from "@/functions/src/matching/coverage";
 import Link from "next/link";
 import {
   getTransactionMatchConfidenceColor,
@@ -217,16 +219,22 @@ function TransactionRow({ transaction, fileCurrency, onRemove, disabled }: Trans
   );
 }
 
-interface DifferenceLineProps {
+interface RemainderLineProps {
   fileAmount: number;
   fileCurrency: string;
   transactions: Transaction[];
 }
 
-function DifferenceLine({ fileAmount, fileCurrency, transactions }: DifferenceLineProps) {
+/**
+ * The Remainder seen from the File's side: what this document still has open
+ * against the Transactions it sits on (#239). The subtraction runs the other
+ * way round from the Transaction panel's, but it is the same figure and the
+ * same tolerance — `isRemainderClosed`, not a second 1 EUR literal.
+ */
+function RemainderLine({ fileAmount, fileCurrency, transactions }: RemainderLineProps) {
   const convert = useEcbConverter();
-  // Determine the target currency for difference calculation (use first transaction's currency)
-  // This ensures difference is shown in accounting/transaction currency
+  // Determine the target currency for the Remainder (use first transaction's currency)
+  // This ensures it is shown in accounting/transaction currency
   const targetCurrency = transactions[0]?.currency || fileCurrency;
 
   // Convert file amount to target currency if needed
@@ -269,7 +277,7 @@ function DifferenceLine({ fileAmount, fileCurrency, transactions }: DifferenceLi
 
   const hasAllAmounts = !fileConversionFailed && !txConversionFailed;
   const difference = convertedFileAmount - transactionsSum;
-  const isMatched = Math.abs(difference) < 100; // Allow 1 EUR/USD tolerance
+  const isMatched = isRemainderClosed(difference);
   const wasConverted = fileCurrency !== targetCurrency;
 
   if (transactions.length === 0) {
@@ -278,7 +286,7 @@ function DifferenceLine({ fileAmount, fileCurrency, transactions }: DifferenceLi
 
   return (
     <div className="flex items-center justify-between p-2 -mx-2 border-t">
-      <span className="text-sm text-muted-foreground">Difference</span>
+      <span className="text-sm text-muted-foreground">Remainder</span>
       <div className="flex items-center gap-2 shrink-0">
         {!hasAllAmounts ? (
           <span className="text-muted-foreground text-xs">Missing amounts</span>
@@ -483,9 +491,9 @@ export function FileConnectionsList({
                 label="Add"
               />
             </div>
-            {/* Difference line at bottom */}
+            {/* Remainder line at bottom */}
             {file.extractedAmount != null && (
-              <DifferenceLine
+              <RemainderLine
                 fileAmount={file.extractedAmount}
                 fileCurrency={currency}
                 transactions={transactions}

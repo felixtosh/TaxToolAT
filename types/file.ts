@@ -141,7 +141,9 @@ export type TransactionMatchSource =
   | "date_close"
   | "partner"
   | "iban"
-  | "reference";
+  | "reference"
+  /** Scored against the Transaction's Remainder, not its full amount (#239). */
+  | "amount_remainder";
 
 /**
  * A suggested transaction match for a file

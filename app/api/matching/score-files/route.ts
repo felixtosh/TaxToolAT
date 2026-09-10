@@ -31,6 +31,8 @@ interface AttachmentInput {
 
 interface TransactionInput {
   amount?: number | null;
+  /** What the Files already on this transaction explain, in cents (#239). */
+  documentedAmount?: number | null;
   date?: string | null; // ISO string
   name?: string | null;
   reference?: string | null;
@@ -60,6 +62,8 @@ interface ScoreAttachmentResponse {
     score: number;
     label: "Strong" | "Likely" | null;
     reasons: string[];
+    /** Scored against the transaction's Remainder — suggestion only (#239). */
+    scoredAgainstRemainder?: boolean;
   }>;
 }
 
@@ -123,6 +127,7 @@ export async function POST(request: NextRequest) {
         })),
         transaction: {
           amount: transaction.amount,
+          documentedAmount: transaction.documentedAmount,
           date: transaction.date,
           name: transaction.name,
           reference: transaction.reference,
