@@ -177,9 +177,10 @@ describe("Partner Merge", () => {
         identityPartnerIds: { name: "loser-b" },
       });
 
-      // A Notification naming the loser. It records an event that already
-      // happened, so a merge must leave it exactly as it is.
-      store.setDoc("notifications", "notif-1", {
+      // A Notification naming the loser, in the per-user subcollection the app
+      // actually writes them to. It records an event that already happened, so
+      // a merge must leave it exactly as it is.
+      store.setDoc(`users/${USER}/notifications`, "notif-1", {
         userId: USER,
         type: "partner_matched",
         partnerId: "loser-a",
@@ -250,7 +251,9 @@ describe("Partner Merge", () => {
 
       await merge("survivor", ["loser-a", "loser-b"]);
 
-      expect(store.getDoc("notifications", "notif-1")!.partnerId).toBe("loser-a");
+      expect(
+        store.getDoc(`users/${USER}/notifications`, "notif-1")!.partnerId
+      ).toBe("loser-a");
     });
 
     it("repoints nothing belonging to another user", async () => {
@@ -817,6 +820,19 @@ describe("Partner Merge", () => {
           partnerIban: "AT611904300234573201",
         })
       );
+      // Hit by the new IBAN, but over the plan's transaction quota, so no
+      // matching path will ever assign it a Partner.
+      store.setDoc(
+        "transactions",
+        "tx-over-quota",
+        createTestTransaction({
+          userId: USER,
+          partner: "Unrelated Counterparty",
+          name: "SEPA Ueberweisung",
+          partnerIban: "AT611904300234573201",
+          quotaExceeded: true,
+        })
+      );
     });
 
     it("counts what the new identifying data would hit and rematches nothing", async () => {
@@ -824,12 +840,13 @@ describe("Partner Merge", () => {
 
       expect(result.rematchPreview.newlyMatchable).toBe(1);
       expect(result.rematchPreview.truncated).toBe(false);
-      expect(result.rematchPreview.scanned).toBe(3);
+      expect(result.rematchPreview.scanned).toBe(4);
 
       // No rematch ran: every unmatched transaction is still unmatched.
       expect(store.getDoc("transactions", "tx-newly-matchable")!.partnerId).toBeNull();
       expect(store.getDoc("transactions", "tx-already-matched")!.partnerId).toBeNull();
       expect(store.getDoc("transactions", "tx-vetoed")!.partnerId).toBeNull();
+      expect(store.getDoc("transactions", "tx-over-quota")!.partnerId).toBeNull();
     });
   });
 

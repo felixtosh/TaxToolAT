@@ -519,8 +519,11 @@ async function previewNewlyMatchable(
       const data = doc.data();
       scanned++;
       // The write path skips these too: a Transaction resolved by a no-receipt
-      // category is not waiting for a Partner.
+      // category is not waiting for a Partner, and an over-quota one is not
+      // matched at all until the quota is lifted. Counting either would report
+      // work the reviewed rematch path could never act on.
       if (data.noReceiptCategoryId) continue;
+      if (data.quotaExceeded) continue;
       if (vetoed.has(doc.id)) continue;
 
       const transaction: TransactionData = {
