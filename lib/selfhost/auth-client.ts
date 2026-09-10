@@ -282,7 +282,19 @@ async function discover(): Promise<Discovery> {
     );
   }
   _discoveryInFlight = (async () => {
-    const res = await fetch(`${OIDC_ISSUER}/.well-known/openid-configuration`);
+    let res: Response;
+    try {
+      res = await fetch(`${OIDC_ISSUER}/.well-known/openid-configuration`);
+    } catch (err) {
+      // The other fetch on the refresh path, and it rejects for the same
+      // reasons as the token grant does. Nothing is spent here, so there is
+      // nothing to mark — but the rejection must not leave the refresh routine
+      // raw, because callers switch on `err.code` (#216).
+      throw new AuthError(
+        "auth/network-request-failed",
+        `OIDC discovery got no response (${rejectionMessage(err)}).`,
+      );
+    }
     if (!res.ok) {
       throw new AuthError("auth/network-request-failed", `OIDC discovery failed (${res.status}).`);
     }

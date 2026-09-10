@@ -1047,6 +1047,45 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
     expect(spent).toEqual(["rt-1"]);
   });
 
+  it("honours the mark after a reload, so a fresh tab does not replay it either", async () => {
+    // The mark lives in localStorage precisely so it outlives the tab that made
+    // it: a reload, or any other tab on this origin, has to refuse the same
+    // token too, or the replay just moves to whichever tab looks next.
+    const spent: string[] = [];
+    const w = installOidcEnv(lostResponseFetch(spent));
+    seedTokens(w, staleSet("rt-1", { rotates: true, refresh_unconfirmed: "rt-1" }));
+
+    const reloaded = await openTab();
+    await tick();
+
+    await expect(reloaded.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/user-token-expired",
+    });
+    expect(spent).toEqual([]);
+    expect(reloaded.getAuth().currentUser).toBeNull();
+    expect(readStored(w)).toBeNull();
+  });
+
+  it("a rejecting discovery fetch fails as an auth error, not a raw TypeError", async () => {
+    const rejectingFetch = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+    const w = installOidcEnv(rejectingFetch);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    // Discovery is the other fetch on the refresh path. Nothing was presented,
+    // so there is nothing to mark — but the rejection still must not escape.
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      name: "FirebaseError",
+      code: "auth/network-request-failed",
+    });
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });
+    expect(readStored(w)?.refresh_unconfirmed).toBeUndefined();
+  });
+
   it("a second refresh after a lost response re-authenticates instead of replaying", async () => {
     const spent: string[] = [];
     const w = installOidcEnv(lostResponseFetch(spent));
