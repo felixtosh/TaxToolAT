@@ -28,8 +28,9 @@ that stops the next run re-creating it matches on the record that a destroy woul
   content hash. Nothing of the document's content and none of its bytes survive. Without
   those keys the next Sync re-imports what was just purged, and the user learns that
   purging junk makes junk.
-- FiBuKI-generated invoice documents refuse both deletion by an agent and Purge. Deleting
-  the PDF under an issued invoice is not a cheaper cancellation; cancelling one is its own
-  accounting act with its own writer.
+- FiBuKI-generated invoice documents cannot be deleted at all — not by an agent, not by a
+  user in the UI, and not by a Purge. Deleting the PDF under an issued invoice is not a
+  cheaper cancellation; cancelling one is its own accounting act with its own writer, and
+  the UI is where someone is most likely to reach for the wrong one of the two.
 - Hard delete stops being a thing the word "delete" can mean anywhere in the UI copy, the
   API or the tool descriptions. The glossary lists it under _Avoid_.
