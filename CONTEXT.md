@@ -43,8 +43,8 @@ _Avoid_: master partner, global vendor
 **Merge**:
 Folding one Partner into another because they are the same business. The survivor keeps
 the values it has, fills its empty ones from the loser, takes the loser's name as an
-alias, and inherits every reference that pointed at the loser. One way: there is no
-unmerge.
+alias, and takes over what pointed at the loser. What an issued Invoice froze at issue
+time stays frozen. One way: there is no unmerge.
 _Avoid_: dedupe, combine, link partners
 
 **Merged Partner**:
@@ -82,7 +82,7 @@ nowhere else in that sense. **Documentation State** is unrelated — see its ent
 
 **Purge**:
 Destroying a deleted File for good: the document and its stored bytes are gone, and only
-the keys that stop a Sync re-importing it survive. Deleting a File hides it and can be
+the keys that stop it being imported again survive. Deleting a File hides it and can be
 undone; purging is the only act in the system that cannot.
 _Avoid_: hard delete, permanent delete, wipe
 

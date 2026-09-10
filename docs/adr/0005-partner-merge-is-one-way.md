@@ -1,5 +1,7 @@
 # Partner merge is one way
 
+_Status: accepted; the implementation is filed as tickets and none of it has shipped yet._
+
 Duplicate Partners are routine — a bad extraction, a brand name against a legal name, an
 HTML entity in a supplier name — and nothing in the product could fold two into one. A
 **Merge** now does: the caller names the survivor and one or more losers, the survivor
