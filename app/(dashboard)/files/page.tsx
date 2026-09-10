@@ -605,6 +605,17 @@ function FilesContent() {
     router.push(newUrl, { scroll: false });
   }, [router, filters, searchValue]);
 
+  // The table's rows are virtualised and memoised, so a row whose own selection
+  // state didn't change is not re-rendered and keeps the checkbox callback it
+  // last painted with — including that render's copy of additionalSelectedIds.
+  // Toggling against that snapshot is what made the checkboxes act like a radio
+  // group: the second row ticked still saw an empty selection and replaced the
+  // first (#232). Read the live set through a ref instead.
+  const additionalSelectedIdsRef = useRef(additionalSelectedIds);
+  useEffect(() => {
+    additionalSelectedIdsRef.current = additionalSelectedIds;
+  }, [additionalSelectedIds]);
+
   // Checkbox column: independent of row-click selection, so it never opens or
   // navigates the detail panel — except unchecking the primary row's own
   // checkbox, which has no other representation than closing its panel.
@@ -614,14 +625,14 @@ function FilesContent() {
         fileId,
         checked,
         primarySelectedId,
-        additionalSelectedIds,
+        additionalSelectedIds: additionalSelectedIdsRef.current,
       });
       setAdditionalSelectedIds(result.additionalSelectedIds);
       if (result.closePrimary) {
         handleCloseDetail();
       }
     },
-    [primarySelectedId, additionalSelectedIds, handleCloseDetail]
+    [primarySelectedId, handleCloseDetail]
   );
 
   const handleToggleSelectAll = useCallback(() => {
