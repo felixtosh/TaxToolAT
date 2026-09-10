@@ -50,6 +50,7 @@ import { classifyDocumentType } from "../documents/classifyDocumentType";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import { directionReviewFields } from "../documents/directionReview";
+import { decodeHtmlEntities } from "../utils/htmlEntities";
 
 /**
  * Options for running extraction
@@ -564,7 +565,11 @@ export async function runExtraction(
     if (counterparty) {
       // Use counterparty entity data
       if (counterparty.name) {
-        updateData.extractedPartner = counterparty.name;
+        // #233: a name that arrives as "AL&amp;FA Taxi KG" is decoded here,
+        // at the one point every provenance (manual upload, Gmail import) and
+        // every provider (Gemini entities, legacy Claude) funnels through
+        // before extractedPartner is persisted.
+        updateData.extractedPartner = decodeHtmlEntities(counterparty.name);
       }
       if (counterparty.vatId) {
         updateData.extractedVatId = counterparty.vatId;
@@ -581,7 +586,7 @@ export async function runExtraction(
     } else {
       // Fall back to legacy extracted fields (from Claude parser or when counterparty detection fails)
       if (extracted.partner) {
-        updateData.extractedPartner = extracted.partner;
+        updateData.extractedPartner = decodeHtmlEntities(extracted.partner);
       }
       if (extracted.vatId) {
         updateData.extractedVatId = extracted.vatId;
