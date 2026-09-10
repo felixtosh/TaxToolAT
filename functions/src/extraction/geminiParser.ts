@@ -118,12 +118,76 @@ function normalizeVatPercent(vatPercent: unknown): number | null {
   return vat;
 }
 
+// The escapes JSON itself defines (RFC 8259 §7). Anything else after a
+// backslash is not syntax, it's a character the model transcribed as-is
+// (a Windows path, a `\d` in a reference number, a hand-typed separator).
+const JSON_SINGLE_CHAR_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"]);
+
+/**
+ * Walk a JSON string tracking string-literal boundaries, and neutralise any
+ * backslash that is not part of a JSON-defined escape (`\" \\ \/ \b \f \n \r
+ * \t \uXXXX`) by doubling it. `JSON.parse` then reads it as a literal
+ * backslash instead of throwing "Bad escaped character" (#231) — the
+ * offending byte survives into the extracted value instead of the whole
+ * response being discarded.
+ */
+function escapeInvalidBackslashes(jsonStr: string): string {
+  let result = "";
+  let inString = false;
+
+  for (let i = 0; i < jsonStr.length; i++) {
+    const ch = jsonStr[i];
+
+    if (!inString) {
+      result += ch;
+      if (ch === '"') inString = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      result += ch;
+      inString = false;
+      continue;
+    }
+
+    if (ch !== "\\") {
+      result += ch;
+      continue;
+    }
+
+    const next = jsonStr[i + 1];
+    if (next !== undefined && JSON_SINGLE_CHAR_ESCAPES.has(next)) {
+      result += ch + next;
+      i += 1;
+      continue;
+    }
+
+    if (next === "u" && /^[0-9a-fA-F]{4}$/.test(jsonStr.slice(i + 2, i + 6))) {
+      result += jsonStr.slice(i, i + 6);
+      i += 5;
+      continue;
+    }
+
+    // Not a defined escape: the backslash is data, not syntax. Double it so
+    // it survives the parse literally; `next` (if any) falls through to the
+    // next iteration as an ordinary character.
+    result += "\\\\";
+  }
+
+  return result;
+}
+
 /**
  * Attempt to repair malformed JSON from Gemini responses
  */
 function repairJson(jsonStr: string): string {
   // Common fixes for Gemini JSON output issues
   let repaired = jsonStr;
+
+  // Neutralise invalid escape sequences before any other fix touches string
+  // content — it relies on quote-tracking that assumes the escapes seen so
+  // far are well-formed.
+  repaired = escapeInvalidBackslashes(repaired);
 
   // Fix trailing commas before } or ]
   repaired = repaired.replace(/,(\s*[}\]])/g, "$1");

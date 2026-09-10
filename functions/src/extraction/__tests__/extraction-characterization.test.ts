@@ -427,6 +427,55 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted.confidence).toBe(0.9);
   });
 
+  // #157/#231: a backslash the model transcribed as data (a Windows path, a
+  // `\d` in a reference number, a hand-typed separator) is not a JSON escape.
+  // The old repair pass copied it through untouched and the second parse
+  // failed identically to the first — "Bad escaped character in JSON".
+  it("repairs an invalid escape sequence, and the backslash survives literally (#231)", async () => {
+    q('{"extracted": {"invoiceNumber": "RE-2024\\d001", "amount": 500}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.invoiceNumber).toBe("RE-2024\\d001");
+    expect(res.extracted.amount).toBe(500);
+  });
+
+  it("leaves every JSON-defined escape untouched by the invalid-escape repair (#231)", async () => {
+    // Forces the repair path (invalid \d earlier in the payload) while also
+    // carrying every escape JSON itself defines, including an escaped quote
+    // and a \uXXXX sequence, to prove they aren't mangled along the way.
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "Say \\"hi\\", line1\\nline2, caf\\u00e9"}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.invoiceNumber).toBe("bad\\zescape");
+    expect(res.extracted.address).toBe('Say "hi", line1\nline2, café');
+  });
+
+  // Reproduces the defect class reported against paperless-ap-1146.pdf
+  // (#231): a stray backslash deep inside a transcribed field, not at a
+  // structural boundary. The original response lives only on the reporter's
+  // machine, so this pins the failure mode rather than the exact bytes.
+  it("extracts a response carrying the paperless-ap-1146.pdf defect class (#231)", async () => {
+    q(
+      '{"extracted": {"partner": "Muster GmbH", ' +
+        '"address": "C:\\Users\\muster\\Rechnungen\\2024", "amount": 12345}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.partner).toBe("Muster GmbH");
+    expect(res.extracted.amount).toBe(12345);
+    expect(res.extracted.address).toBe("C:\\Users\\muster\\Rechnungen\\2024");
+  });
+
+  it("does not touch an already-valid JSON response", async () => {
+    // A path-like value with correctly doubled backslashes must round-trip
+    // unchanged — the repair pass is never invoked when the first parse
+    // succeeds.
+    q({ extracted: { address: "C:\\Users\\muster", amount: 42 } });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe("C:\\Users\\muster");
+    expect(res.extracted.amount).toBe(42);
+  });
+
   it("rejects when no JSON object can be found or repaired", async () => {
     q("totally not json");
     await expect(parseWithGemini(BUF, "application/pdf")).rejects.toThrow(
