@@ -12,10 +12,12 @@ import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 
 interface SearchGmailRequest {
   integrationId: string;
-  query?: string;
+  /** Provider-neutral search terms (#240). */
+  keywords?: string[];
+  from?: string;
+  filenames?: string[];
   dateFrom?: string;
   dateTo?: string;
-  from?: string;
   hasAttachments?: boolean;
   limit?: number;
   pageToken?: string;
@@ -136,11 +138,12 @@ export function useGmailSearch(integrationId: string | null): UseGmailSearchResu
       try {
         const result = await searchGmailFn({
           integrationId,
-          query: params.query,
+          keywords: params.keywords,
+          filenames: params.filenames,
           dateFrom: params.dateFrom?.toISOString(),
           dateTo: params.dateTo?.toISOString(),
           from: params.from,
-          hasAttachments: params.hasAttachments,
+          hasAttachments: params.hasAttachment,
           limit: params.limit,
           expandThreads: params.expandThreads,
         });
@@ -179,11 +182,12 @@ export function useGmailSearch(integrationId: string | null): UseGmailSearchResu
     try {
       const result = await searchGmailFn({
         integrationId,
-        query: lastParams.query,
+        keywords: lastParams.keywords,
+        filenames: lastParams.filenames,
         dateFrom: lastParams.dateFrom?.toISOString(),
         dateTo: lastParams.dateTo?.toISOString(),
         from: lastParams.from,
-        hasAttachments: lastParams.hasAttachments,
+        hasAttachments: lastParams.hasAttachment,
         limit: lastParams.limit,
         expandThreads: lastParams.expandThreads,
         pageToken: nextPageToken,

@@ -9,6 +9,7 @@ import { UserPartner } from "@/types/partner";
 import { useFiles } from "./use-files";
 import { useEmailIntegrations } from "./use-email-integrations";
 import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
+import { termsFromQuery } from "@/functions/src/mail/search-terms";
 import { useAuth } from "@/components/auth";
 import { toDateSafe } from "@/lib/utils";
 
@@ -456,7 +457,11 @@ export function useUnifiedFileSearch(
                   method: "POST",
                   body: JSON.stringify({
                     integrationId: integration.id,
-                    query: query || undefined,
+                    // The typed term as terms, not as a query string: this
+                    // request names what to look for, not how a provider spells
+                    // it (#240). Word by word, so a two-word search stays two
+                    // words that must both appear rather than an exact phrase.
+                    ...termsFromQuery(query),
                     dateFrom: gmailDateFrom?.toISOString(),
                     dateTo: gmailDateTo?.toISOString(),
                     hasAttachments: true,

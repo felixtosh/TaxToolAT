@@ -14,6 +14,7 @@ import {
   ImapErrorCode,
   FATAL_IMAP_ERROR_CODES,
 } from "../mail";
+import { imapConfigFromIntegration } from "../mail/imap/config";
 
 // Define secrets for Google OAuth - set via Firebase CLI:
 // firebase functions:secrets:set GOOGLE_CLIENT_ID
@@ -249,27 +250,12 @@ export async function resolveMailProvider(
     // IMAP has one long-lived app-password (no refresh). Decrypt and hand the
     // connection config to the provider. Gmail's expiry/refresh dance below is
     // skipped entirely — the token doc has no expiresAt for IMAP.
-    const t = tokenData as { secret?: string; secretIv?: string };
-    if (!t.secret || !t.secretIv) {
-      throw new Error("IMAP integration is missing its stored app-password");
-    }
-    const host = integrationData?.imapHost as string | undefined;
-    const user = integrationData?.email as string | undefined;
-    if (!host || !user) {
-      throw new Error("IMAP integration is missing host or username");
-    }
-    const password = decrypt(t.secret, t.secretIv, options.encryptionKey);
     return makeProvider("imap", {
-      imap: {
-        host,
-        port: (integrationData?.imapPort as number) ?? 993,
-        secure: integrationData?.imapSecure !== false,
-        allowSelfSigned: Boolean(integrationData?.imapAllowSelfSigned),
-        mailbox: (integrationData?.imapMailbox as string) || "INBOX",
-        keywordPrefilter: integrationData?.imapKeywordPrefilter !== false,
-        user,
-        password,
-      },
+      imap: imapConfigFromIntegration(
+        integrationData,
+        tokenData,
+        options.encryptionKey
+      ),
     });
   }
 
