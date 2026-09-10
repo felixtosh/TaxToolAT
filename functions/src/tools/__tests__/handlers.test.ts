@@ -1658,6 +1658,29 @@ describe("Tool Registry Handlers", () => {
       expect(file?.extractionComplete).toBe(true);
     });
 
+    it("clears the repaired-escape flag along with the values it pointed at (#275)", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          transactionIds: [],
+          extractedAddress: "C:\\Users\ttest",
+          needsRepairReview: true,
+          repairAmbiguousFields: ["address"],
+        })
+      );
+
+      await handlers.markFileAsNotInvoice(userId, { fileId: "f-1" });
+
+      // The transcription the flag doubted is gone, so a warning naming a
+      // field this file no longer has would only mislead.
+      const file = store.getDoc("files", "f-1");
+      expect(file?.extractedAddress).toBeNull();
+      expect(file?.needsRepairReview).toBe(false);
+      expect(file?.repairAmbiguousFields).toEqual([]);
+    });
+
     it("should default the reason when none is given", async () => {
       store.setDoc("files", "f-1", createTestFile({ userId, transactionIds: [] }));
 
