@@ -51,12 +51,18 @@ import { syncDocumentationStateForTransactions } from "../documents/syncDocument
 import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import { directionReviewFields } from "../documents/directionReview";
 import { repairReviewFields, reviewRepair } from "../documents/repairReview";
+import { decodeHtmlEntities } from "../utils/htmlEntities";
 
 /**
  * Options for running extraction
  */
 export interface ExtractionOptions {
-  /** Anthropic API key (only needed for vision-claude provider) */
+  /**
+   * Anthropic API key. Unused by extraction since the legacy vision-claude
+   * provider was retired (#170) — nothing downstream of here reads it. The
+   * callables that run extraction still declare the secret and hand it down;
+   * unwiring that plumbing is a separate change.
+   */
   anthropicApiKey?: string;
   /** Skip two-phase classification (user has overridden AI classification) */
   skipClassification?: boolean;
@@ -222,7 +228,7 @@ export async function runExtraction(
   // ============================================================
   // PHASE 1: Classification (unless skipped by user override)
   // ============================================================
-  if (!options.skipClassification && provider === "gemini") {
+  if (!options.skipClassification) {
     const { classifyDocument, DEFAULT_GEMINI_MODEL } = await import("./geminiParser");
     type GeminiModel = import("./geminiParser").GeminiModel;
     const model = (geminiModel || DEFAULT_GEMINI_MODEL) as GeminiModel;
@@ -420,7 +426,6 @@ export async function runExtraction(
     // Store extracted entities for future re-calculation
     extractedIssuer: extractedIssuer || null,
     extractedRecipient: extractedRecipient || null,
-    // Ensure classificationComplete is set (for vision-claude provider which doesn't have separate classification)
     classificationComplete: true,
     isNotInvoice: false, // If we got here, it's confirmed to be an invoice
     notInvoiceReason: null,
@@ -568,7 +573,11 @@ export async function runExtraction(
     if (counterparty) {
       // Use counterparty entity data
       if (counterparty.name) {
-        updateData.extractedPartner = counterparty.name;
+        // #233: a name that arrives as "AL&amp;FA Taxi KG" is decoded here,
+        // at the one point every provenance (manual upload, Gmail import) and
+        // every provider (Gemini entities, legacy Claude) funnels through
+        // before extractedPartner is persisted.
+        updateData.extractedPartner = decodeHtmlEntities(counterparty.name);
       }
       if (counterparty.vatId) {
         updateData.extractedVatId = counterparty.vatId;
@@ -585,7 +594,7 @@ export async function runExtraction(
     } else {
       // Fall back to legacy extracted fields (from Claude parser or when counterparty detection fails)
       if (extracted.partner) {
-        updateData.extractedPartner = extracted.partner;
+        updateData.extractedPartner = decodeHtmlEntities(extracted.partner);
       }
       if (extracted.vatId) {
         updateData.extractedVatId = extracted.vatId;

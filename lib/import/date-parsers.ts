@@ -65,12 +65,32 @@ export const DATE_PARSERS: DateParser[] = [
     pattern: /^\d{1,2}\/\d{1,2}\/\d{2}$/,
     format: "dd/MM/yy",
   },
-  // Dash separated
+  // Dash separated — the same day-first/month-first, four-/two-digit-year
+  // matrix the slash formats carry. A dashed column that proves month-first
+  // had no format to be offered and could not be imported at all (#167).
   {
     id: "dash-dmy",
     name: "Dashed (DD-MM-YYYY)",
     pattern: /^\d{1,2}-\d{1,2}-\d{4}$/,
     format: "dd-MM-yyyy",
+  },
+  {
+    id: "dash-mdy",
+    name: "Dashed US (MM-DD-YYYY)",
+    pattern: /^\d{1,2}-\d{1,2}-\d{4}$/,
+    format: "MM-dd-yyyy",
+  },
+  {
+    id: "dash-dmy-short",
+    name: "Dashed Short (DD-MM-YY)",
+    pattern: /^\d{1,2}-\d{1,2}-\d{2}$/,
+    format: "dd-MM-yy",
+  },
+  {
+    id: "dash-mdy-short",
+    name: "Dashed US Short (MM-DD-YY)",
+    pattern: /^\d{1,2}-\d{1,2}-\d{2}$/,
+    format: "MM-dd-yy",
   },
   // Text month formats
   {

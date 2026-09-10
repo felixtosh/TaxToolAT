@@ -265,6 +265,17 @@ function ResizableDataTableInner<TData extends { id: string }>(
     selectedRowIdsRef.current = selectedRowIds;
   }, [selectedRowIds]);
 
+  // Same reason, one level up: VirtualRow is memoised and does not compare its
+  // onClick, so a row whose selection state didn't change keeps the
+  // handleRowClick it last painted with — anchor, display order and index map
+  // frozen at that render. A shift-click arriving from such a row saw a null
+  // anchor and fell through to the plain-click branch, collapsing the selection
+  // instead of extending it. Read the range inputs live.
+  const rangeContextRef = React.useRef({ lastSelectedIndex, displayItems, rowIdToIndexMap });
+  React.useEffect(() => {
+    rangeContextRef.current = { lastSelectedIndex, displayItems, rowIdToIndexMap };
+  }, [lastSelectedIndex, displayItems, rowIdToIndexMap]);
+
   // Track total size and visible rows in state to avoid flushSync warning during render
   const [totalSize, setTotalSize] = React.useState(0);
   const [visibleRows, setVisibleRows] = React.useState<
@@ -529,6 +540,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
 
       // Multi-select mode
       // Use ref to get latest selection (avoids stale closure when clicking rapidly)
+      const { lastSelectedIndex, displayItems, rowIdToIndexMap } = rangeContextRef.current;
       const clickedIndex = rowIdToIndexMap.get(row.id) ?? -1;
       const isModifierClick = modifiers.metaKey || modifiers.ctrlKey;
       const currentSelection = selectedRowIdsRef.current ?? new Set<string>();
@@ -547,7 +559,11 @@ function ResizableDataTableInner<TData extends { id: string }>(
           }
         }
 
-        onSelectionChange?.(newSelection);
+        onSelectionChange?.(newSelection, {
+          isPlainClick: false,
+          isRangeClick: true,
+          clickedRowId: row.id,
+        });
         // Don't update lastSelectedRowId on shift-click to allow extending selection
       } else if (isModifierClick) {
         // CMD/Ctrl+click: toggle individual selection
@@ -558,16 +574,24 @@ function ResizableDataTableInner<TData extends { id: string }>(
           newSelection.add(row.id);
         }
 
-        onSelectionChange?.(newSelection);
+        onSelectionChange?.(newSelection, {
+          isPlainClick: false,
+          isRangeClick: false,
+          clickedRowId: row.id,
+        });
         setLastSelectedRowId(row.id);
       } else {
         // Regular click: clear ALL selection and select only this row
         const newSelection = new Set([row.id]);
-        onSelectionChange?.(newSelection);
+        onSelectionChange?.(newSelection, {
+          isPlainClick: true,
+          isRangeClick: false,
+          clickedRowId: row.id,
+        });
         setLastSelectedRowId(row.id);
       }
     },
-    [enableMultiSelect, onRowClick, lastSelectedIndex, displayItems, rowIdToIndexMap, onSelectionChange]
+    [enableMultiSelect, onRowClick, onSelectionChange]
   );
 
   return (

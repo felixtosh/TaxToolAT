@@ -1012,8 +1012,10 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
  * click have to land in the same state.
  *
  * Extraction runs inline here rather than being queued: the only trigger that
- * re-runs it fires on undelete, so there is nothing to hand the work to. That
- * is why mcpApi and mcpSse declare ANTHROPIC_API_KEY.
+ * re-runs it fires on undelete, so there is nothing to hand the work to.
+ * mcpApi and mcpSse declare ANTHROPIC_API_KEY for that inline run; since #170
+ * retired the vision-claude extraction path nothing reads it, so the secret is
+ * vestigial until the plumbing is unwired.
  *
  * The refusal codes are surfaced as message prefixes, matching the
  * PAIR_REJECTED convention the connect handler uses: an agent working a list

@@ -9,12 +9,10 @@
  *
  * The AI/network boundary is stubbed:
  *  - `@google-cloud/vertexai` is mocked with a queue of canned responses
- *  - `@anthropic-ai/sdk` is mocked at the SDK boundary
- *  - `./visionApi` is mocked (Google Vision OCR)
- * Everything downstream of those boundaries is REAL application code.
+ * Everything downstream of that boundary is REAL application code.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 // The extractor reports whichever model the geminiLite ROLE names. Pinning the
 // literal here made a deliberate registry swap look like a regression; pinning the
@@ -51,20 +49,8 @@ vi.mock("@google-cloud/vertexai", () => ({
   },
 }));
 
-const anthropic = vi.hoisted(() => ({ create: vi.fn() }));
-vi.mock("@anthropic-ai/sdk", () => ({
-  default: class Anthropic {
-    messages = { create: anthropic.create };
-    constructor(_opts: unknown) {}
-  },
-}));
-
-const vision = vi.hoisted(() => ({ callVisionAPI: vi.fn() }));
-vi.mock("../visionApi", () => ({ callVisionAPI: vision.callVisionAPI }));
-
 // REAL application code under test:
 import { parseWithGemini, classifyDocument } from "../geminiParser";
-import { parseWithClaude } from "../claudeParser";
 import {
   extractDocument,
   getDefaultProvider,
@@ -83,10 +69,6 @@ beforeEach(() => {
   process.env.GCLOUD_PROJECT = "char-test-project";
   gemini.queue.length = 0;
   gemini.requests.length = 0;
-});
-
-afterEach(() => {
-  delete process.env.EXTRACTION_PROVIDER;
 });
 
 // ===========================================================================
@@ -778,105 +760,19 @@ describe("characterization: geminiParser.classifyDocument", () => {
 });
 
 // ===========================================================================
-// claudeParser — parseWithClaude (legacy vision-claude path)
-// ===========================================================================
-
-describe("characterization: claudeParser.parseWithClaude", () => {
-  it("maps a fenced JSON response into ExtractedData with legacy nulls", async () => {
-    anthropic.create.mockResolvedValue({
-      usage: { input_tokens: 10, output_tokens: 5 },
-      content: [
-        {
-          type: "text",
-          text:
-            "```json\n" +
-            JSON.stringify({
-              date: "2024-02-01",
-              amount: 9999,
-              currency: "EUR",
-              vatPercent: 20,
-              partner: "ACME GmbH",
-              vatId: "ATU12345678",
-              iban: "AT123456789012345678",
-              address: "Musterstraße 123, 1010 Wien",
-              confidence: 0.92,
-              fieldSpans: { date: "01.02.2024", amount: "99,99 €" },
-            }) +
-            "\n```",
-        },
-      ],
-    });
-
-    const res = await parseWithClaude("OCR TEXT", "test-key");
-    expect(res.usage).toEqual({ inputTokens: 10, outputTokens: 5, model: "claude-3-haiku-20240307" });
-    expect(res.extracted).toEqual({
-      date: "2024-02-01",
-      amount: 9999,
-      payableAmount: null, // #206: prompted for, absent from this response
-      currency: "EUR",
-      vatPercent: 20,
-      lineItems: null, // characterization: legacy parser never extracts line items
-      selfDesignation: null, // #104: prompted for, absent from this response
-      invoiceNumber: null,
-      partner: "ACME GmbH",
-      vatId: "ATU12345678",
-      iban: "AT123456789012345678",
-      address: "Musterstraße 123, 1010 Wien",
-      website: null, // characterization: legacy parser never extracts website
-      confidence: 0.92,
-      fieldSpans: { date: "01.02.2024", amount: "99,99 €" },
-      issuer: null, // characterization: legacy parser never extracts entities
-      recipient: null,
-    });
-  });
-
-  it("discards string amounts/vatPercent and defaults confidence/fieldSpans", async () => {
-    anthropic.create.mockResolvedValue({
-      usage: { input_tokens: 1, output_tokens: 1 },
-      content: [{ type: "text", text: JSON.stringify({ amount: "9999", vatPercent: "20" }) }],
-    });
-    const res = await parseWithClaude("OCR", "k");
-    // characterization: strict typeof number check — numeric strings dropped
-    expect(res.extracted.amount).toBeNull();
-    expect(res.extracted.vatPercent).toBeNull();
-    expect(res.extracted.confidence).toBe(0.5);
-    expect(res.extracted.fieldSpans).toEqual({});
-    expect(res.extracted.date).toBeNull();
-    expect(res.extracted.partner).toBeNull();
-  });
-
-  it("throws when the response contains no text block", async () => {
-    anthropic.create.mockResolvedValue({
-      usage: { input_tokens: 1, output_tokens: 1 },
-      content: [{ type: "tool_use", id: "x", name: "n", input: {} }],
-    });
-    await expect(parseWithClaude("OCR", "k")).rejects.toThrow("No text response from Claude");
-  });
-
-  it("propagates a raw SyntaxError on invalid JSON (no repair attempt, unlike Gemini)", async () => {
-    anthropic.create.mockResolvedValue({
-      usage: { input_tokens: 1, output_tokens: 1 },
-      content: [{ type: "text", text: "not json at all" }],
-    });
-    // characterization: preserves current behavior — no JSON-repair fallback here
-    await expect(parseWithClaude("OCR", "k")).rejects.toThrow(SyntaxError);
-  });
-});
-
-// ===========================================================================
-// documentExtractor — provider selection, fallback chains, result shaping
+// documentExtractor — result shaping
 // ===========================================================================
 
 describe("characterization: documentExtractor", () => {
-  it("getDefaultProvider: env override honored, anything else falls back to gemini", () => {
+  it("getDefaultProvider: gemini, whatever EXTRACTION_PROVIDER says (#170)", () => {
+    // The legacy vision-claude branch is retired; the env var routes nowhere.
     delete process.env.EXTRACTION_PROVIDER;
     expect(getDefaultProvider()).toBe("gemini");
     process.env.EXTRACTION_PROVIDER = "vision-claude";
-    expect(getDefaultProvider()).toBe("vision-claude");
-    process.env.EXTRACTION_PROVIDER = "gemini";
     expect(getDefaultProvider()).toBe("gemini");
     process.env.EXTRACTION_PROVIDER = "something-else";
     expect(getDefaultProvider()).toBe("gemini");
+    delete process.env.EXTRACTION_PROVIDER;
   });
 
   it("generateTextBlocks splits on newlines, trims, and fakes full-confidence blocks", () => {
@@ -976,39 +872,6 @@ describe("characterization: documentExtractor", () => {
     expect(res.extracted.partner).toBeNull();
   });
 
-  it("vision-claude: missing Anthropic API key throws before any OCR", async () => {
-    await expect(
-      extractDocument(BUF, "application/pdf", { provider: "vision-claude" }),
-    ).rejects.toThrow("Anthropic API key required for vision-claude provider");
-  });
-
-  it("vision-claude: OCR text + Claude parse are stitched into the result", async () => {
-    const blocks = [{ text: "b1", boundingBox: { vertices: [] }, confidence: 0.7 }];
-    vision.callVisionAPI.mockResolvedValue({ text: "OCR FULL TEXT", blocks });
-    anthropic.create.mockResolvedValue({
-      usage: { input_tokens: 3, output_tokens: 4 },
-      content: [{ type: "text", text: JSON.stringify({ amount: 5000, confidence: 0.8 }) }],
-    });
-
-    const res = await extractDocument(BUF, "application/pdf", {
-      provider: "vision-claude",
-      anthropicApiKey: "key",
-    });
-    expect(res.provider).toBe("vision-claude");
-    expect(res.text).toBe("OCR FULL TEXT");
-    expect(res.blocks).toBe(blocks);
-    expect(res.extracted.amount).toBe(5000);
-    expect(res.usage).toEqual({ inputTokens: 3, outputTokens: 4, model: "claude-3-haiku-20240307" });
-    // vision-claude never sets classification flags
-    expect(res.isNotInvoice).toBeUndefined();
-  });
-
-  it("vision-claude: whitespace-only OCR text fails loudly", async () => {
-    vision.callVisionAPI.mockResolvedValue({ text: "   ", blocks: [] });
-    await expect(
-      extractDocument(BUF, "application/pdf", { provider: "vision-claude", anthropicApiKey: "key" }),
-    ).rejects.toThrow("No text extracted from document");
-  });
 });
 
 // ===========================================================================

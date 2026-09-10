@@ -14,6 +14,7 @@ import { FileViewerOverlay } from "@/components/files/file-viewer-overlay";
 import { ConnectTransactionOverlay } from "@/components/files/connect-transaction-overlay";
 import { UploadProgress, FileUploadStatus } from "@/components/files/upload-progress";
 import { FilesDataTableHandle } from "@/components/files/files-data-table";
+import { SelectionChangeMeta } from "@/components/ui/data-table";
 import { useFiles } from "@/hooks/use-files";
 import {
   readBankOriginalAmount,
@@ -25,12 +26,17 @@ import { useTransactions } from "@/hooks/use-transactions";
 import { TaxFile, FileFilters } from "@/types/file";
 import { PartnerFormData } from "@/types/partner";
 import { parseFileFiltersFromUrl, buildFileSearchParams } from "@/lib/filters/file-url-params";
+import {
+  fileDeleteConfirmation,
+  bulkFileDeleteConfirmation,
+} from "@/lib/files/delete-confirmation";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
 import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
 import {
   toggleFileCheckbox,
   toggleSelectAll,
   getSelectAllCheckedState,
+  resolveSelectionChange,
 } from "@/lib/selection/bulk-file-selection";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SummaryToast, SummaryToastState } from "@/components/ui/summary-toast";
@@ -603,6 +609,17 @@ function FilesContent() {
     router.push(newUrl, { scroll: false });
   }, [router, filters, searchValue]);
 
+  // The table's rows are virtualised and memoised, so a row whose own selection
+  // state didn't change is not re-rendered and keeps the checkbox callback it
+  // last painted with — including that render's copy of additionalSelectedIds.
+  // Toggling against that snapshot is what made the checkboxes act like a radio
+  // group: the second row ticked still saw an empty selection and replaced the
+  // first (#232). Read the live set through a ref instead.
+  const additionalSelectedIdsRef = useRef(additionalSelectedIds);
+  useEffect(() => {
+    additionalSelectedIdsRef.current = additionalSelectedIds;
+  }, [additionalSelectedIds]);
+
   // Checkbox column: independent of row-click selection, so it never opens or
   // navigates the detail panel — except unchecking the primary row's own
   // checkbox, which has no other representation than closing its panel.
@@ -612,14 +629,14 @@ function FilesContent() {
         fileId,
         checked,
         primarySelectedId,
-        additionalSelectedIds,
+        additionalSelectedIds: additionalSelectedIdsRef.current,
       });
       setAdditionalSelectedIds(result.additionalSelectedIds);
       if (result.closePrimary) {
         handleCloseDetail();
       }
     },
-    [primarySelectedId, additionalSelectedIds, handleCloseDetail]
+    [primarySelectedId, handleCloseDetail]
   );
 
   const handleToggleSelectAll = useCallback(() => {
@@ -701,13 +718,8 @@ function FilesContent() {
 
   const handleDelete = useCallback(async () => {
     if (!selectedFile) return;
-    const isGmailFile = selectedFile.sourceType?.startsWith("gmail");
-    const message = isGmailFile
-      ? `Delete "${selectedFile.fileName}"? It will be hidden but won't be re-imported from Gmail.`
-      : `Permanently delete "${selectedFile.fileName}"? This will also remove all connections.`;
-    if (!confirm(message)) return;
-    // Use soft delete for Gmail files to prevent re-import
-    await remove(selectedFile.id, isGmailFile);
+    if (!confirm(fileDeleteConfirmation(selectedFile.fileName))) return;
+    await remove(selectedFile.id);
     handleCloseDetail();
   }, [selectedFile, remove, handleCloseDetail]);
 
@@ -791,33 +803,25 @@ function FilesContent() {
     [router, filters, searchValue]
   );
 
-  // Multi-select: handle selection changes from table
-  // This receives: { primaryId, additionalIds } from the table
+  // Multi-select: handle selection changes from table. The table sends the
+  // full resulting set of selected IDs plus whether a plain (unmodified)
+  // click produced it; resolveSelectionChange decides what the primary (URL)
+  // and additional (bulk) selections should become from that - see its
+  // doc comment for why the resulting Set's size alone can't be trusted.
   const handleSelectionChange = useCallback(
-    (newSelectedIds: Set<string>) => {
-      // The table sends us the full set of selected IDs
-      // We need to figure out what changed
-
-      // If exactly one ID and it's different from current primary, it's a new primary click
-      if (newSelectedIds.size === 1) {
-        const [id] = newSelectedIds;
-        // Clear additional selections, update primary via URL
-        setAdditionalSelectedIds(new Set());
-        const params = buildFileSearchParams(filters, searchValue, id);
-        router.push(`/files?${params.toString()}`, { scroll: false });
-      } else if (newSelectedIds.size === 0) {
-        // Clear everything
-        setAdditionalSelectedIds(new Set());
-        const params = buildFileSearchParams(filters, searchValue, null);
+    (newSelectedIds: Set<string>, meta: SelectionChangeMeta) => {
+      const result = resolveSelectionChange({
+        newSelectedIds,
+        isPlainClick: meta.isPlainClick,
+        primarySelectedId,
+        clickedRowId: meta.clickedRowId,
+        isRangeClick: meta.isRangeClick,
+      });
+      setAdditionalSelectedIds(result.additionalSelectedIds);
+      if (result.primaryId !== primarySelectedId) {
+        const params = buildFileSearchParams(filters, searchValue, result.primaryId);
         const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
         router.push(newUrl, { scroll: false });
-      } else {
-        // Multiple selected - update additional selections (keep primary as-is)
-        const newAdditional = new Set(newSelectedIds);
-        if (primarySelectedId) {
-          newAdditional.delete(primarySelectedId); // Primary is in URL, not in additional
-        }
-        setAdditionalSelectedIds(newAdditional);
       }
     },
     [router, filters, searchValue, primarySelectedId]
@@ -832,7 +836,7 @@ function FilesContent() {
   const handleBulkDelete = useCallback(async () => {
     if (allSelectedIds.size === 0) return;
     const fileIds = Array.from(allSelectedIds);
-    if (!confirm(`Delete ${fileIds.length} files? This cannot be undone.`)) return;
+    if (!confirm(bulkFileDeleteConfirmation(fileIds.length))) return;
 
     setIsBulkDeleting(true);
     setBulkProgress({ completed: 0, total: fileIds.length });
@@ -840,10 +844,8 @@ function FilesContent() {
     let failureCount = 0;
     try {
       for (const fileId of fileIds) {
-        const file = files.find((f) => f.id === fileId);
-        const isGmailFile = file?.sourceType?.startsWith("gmail");
         try {
-          await remove(fileId, isGmailFile);
+          await remove(fileId);
           successCount++;
         } catch (error) {
           console.error(`Failed to delete file ${fileId}:`, error);
@@ -867,7 +869,7 @@ function FilesContent() {
       setIsBulkDeleting(false);
       setBulkProgress(null);
     }
-  }, [allSelectedIds, files, remove, router, filters, searchValue]);
+  }, [allSelectedIds, remove, router, filters, searchValue]);
 
   // Multi-select: bulk mark as not invoice
   const handleBulkMarkAsNotInvoice = useCallback(async () => {

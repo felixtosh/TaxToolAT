@@ -311,6 +311,20 @@ export const onPartnerUpdate = onDocumentUpdated(
 
     const userId = after.userId;
 
+    // A Merge also flips isActive, but a merged-away partner is not a deleted
+    // one: its files were repointed to the survivor, not orphaned, and a Merge
+    // deliberately does not re-run the Match (#262, ADR-0005). Without this
+    // guard the merge would fire the post-deletion re-match it exists to avoid.
+    const wasJustMergedAway = !before.mergedInto && !!after.mergedInto;
+
+    if (wasJustMergedAway) {
+      console.log(
+        `[PartnerUpdate] Partner "${after.name}" (${partnerId}) was merged into ` +
+        `${after.mergedInto}, skipping re-matching`
+      );
+      return;
+    }
+
     // Check if partner was just deleted (soft-delete: isActive true -> false)
     const wasJustDeleted = before.isActive === true && after.isActive === false;
 

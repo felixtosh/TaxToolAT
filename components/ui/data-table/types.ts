@@ -24,6 +24,25 @@ export interface RowClickModifiers {
   ctrlKey: boolean;
 }
 
+/**
+ * Describes which interaction produced a selection-change call, so a consumer
+ * doesn't have to guess from the resulting Set's size. A plain click always
+ * replaces the whole selection with just the clicked row (size 1, but so can
+ * ctrl/cmd-click or shift-click after they've toggled/ranged down to one id) —
+ * only `isPlainClick` tells the two apart.
+ */
+export interface SelectionChangeMeta {
+  isPlainClick: boolean;
+  /**
+   * The row the user actually clicked. A modified click can promote it to the
+   * primary (panel) selection, which the resulting Set alone cannot express —
+   * it says which rows are selected, never which one was just acted on.
+   */
+  clickedRowId?: string;
+  /** True for shift-click, which selects a range and promotes its clicked end. */
+  isRangeClick?: boolean;
+}
+
 export interface ResizableDataTableProps<TData extends { id: string }> {
   columns: ColumnDef<TData, unknown>[];
   /** Flat data array (use this OR sections, not both) */
@@ -56,7 +75,7 @@ export interface ResizableDataTableProps<TData extends { id: string }> {
   /** Set of currently selected row IDs (for multi-select mode) */
   selectedRowIds?: Set<string>;
   /** Callback when selection changes in multi-select mode */
-  onSelectionChange?: (selectedIds: Set<string>) => void;
+  onSelectionChange?: (selectedIds: Set<string>, meta: SelectionChangeMeta) => void;
   /**
    * Callback with the row ids in the order they are displayed (the data the
    * table was given, in the active sort order). Fires whenever that order
