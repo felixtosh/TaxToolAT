@@ -30,6 +30,7 @@ import type { RecipientIdentity } from "./recipientIdentity";
 import { determineCounterparty, type InvoiceDirection } from "../utils/identity-matcher";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
+import { decodeHtmlEntities } from "../utils/htmlEntities";
 
 const db = getFirestore();
 
@@ -457,6 +458,16 @@ export const onUserDataUpdate = onDocumentUpdated(
       // Determine new counterparty
       const result = determineCounterparty(issuer, recipient, userData, sourceIbans);
 
+      // #233: extractedIssuer/extractedRecipient hold the RAW extraction, so a
+      // name that arrived as "AL&amp;FA Taxi KG" is still encoded here.
+      // extractionCore decodes on the way in and this sweep rewrites the same
+      // field, so it has to decode identically — otherwise editing identity
+      // data writes the entity back and partner matching, which re-runs
+      // below, splits the company into an encoded and a decoded Partner.
+      const counterpartyName = result.counterparty?.name
+        ? decodeHtmlEntities(result.counterparty.name)
+        : result.counterparty?.name;
+
       // Check if anything changed
       const currentDirection = fileData.invoiceDirection as InvoiceDirection;
       const currentMatchedAccount = fileData.matchedUserAccount as "issuer" | "recipient" | null;
@@ -467,7 +478,7 @@ export const onUserDataUpdate = onDocumentUpdated(
         result.invoiceDirection === currentDirection &&
         result.matchedUserAccount === currentMatchedAccount &&
         result.recipientIdentityMatch === currentRecipientIdentity &&
-        result.counterparty?.name === currentPartner
+        counterpartyName === currentPartner
       ) {
         skippedCount++;
         continue;
@@ -483,7 +494,7 @@ export const onUserDataUpdate = onDocumentUpdated(
 
       // Update partner fields from counterparty
       if (result.counterparty) {
-        updateData.extractedPartner = result.counterparty.name;
+        updateData.extractedPartner = counterpartyName;
         updateData.extractedVatId = result.counterparty.vatId;
         updateData.extractedIban = result.counterparty.iban;
         updateData.extractedAddress = result.counterparty.address;
@@ -491,7 +502,7 @@ export const onUserDataUpdate = onDocumentUpdated(
       }
 
       // If extractedPartner changed, reset partner matching so it re-runs
-      if (result.counterparty?.name !== currentPartner) {
+      if (counterpartyName !== currentPartner) {
         updateData.partnerMatchComplete = false;
         updateData.partnerId = null;
         updateData.partnerMatchedBy = null;
