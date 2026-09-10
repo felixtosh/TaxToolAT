@@ -191,6 +191,7 @@ export {
   assignPartnerToTransactionCallable as assignPartnerToTransaction,
   removePartnerFromTransactionCallable as removePartnerFromTransaction,
   setPartnerBillingCycleCallable as setPartnerBillingCycle,
+  backfillPartnerNameEntitiesCallable as backfillPartnerNameEntities,
 } from "./partners";
 
 // Source operations

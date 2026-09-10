@@ -447,6 +447,51 @@ describe("characterization: runExtraction extraction + counterparty", () => {
     expect(doc.extractedIssuer).toBeNull();
     expect(doc.extractedRecipient).toBeNull();
   });
+
+  it("#233: a counterparty name with HTML entities is decoded before it becomes extractedPartner", async () => {
+    const fileData = await seedFile("f-entity-counterparty");
+    q({
+      extracted: {
+        amount: 100,
+        confidence: 1,
+        issuer: { name: "AL&amp;FA Taxi KG" },
+      },
+    });
+    await runExtraction("f-entity-counterparty", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-entity-counterparty");
+    expect(doc.extractedPartner).toBe("AL&FA Taxi KG");
+  });
+
+  it("#233: the legacy partner fallback decodes HTML entities too", async () => {
+    const fileData = await seedFile("f-entity-legacy");
+    q({
+      extracted: {
+        partner: "AL&amp;FA Taxi KG",
+        amount: 100,
+        confidence: 1,
+      },
+    });
+    await runExtraction("f-entity-legacy", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-entity-legacy");
+    expect(doc.extractedPartner).toBe("AL&FA Taxi KG");
+  });
+
+  it("#233: a name with no entity in it, including a bare ampersand, is unchanged", async () => {
+    const fileData = await seedFile("f-bare-amp");
+    q({
+      extracted: {
+        amount: 100,
+        confidence: 1,
+        issuer: { name: "Q & A Solutions" },
+      },
+    });
+    await runExtraction("f-bare-amp", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-bare-amp");
+    expect(doc.extractedPartner).toBe("Q & A Solutions");
+  });
 });
 
 // ===========================================================================
