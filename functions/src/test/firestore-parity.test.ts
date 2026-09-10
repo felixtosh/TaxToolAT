@@ -832,6 +832,27 @@ function runParitySuite(
       expect(page2.docs.map((doc: any) => doc.id)).toEqual(["c", "d"]);
     });
 
+    // The idiomatic full-collection sweep (partnerRematchReport.ts:433,
+    // reclassifyStoredDocuments.ts:169): order by document id, page with a
+    // snapshot cursor. __name__ is not a field — it is the doc id.
+    it('orderBy("__name__") pages a collection by document id (sweep shape)', async () => {
+      const col = freshCol("namesweep");
+      await seed(col, {
+        d1: { userId: "u1" },
+        d2: { userId: "u1" },
+        d3: { userId: "u1" },
+        d4: { userId: "u2" },
+      });
+      const base = col.where("userId", "==", "u1").orderBy("__name__");
+      const page1 = await base.limit(2).get();
+      expect(page1.docs.map((doc: any) => doc.id)).toEqual(["d1", "d2"]);
+
+      const page2 = await base.limit(2).startAfter(page1.docs[1]).get();
+      expect(page2.docs.map((doc: any) => doc.id)).toEqual(["d3"]);
+
+      expect(idsOf(await col.orderBy("__name__", "desc").get())).toEqual(["d4", "d3", "d2", "d1"]);
+    });
+
     // The app never calls .settings(), so firebase-admin's default rejection
     // of undefined values applies to every write path with an optional TS
     // field — and the shim now mirrors it.
