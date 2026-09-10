@@ -187,6 +187,7 @@ export {
   createUserPartnerCallable as createUserPartner,
   updateUserPartnerCallable as updateUserPartner,
   deleteUserPartnerCallable as deleteUserPartner,
+  mergeUserPartnersCallable as mergeUserPartners,
   assignPartnerToTransactionCallable as assignPartnerToTransaction,
   removePartnerFromTransactionCallable as removePartnerFromTransaction,
   setPartnerBillingCycleCallable as setPartnerBillingCycle,
