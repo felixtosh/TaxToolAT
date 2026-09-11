@@ -7,7 +7,6 @@ import {
   getDoc,
   doc,
   updateDoc,
-  addDoc,
   Timestamp,
   writeBatch,
   arrayUnion,
@@ -302,89 +301,32 @@ export async function checkFileDuplicate(
 }
 
 /**
- * Create a new file record (after uploading to storage)
+ * Create a new file record (after uploading to storage).
+ *
+ * Through the callable rather than straight to Firestore, because the write is
+ * where the duplicate check lives (#182). A client-side check-then-write holds
+ * the whole upload open between the read and the write, so two runs of the same
+ * drop both find nothing and both create a File. The server checks as it
+ * writes; when the bytes are already on file it creates nothing and hands back
+ * the File that has them, which is the id this returns.
  */
 export async function createFile(
   ctx: OperationsContext,
   data: FileCreateData
 ): Promise<string> {
-  const now = Timestamp.now();
+  const result = await callFunction<
+    { data: Record<string, unknown> },
+    { fileId: string; duplicate: boolean }
+  >("createFile", {
+    data: {
+      ...data,
+      // The callable takes the two date fields over the wire as ISO strings.
+      gmailEmailDate: data.gmailEmailDate?.toISOString(),
+      inboundReceivedAt: data.inboundReceivedAt?.toISOString(),
+    },
+  });
 
-  // Build file object, excluding undefined values (Firestore doesn't accept them)
-  const newFile: Record<string, unknown> = {
-    userId: ctx.userId,
-    fileName: data.fileName,
-    fileType: data.fileType,
-    fileSize: data.fileSize,
-    storagePath: data.storagePath,
-    downloadUrl: data.downloadUrl,
-    extractionComplete: false,
-    transactionIds: [],
-    uploadedAt: now,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  // Only add optional fields if they have values
-  if (data.thumbnailUrl) {
-    newFile.thumbnailUrl = data.thumbnailUrl;
-  }
-  if (data.contentHash) {
-    newFile.contentHash = data.contentHash;
-  }
-
-  // Source tracking
-  if (data.sourceType) {
-    newFile.sourceType = data.sourceType;
-  }
-  if (data.sourceSearchPattern) {
-    newFile.sourceSearchPattern = data.sourceSearchPattern;
-  }
-  if (data.sourceResultType) {
-    newFile.sourceResultType = data.sourceResultType;
-  }
-  if (data.sourceUrl) {
-    newFile.sourceUrl = data.sourceUrl;
-  }
-  if (data.sourceDomain) {
-    newFile.sourceDomain = data.sourceDomain;
-  }
-  if (data.sourceRunId) {
-    newFile.sourceRunId = data.sourceRunId;
-  }
-  if (data.sourceCollectorId) {
-    newFile.sourceCollectorId = data.sourceCollectorId;
-  }
-  if (data.gmailMessageId) {
-    newFile.gmailMessageId = data.gmailMessageId;
-  }
-  if (data.gmailIntegrationId) {
-    newFile.gmailIntegrationId = data.gmailIntegrationId;
-  }
-  if (data.gmailIntegrationEmail) {
-    newFile.gmailIntegrationEmail = data.gmailIntegrationEmail;
-  }
-  if (data.gmailSubject) {
-    newFile.gmailSubject = data.gmailSubject;
-  }
-  if (data.gmailAttachmentId) {
-    newFile.gmailAttachmentId = data.gmailAttachmentId;
-  }
-  if (data.gmailSenderEmail) {
-    newFile.gmailSenderEmail = data.gmailSenderEmail;
-  }
-  if (data.gmailSenderDomain) {
-    newFile.gmailSenderDomain = data.gmailSenderDomain;
-  }
-  if (data.gmailSenderName) {
-    newFile.gmailSenderName = data.gmailSenderName;
-  }
-  if (data.gmailEmailDate) {
-    newFile.gmailEmailDate = data.gmailEmailDate;
-  }
-
-  const docRef = await addDoc(collection(ctx.db, FILES_COLLECTION), newFile);
-  return docRef.id;
+  return result.fileId;
 }
 
 /**

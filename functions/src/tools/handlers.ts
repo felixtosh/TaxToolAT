@@ -51,7 +51,8 @@ import {
   retryExtractionForFile,
 } from "../extraction/retryExtractionOps";
 import { getStorage } from "firebase-admin/storage";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
+import { createFileRecord, findFileByContentHash } from "../files/createFileRecord";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
@@ -2479,6 +2480,26 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
     fileBuffer = Buffer.from(arrayBuffer);
   }
 
+  // Hash the bytes before touching storage (#182). This tool used to write a
+  // File with no hash at all, so the copy it created could never be recognised
+  // as one afterwards — and the only thing that noticed was the matcher, three
+  // layers and one paid extraction later. Asking the write point's own lookup
+  // here just saves uploading bytes we already hold; createFileRecord below is
+  // what actually refuses the duplicate.
+  const contentHash = createHash("sha256").update(fileBuffer).digest("hex");
+  const alreadyOnFile = await findFileByContentHash(db, userId, contentHash);
+  if (alreadyOnFile) {
+    const existing = alreadyOnFile.data();
+    return {
+      success: true,
+      fileId: alreadyOnFile.id,
+      fileName: existing.fileName ?? fileName,
+      storagePath: existing.storagePath ?? null,
+      fileSize: existing.fileSize ?? fileBuffer.length,
+      duplicate: true,
+    };
+  }
+
   // Upload to Storage with a Firebase download token (avoids signBlob IAM)
   const bucket = getStorage().bucket();
   const storagePath = `users/${userId}/files/${Date.now()}_${fileName}`;
@@ -2497,14 +2518,15 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
 
   const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 
-  // Create file record in Firestore
+  // Create file record in Firestore, through the shared write point
   const now = FieldValue.serverTimestamp();
-  const fileDoc = await db.collection("files").add({
+  const { fileId, duplicate } = await createFileRecord(db, {
     userId,
     fileName: fileName as string,
     mimeType: mimeType as string,
     storagePath,
     downloadUrl,
+    contentHash,
     fileSize: fileBuffer.length,
     transactionIds: [],
     isNotInvoice: false,
@@ -2518,10 +2540,11 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
 
   return {
     success: true,
-    fileId: fileDoc.id,
+    fileId,
     fileName,
     storagePath,
     fileSize: fileBuffer.length,
+    duplicate,
   };
 }
 

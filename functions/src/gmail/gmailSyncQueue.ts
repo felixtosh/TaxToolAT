@@ -15,6 +15,7 @@ import {
   FATAL_IMAP_ERROR_CODES,
 } from "../mail";
 import { imapConfigFromIntegration } from "../mail/imap/config";
+import { createFileRecord } from "../files/createFileRecord";
 
 // Define secrets for Google OAuth - set via Firebase CLI:
 // firebase functions:secrets:set GOOGLE_CLIENT_ID
@@ -498,9 +499,11 @@ export async function processQueueItem(
             // Generate download URL with token (works for both emulator and production)
             const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 
-            // Create file document
+            // Create file document, through the shared write point (#182):
+            // the hash check above races against a concurrent sync, and only
+            // the write itself can settle that.
             const now = Timestamp.now();
-            await db.collection("files").add({
+            const { duplicate } = await createFileRecord(db, {
               userId: queueItem.userId,
               fileName: attachment.filename,
               fileType: attachment.mimeType,
@@ -532,6 +535,11 @@ export async function processQueueItem(
               createdAt: now,
               updatedAt: now,
             });
+
+            if (duplicate) {
+              attachmentsSkipped++;
+              continue;
+            }
 
             filesCreated++;
             processedAttachments++;
