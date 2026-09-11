@@ -7,6 +7,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import {
   BmdBuchungRow,
   BmdPersonenkontoRow,
+  BmdSkippedDocument,
   KREDITOR_ACCOUNT_BASE,
   DEBITOR_ACCOUNT_BASE,
 } from "../types/bmd-export";
@@ -249,6 +250,22 @@ function splitByRate(
 }
 
 /**
+ * What the VAT derivation says about one transaction: the rows to book, or a
+ * refusal that keeps the whole transaction out of the CSV (#194).
+ *
+ * A refusal is not an error. The run completes; the refused documents are
+ * reported by name so the operator sees them before filing.
+ */
+type VatRowsResult =
+  | { kind: "rows"; rows: Array<{ rate: number; gross: number; vat: number }> }
+  | {
+      kind: "refused";
+      /** The documents that carry the offending figure, for the report. */
+      fileIds: string[];
+      reason: string;
+    };
+
+/**
  * The VAT rows for one transaction, read off the connected receipts.
  *
  * Runs the same ladder as the UVA report (`deriveTransactionVat`), so the two
@@ -264,11 +281,11 @@ function splitByRate(
 function vatRowsFor(
   tx: TransactionForExport,
   files: Map<string, FileForExport>
-): Array<{ rate: number; gross: number; vat: number }> {
+): VatRowsResult {
   const bankGross = Math.abs(tx.amount);
 
   if (tx.vatRate != null && tx.vatAmount != null) {
-    return [{ rate: tx.vatRate, gross: bankGross, vat: tx.vatAmount }];
+    return { kind: "rows", rows: [{ rate: tx.vatRate, gross: bankGross, vat: tx.vatAmount }] };
   }
 
   const filesById = new Map<string, FileRecord>();
@@ -307,20 +324,54 @@ function vatRowsFor(
     // rate groups. Without this, splitByRate would stretch the document's
     // rates over the tip too and the export would state VAT the UVA does not
     // — the fork #66 divergence, reintroduced.
-    const tip = uvaTx.files?.reduce((s, f) => s + (f.tipAmount ?? 0), 0) ?? 0;
-    if (tip > 0 && tip < bankGross) {
-      return [
-        ...splitByRate(bankGross - tip, derived.groups),
-        { rate: 0, gross: tip, vat: 0 },
-      ];
+    const tipFiles = (uvaTx.files ?? []).filter((f) => (f.tipAmount ?? 0) > 0);
+    const tip = tipFiles.reduce((s, f) => s + (f.tipAmount ?? 0), 0);
+    if (tip > 0) {
+      // A tip that is not smaller than the payment is impossible on the
+      // document — a Gesamt transcribed into the Trinkgeld field, or a bank
+      // line smaller than the tip (#194). It used to fall through to the line
+      // below and stretch the rates over the whole charge, which is the exact
+      // export the branch above exists to prevent, silently. Refuse instead:
+      // the transaction stays out of the CSV, the run still completes, and the
+      // reason names the field to correct.
+      if (tip >= bankGross) {
+        return {
+          kind: "refused",
+          fileIds: tipFiles.map((f) => f.id),
+          reason:
+            `tip (${formatBmdAmount(tip)}) is not less than the bank amount ` +
+            `(${formatBmdAmount(bankGross)}); correct the tip on this document and re-run`,
+        };
+      }
+      return {
+        kind: "rows",
+        rows: [
+          ...splitByRate(bankGross - tip, derived.groups),
+          { rate: 0, gross: tip, vat: 0 },
+        ],
+      };
     }
-    return splitByRate(bankGross, derived.groups);
+    return { kind: "rows", rows: splitByRate(bankGross, derived.groups) };
   }
-  return [{ rate: 0, gross: bankGross, vat: 0 }];
+  return { kind: "rows", rows: [{ rate: 0, gross: bankGross, vat: 0 }] };
+}
+
+/**
+ * The Buchungen CSV plus the run's list of refused documents (#194).
+ */
+export interface BmdBuchungenResult {
+  csv: string;
+  /** Empty on a clean run. One entry per document that kept a transaction out. */
+  skipped: BmdSkippedDocument[];
 }
 
 /**
  * Generate Buchungen CSV content
+ *
+ * The CSV alone, for callers that have nothing to do with a refusal — the
+ * agreement and characterization suites, mostly. An export run wants
+ * `generateBuchungenCsvWithReport`, because a run that drops a transaction
+ * and says nothing is the failure #194 was filed about.
  */
 export function generateBuchungenCsv(
   transactions: TransactionForExport[],
@@ -328,6 +379,24 @@ export function generateBuchungenCsv(
   partnerIndex: PartnerAccountIndex,
   startBelegnr: number = 1
 ): string {
+  return generateBuchungenCsvWithReport(transactions, files, partnerIndex, startBelegnr).csv;
+}
+
+/**
+ * Generate Buchungen CSV content, plus the documents the run refused to book.
+ *
+ * Skip and report: a transaction whose VAT cannot be stated honestly is left
+ * out of the CSV rather than booked wrong, and every such document comes back
+ * named, so the export run completes without the refusal being invisible.
+ * Belegnummern still advance per transaction, refused ones included, so the
+ * numbering agrees with `generateFileMapping`.
+ */
+export function generateBuchungenCsvWithReport(
+  transactions: TransactionForExport[],
+  files: Map<string, FileForExport>,
+  partnerIndex: PartnerAccountIndex,
+  startBelegnr: number = 1
+): BmdBuchungenResult {
   const headers = [
     "satzart",
     "konto",
@@ -346,6 +415,7 @@ export function generateBuchungenCsv(
   ];
 
   const rows: BmdBuchungRow[] = [];
+  const skipped: BmdSkippedDocument[] = [];
   let belegnrCounter = startBelegnr;
 
   for (const tx of transactions) {
@@ -388,7 +458,23 @@ export function generateBuchungenCsv(
     // booking row, all under this transaction's single Belegnummer — which is
     // how a split-rate receipt is booked, and why the counter advances per
     // transaction rather than per row.
-    const vatRows = vatRowsFor(tx, files);
+    const vat = vatRowsFor(tx, files);
+
+    // Refused (#194): no rows for this transaction at all — a partial booking
+    // would be the same silent half-truth — and one report entry per document
+    // that carries the figure.
+    if (vat.kind === "refused") {
+      for (const fid of vat.fileIds) {
+        skipped.push({
+          transactionId: tx.id,
+          fileId: fid,
+          fileName: files.get(fid)?.fileName || fid,
+          reason: vat.reason,
+        });
+      }
+      continue;
+    }
+    const vatRows = vat.rows;
 
     if (isCategoryTransaction && !hasFiles) {
       // --- No-receipt category path ---
@@ -452,7 +538,7 @@ export function generateBuchungenCsv(
       .join(";")
   );
 
-  return [headers.join(";"), ...csvRows].join("\n");
+  return { csv: [headers.join(";"), ...csvRows].join("\n"), skipped };
 }
 
 /**
