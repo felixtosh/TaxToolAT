@@ -851,6 +851,50 @@ describe("Partner Merge", () => {
   });
 
   // ==========================================================================
+  // The merge marker (#306)
+  // ==========================================================================
+
+  /**
+   * The marker is what `onPartnerUpdate` reads to leave a merge alone, so the
+   * criterion that matters here is coverage: every Partner document the merge
+   * writes carries it, not just the losers. A guard hanging off `mergedInto`
+   * covered the loser side only, which is how the survivor's own 200-file
+   * rematch went unnoticed.
+   */
+  describe("the merge marker", () => {
+    it("stamps the survivor and every loser with the same merge id", async () => {
+      seedPartner("survivor", { name: "Acme GmbH" });
+      seedPartner("loser-a", { name: "Acme Gmbh" });
+      seedPartner("loser-b", { name: "ACME Handels" });
+
+      await merge("survivor", ["loser-a", "loser-b"]);
+
+      const stamped = partnerDoc("survivor").mergeWriteId;
+      expect(typeof stamped).toBe("string");
+      expect(stamped).not.toBe("");
+      expect(partnerDoc("loser-a").mergeWriteId).toBe(stamped);
+      expect(partnerDoc("loser-b").mergeWriteId).toBe(stamped);
+    });
+
+    it("stamps a rewritten Merged Partner, and each merge gets its own id", async () => {
+      seedPartner("a", { name: "Acme A" });
+      seedPartner("b", { name: "Acme B" });
+      seedPartner("c", { name: "Acme C" });
+
+      await merge("b", ["a"]);
+      const first = partnerDoc("a").mergeWriteId;
+
+      await merge("c", ["b"]);
+      const second = partnerDoc("c").mergeWriteId;
+
+      expect(second).not.toBe(first);
+      expect(partnerDoc("b").mergeWriteId).toBe(second);
+      // Rewritten on the way, so its own write is recognisable as this merge's.
+      expect(partnerDoc("a").mergeWriteId).toBe(second);
+    });
+  });
+
+  // ==========================================================================
   // Refusals
   // ==========================================================================
 
