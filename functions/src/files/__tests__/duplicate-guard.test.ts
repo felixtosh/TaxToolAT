@@ -15,9 +15,12 @@
  * path's record shape into the write point instead, and `no path writes to
  * files except through the write point` is what keeps those two honest.
  *
- * That walk covers `app` as well now. The Chrome extension's upload route is
- * the seventh path and writes through the same point; driving it needs the root
- * dependency tree, so its test is src/api-smoke/browser-upload-duplicate.test.ts.
+ * That walk covers `app`, `lib`, `components` and `hooks` as well now — the
+ * write this ticket removed was a client-SDK `addDoc` in `lib/operations`, and
+ * a walk of `functions/src` alone would not see it come back. The Chrome
+ * extension's upload route is the seventh path and writes through the same
+ * point; driving it needs the root dependency tree, so its test is
+ * src/api-smoke/browser-upload-duplicate.test.ts.
  *
  * Byte-level only: same bytes, same hash. Two different scans of one invoice
  * are two documents here — that is #162.
@@ -324,12 +327,22 @@ describe("every ingestion path writes through it", () => {
 // ---------------------------------------------------------------------------
 
 describe("no path writes to files except through the write point", () => {
-  // Both shapes that put a new document in `files`: `.add(record)` and
-  // `.doc(...).set(record)`. Matching only the first would let a seventh path
-  // reintroduce the bug by writing the other way round, which is the one thing
-  // this test exists to stop.
-  const CREATES_A_FILE =
+  // Both shapes that put a new document in `files` through the Admin SDK:
+  // `.add(record)` and `.doc(...).set(record)`. Matching only the first would
+  // let a seventh path reintroduce the bug by writing the other way round,
+  // which is the one thing this test exists to stop.
+  const CREATES_A_FILE_ADMIN =
     /collection\(\s*(?:"files"|'files'|FILES_COLLECTION)\s*\)(?:\s*\.doc\([^)]*\))?\s*\.(?:add|set)\(/;
+
+  // And the client SDK's free-function form, `addDoc(collection(db, ...))` /
+  // `setDoc(doc(db, ...))`. That is the shape the write this ticket removed was
+  // written in — `lib/operations/file-ops.ts` held it — so leaving it out would
+  // let the bug come back in the exact spelling it arrived in.
+  const CREATES_A_FILE_CLIENT =
+    /(?:addDoc|setDoc)\(\s*(?:collection|doc)\(\s*[^)]*(?:"files"|'files'|FILES_COLLECTION)/;
+
+  const createsAFile = (source: string) =>
+    CREATES_A_FILE_ADMIN.test(source) || CREATES_A_FILE_CLIENT.test(source);
 
   // The two Gmail routes dedupe on a field called `fileHash`, not
   // `contentHash`, so their records are invisible to the write point's lookup
@@ -344,7 +357,7 @@ describe("no path writes to files except through the write point", () => {
 
   const repoRoot = join(__dirname, "..", "..", "..", "..");
 
-  it("has exactly one `files` write across functions/src and app", () => {
+  it("has exactly one `files` write across functions/src, app and the client trees", () => {
     const offenders: string[] = [];
 
     const walk = (dir: string) => {
@@ -365,7 +378,7 @@ describe("no path writes to files except through the write point", () => {
         if (ROUTED_BY_328.includes(relative)) continue;
 
         const source = readFileSync(path, "utf8");
-        if (CREATES_A_FILE.test(source)) {
+        if (createsAFile(source)) {
           offenders.push(relative);
         }
       }
@@ -373,8 +386,14 @@ describe("no path writes to files except through the write point", () => {
 
     // Walking `functions/src` alone left app/api free to write its own way —
     // which is where the Chrome extension's upload did, hash in hand, no guard.
+    // The client trees are walked for the same reason: `lib/operations` wrote
+    // `files` from the browser until this ticket, and nothing outside this walk
+    // would notice it going back.
     walk(join(repoRoot, "functions", "src"));
     walk(join(repoRoot, "app"));
+    walk(join(repoRoot, "lib"));
+    walk(join(repoRoot, "components"));
+    walk(join(repoRoot, "hooks"));
 
     // A seventh path that writes its own way is a seventh path with no guard.
     expect(offenders).toEqual([]);
@@ -385,20 +404,26 @@ describe("no path writes to files except through the write point", () => {
     // When one of them stops writing `files` itself, this fails and the entry
     // comes off the list rather than quietly covering a path that moved.
     for (const relative of ROUTED_BY_328) {
-      expect(CREATES_A_FILE.test(readFileSync(join(repoRoot, relative), "utf8"))).toBe(true);
+      expect(createsAFile(readFileSync(join(repoRoot, relative), "utf8"))).toBe(true);
     }
   });
 
   it("catches the write shapes it is meant to catch", () => {
     // Without this the walk above is unfalsifiable: a pattern that matches
     // nothing passes just as quietly as a codebase with one write point.
-    expect(CREATES_A_FILE.test('db.collection("files").add(record)')).toBe(true);
-    expect(CREATES_A_FILE.test('db.collection(FILES_COLLECTION).add(record)')).toBe(true);
-    expect(CREATES_A_FILE.test("db.collection('files').add(record)")).toBe(true);
-    expect(CREATES_A_FILE.test('db.collection("files").doc().set(record)')).toBe(true);
-    expect(CREATES_A_FILE.test('db.collection("files").doc(id).set(record)')).toBe(true);
+    expect(createsAFile('db.collection("files").add(record)')).toBe(true);
+    expect(createsAFile('db.collection(FILES_COLLECTION).add(record)')).toBe(true);
+    expect(createsAFile("db.collection('files').add(record)")).toBe(true);
+    expect(createsAFile('db.collection("files").doc().set(record)')).toBe(true);
+    expect(createsAFile('db.collection("files").doc(id).set(record)')).toBe(true);
+    // The client SDK, including the line-broken spelling prettier produces.
+    expect(createsAFile('addDoc(collection(ctx.db, FILES_COLLECTION), newFile)')).toBe(true);
+    expect(createsAFile('await addDoc(\n  collection(db, "files"),\n  newFile\n)')).toBe(true);
+    expect(createsAFile('setDoc(doc(ctx.db, FILES_COLLECTION, id), newFile)')).toBe(true);
     // Reads and updates are not writes of a new File.
-    expect(CREATES_A_FILE.test('db.collection("files").doc(id).get()')).toBe(false);
-    expect(CREATES_A_FILE.test('db.collection("files").where("userId", "==", u)')).toBe(false);
+    expect(createsAFile('db.collection("files").doc(id).get()')).toBe(false);
+    expect(createsAFile('db.collection("files").where("userId", "==", u)')).toBe(false);
+    expect(createsAFile('updateDoc(doc(ctx.db, FILES_COLLECTION, fileId), patch)')).toBe(false);
+    expect(createsAFile('getDoc(doc(ctx.db, FILES_COLLECTION, fileId))')).toBe(false);
   });
 });
