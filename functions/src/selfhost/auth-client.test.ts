@@ -833,8 +833,8 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
 
   it("#77: a 503 from the provider keeps the session instead of signing out", async () => {
     // Authentik restarting, or the proxy in front of it answering for it. The
-    // refresh_token is untouched and the session is alive; the pre-fix code
-    // cleared storage and dropped the user on the login screen.
+    // session is alive; the pre-fix code cleared storage and dropped the user
+    // on the login screen.
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
@@ -852,7 +852,11 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
       code: "auth/network-request-failed",
     });
     expect(tab.getAuth().currentUser?.uid).toBe(UID);
-    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });
+    // #279 changed the second half of this expectation. The SET still survives
+    // — that is this test — but rt-1 no longer survives for replay: a 503 can
+    // equally be an answer that was issued, and so spent it, and then died in
+    // the proxy, so it is marked unconfirmed exactly as a lost response is.
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1", refresh_unconfirmed: "rt-1" });
   });
 
   it("#77: a 502 with an HTML body from the proxy keeps the session", async () => {
@@ -880,7 +884,10 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
       code: "auth/network-request-failed",
     });
     expect(tab.getAuth().currentUser?.uid).toBe(UID);
-    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });
+    // Same change as the 503 above (#279): keeping the session is not the same
+    // as keeping the token presentable, and an unparseable 502 says nothing
+    // about whether the grant was issued before the proxy gave up.
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1", refresh_unconfirmed: "rt-1" });
   });
 
   it("#77: a 400 temporarily_unavailable is the provider talking, not the grant", async () => {
@@ -903,6 +910,10 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
       code: "auth/network-request-failed",
     });
     expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });
+    // #279 marks a 5xx but deliberately not this: a 4xx is the provider
+    // answering ABOUT the grant, and this code says it never got that far, so
+    // nothing was spent and rt-1 stays presentable.
+    expect(readStored(w)?.refresh_unconfirmed).toBeUndefined();
   });
 
   it("refuses to re-present a consumed refresh_token when the provider rotates", async () => {
@@ -1231,5 +1242,387 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
     expect(spent).toEqual([]);
     expect(tab.getAuth().currentUser?.uid).toBe(UID);
     expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* #279 — the refresh answered with a 5xx                           */
+  /*                                                                   */
+  /* Same ambiguity as #216 reached through a different door: the IdP  */
+  /* rotates the refresh_token when it ISSUES the response, and that   */
+  /* response can die in the proxy on the way back. A 502/503/504 is   */
+  /* therefore no proof that the grant never happened, so the token it */
+  /* presented is marked and never presented again. A 4xx IS an answer */
+  /* about the grant and stays unmarked (fork #77 keeps the session    */
+  /* either way — that part is unchanged).                             */
+  /* ---------------------------------------------------------------- */
+
+  /** A token endpoint that answers every grant with `status`, recording spends. */
+  function failingGrantFetch(status: number, spent: string[], onGrant?: () => void): typeof fetch {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        spent.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
+        onGrant?.();
+        return new Response("upstream unavailable", { status });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+  }
+
+  it("#279: a 502 on the grant marks the token it presented", async () => {
+    const spent: string[] = [];
+    const w = installOidcEnv(failingGrantFetch(502, spent));
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      name: "FirebaseError",
+      code: "auth/network-request-failed",
+    });
+    // The session is kept, as fork #77 decided — but rt-1 is now "presented,
+    // outcome unknown", the same state a lost response leaves it in (#216).
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1", refresh_unconfirmed: "rt-1" });
+    expect(spent).toEqual(["rt-1"]);
+  });
+
+  for (const status of [502, 503, 504]) {
+    it(`#279: a second refresh after a ${status} re-authenticates instead of replaying`, async () => {
+      const spent: string[] = [];
+      const w = installOidcEnv(failingGrantFetch(status, spent));
+      seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+      const tab = await openTab();
+      await tick();
+
+      await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+        code: "auth/network-request-failed",
+      });
+      expect(readStored(w)).toMatchObject({ refresh_unconfirmed: "rt-1" });
+
+      // Nothing newer was written by a peer and the id_token is stale, so the
+      // only honest move left is the login screen — not another POST of a token
+      // the provider may already have revoked.
+      await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+        code: "auth/user-token-expired",
+      });
+      // The whole ticket in one assertion — rt-1 went out exactly once, ever.
+      expect(spent).toEqual(["rt-1"]);
+      expect(tab.getAuth().currentUser).toBeNull();
+      expect(readStored(w)).toBeNull();
+    });
+  }
+
+  it("#279: a 400 the provider answered with leaves the token presentable", async () => {
+    // temporarily_unavailable in a 4xx: the provider talking about itself, so
+    // fork #77 keeps the session — and it ANSWERED, so nothing was spent. This
+    // is the case #279 must NOT widen to: the second attempt still presents it.
+    const spent: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        spent.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
+        return new Response(JSON.stringify({ error: "temporarily_unavailable" }), { status: 400 });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    for (let i = 0; i < 2; i++) {
+      await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+        code: "auth/network-request-failed",
+      });
+    }
+    expect(spent).toEqual(["rt-1", "rt-1"]);
+    expect(readStored(w)?.refresh_unconfirmed).toBeUndefined();
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+  });
+
+  it("#279: a 429 is the provider throttling, not an answer that went missing", async () => {
+    // The other way into the transient branch from below the 5xx line, and a
+    // different code path to the 400 above: isSessionRefused short-circuits on
+    // the status, without reading a body. The provider declined to look at the
+    // grant, so nothing was spent and rt-1 is presented again — this pins the
+    // bottom edge of the `>= 500` gate (#279).
+    const spent: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        spent.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
+        return new Response("slow down", { status: 429 });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    for (let i = 0; i < 2; i++) {
+      await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+        code: "auth/network-request-failed",
+      });
+    }
+    expect(spent).toEqual(["rt-1", "rt-1"]);
+    expect(readStored(w)?.refresh_unconfirmed).toBeUndefined();
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+  });
+
+  it("#279: a 401 is a definite refusal — no mark, and the session ends as before", async () => {
+    const spent: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        spent.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
+        return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 401 });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    // The IdP looked at rt-1 and refused it. There is no doubt to record: the
+    // existing handling signs out, which is still the right answer (#279).
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/user-token-expired",
+    });
+    expect(spent).toEqual(["rt-1"]);
+    expect(tab.getAuth().currentUser).toBeNull();
+    expect(readStored(w)).toBeNull();
+  });
+
+  it("#279: a peer that refreshed during the 502 still wins, and takes no mark", async () => {
+    const peerIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    const spent: string[] = [];
+    let w!: FakeWindow;
+
+    // The peer rotated to rt-2 and stored a usable set while our grant was in
+    // flight; ours came back 502.
+    const fetchImpl = failingGrantFetch(502, spent, () => {
+      seedTokens(w, {
+        id_token: peerIdToken,
+        refresh_token: "rt-2",
+        expires_at: Date.now() + 3_600_000,
+        rotates: true,
+      });
+    });
+
+    w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).resolves.toBe(peerIdToken);
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    // The peer's set is the truth now, so our doubt about rt-1 must not land on
+    // it — markRefreshUnconfirmed only stamps the set still carrying the token
+    // it names, and this is that no-op seen from the 5xx door.
+    const stored = readStored(w);
+    expect(stored).toMatchObject({ refresh_token: "rt-2" });
+    expect(stored?.refresh_unconfirmed).toBeUndefined();
+    expect(spent).toEqual(["rt-1"]);
+  });
+
+  it("#279: a 502 after another tab signed out leaves storage empty", async () => {
+    // The other half of markRefreshUnconfirmed's no-op, seen from the 5xx door:
+    // a peer signed out while our grant was in flight, so there is no set left
+    // to stamp. Writing the mark anyway would resurrect the very tokens the
+    // sign-out just removed.
+    const spent: string[] = [];
+    let w!: FakeWindow;
+
+    const fetchImpl = failingGrantFetch(502, spent, () => {
+      w.localStorage.removeItem(TOKENS_KEY);
+    });
+
+    w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/network-request-failed",
+    });
+    expect(spent).toEqual(["rt-1"]);
+    expect(readStored(w)).toBeNull();
+  });
+
+  it("#279: a refresh that finally succeeds clears the mark a 5xx left", async () => {
+    // rt-1 was marked by a 502 and a peer has since rotated us to rt-2. The
+    // mark is seeded alongside rt-2 on purpose: a peer writing its own set
+    // would have dropped it already, and the assertion here is that OUR
+    // successful grant writes a clean set rather than carrying doubt forward.
+    const nextIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    const spent: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        spent.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
+        return new Response(
+          JSON.stringify({ id_token: nextIdToken, refresh_token: "rt-3", expires_in: 3600 }),
+          { status: 200 },
+        );
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-2", { rotates: true, refresh_unconfirmed: "rt-1" }));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).resolves.toBe(nextIdToken);
+    expect(spent).toEqual(["rt-2"]);
+    const stored = readStored(w);
+    expect(stored).toMatchObject({ refresh_token: "rt-3", rotates: true });
+    expect(stored?.refresh_unconfirmed).toBeUndefined();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Built-in-mode session refresh: a 5xx on the JWT mint (#279)         */
+/*                                                                     */
+/* The narrower sibling of the grant path: refreshViaSession presents  */
+/* the Better Auth session token at /__auth/token and takes the same   */
+/* "transient, keep the session" branch on a 5xx. What differs is what */
+/* is at stake — a session token is not single-use, so a reply that    */
+/* died on the way back cannot have spent it (#216). The mark is for   */
+/* the single-use credential, and only a set that carries one gets it. */
+/* ------------------------------------------------------------------ */
+
+describe("selfhost auth-client — built-in-mode session refresh (#279)", () => {
+  const API = "https://app.selfhost.test/api";
+  const AUTH_BASE = `${API}/__auth`;
+  const TOKENS_KEY = "fibuki.oidc.tokens";
+
+  /** A set whose id_token is inside the staleness window, so getIdToken refreshes. */
+  const staleSessionSet = (extra: Record<string, unknown> = {}) => ({
+    id_token: makeJwt({ sub: UID, email: "stefan@example.test", exp: Math.floor(Date.now() / 1000) + 5 }),
+    session_token: "sess-1",
+    expires_at: Date.now() + 5_000,
+    ...extra,
+  });
+
+  /** Built-in mode (no issuer), one tab, tokens already in storage. */
+  async function loadBuiltIn(
+    fetchImpl: typeof fetch,
+    stored: Record<string, unknown>,
+  ): Promise<AuthClient> {
+    vi.resetModules();
+    fakeWindow = installWindow();
+    for (const k of [
+      "NEXT_PUBLIC_FIBUKI_DEV_UID",
+      "NEXT_PUBLIC_FIBUKI_DEV_ADMIN",
+      "NEXT_PUBLIC_OIDC_ISSUER",
+      "NEXT_PUBLIC_OIDC_CLIENT_ID",
+      "NEXT_PUBLIC_FIBUKI_API_URL",
+    ]) {
+      delete process.env[k];
+    }
+    fakeWindow.localStorage.setItem(TOKENS_KEY, JSON.stringify(stored));
+    vi.stubGlobal("fetch", fetchImpl);
+    const client = (await import("../../../lib/selfhost/auth-client")) as AuthClient;
+    // Configure the API base rather than exporting NEXT_PUBLIC_FIBUKI_API_URL:
+    // authApiBase() resolves either way, but the env var also starts a change
+    // stream that outlives the test and reconnects into later ones (#150).
+    client.__configureAuthClient({ apiUrl: API });
+    return client;
+  }
+
+  function readStored(): Record<string, unknown> | null {
+    const raw = fakeWindow.localStorage.getItem(TOKENS_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+  }
+
+  /** The host's JWT mint, answering every call with `status`, recording presents. */
+  function failingMintFetch(status: number, presented: string[]): typeof fetch {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === `${AUTH_BASE}/token`) {
+        const auth = new Headers(init?.headers).get("authorization") ?? "";
+        presented.push(auth.replace(/^Bearer /, ""));
+        return new Response("bad gateway", { status });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("#279: a 502 on the mint keeps the session and never marks the session token", async () => {
+    const presented: string[] = [];
+    const client = await loadBuiltIn(failingMintFetch(502, presented), staleSessionSet());
+    await tick();
+
+    await expect(client.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      name: "FirebaseError",
+      code: "auth/network-request-failed",
+    });
+    // fork #77 unchanged: the backend having a moment is not a revoked session.
+    expect(client.getAuth().currentUser?.uid).toBe(UID);
+    expect(presented).toEqual(["sess-1"]);
+    // And nothing is marked: a session token is not single-use, so a lost or
+    // 5xx-shaped answer cannot have spent it — re-presenting it costs nothing
+    // and refusing to would sign the user out over a proxy hiccup (#216, #279).
+    expect(readStored()).toMatchObject({ session_token: "sess-1" });
+    expect(readStored()?.refresh_unconfirmed).toBeUndefined();
+  });
+
+  it("#279: a 502 on the mint marks a refresh_token the same set carries", async () => {
+    // The mark keys on the credential that CAN be spent, not on the mode: if a
+    // set reaches this branch carrying a refresh_token, the 5xx leaves that one
+    // in the same "presented, outcome unknown" state the grant path records.
+    const presented: string[] = [];
+    const client = await loadBuiltIn(
+      failingMintFetch(503, presented),
+      staleSessionSet({ refresh_token: "rt-1", rotates: true }),
+    );
+    await tick();
+
+    await expect(client.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/network-request-failed",
+    });
+    expect(client.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored()).toMatchObject({ refresh_token: "rt-1", refresh_unconfirmed: "rt-1" });
+  });
+
+  it("#279: a 401 from the mint is a revoked session, not a lost answer", async () => {
+    const presented: string[] = [];
+    const client = await loadBuiltIn(
+      failingMintFetch(401, presented),
+      staleSessionSet({ refresh_token: "rt-1" }),
+    );
+    await tick();
+
+    // The host looked at the session and refused it: sign out, as before, and
+    // nothing is left in storage to mark.
+    await expect(client.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/user-token-expired",
+    });
+    expect(client.getAuth().currentUser).toBeNull();
+    expect(readStored()).toBeNull();
   });
 });
