@@ -62,6 +62,7 @@ const PNG_BYTES = Buffer.concat([Buffer.from([0x89]), Buffer.from("PNG"), Buffer
 // An OOXML container (.docx/.xlsx): a real file, readable, and not one of the
 // magic numbers the sniffer knows. sniffMimeType would call it image/jpeg.
 const DOCX_BYTES = Buffer.concat([Buffer.from("PK\u0003\u0004"), Buffer.alloc(20)]);
+const JPEG_BYTES = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(20)]);
 
 beforeEach(() => {
   store.clear();
@@ -99,6 +100,24 @@ describe("backfillFileTypesCallable", () => {
     expect(result.updated).toBe(1);
     expect(result.unidentified).toBe(0);
     expect(file("f-img").fileType).toBe("image/png");
+  });
+
+  // image/jpeg is the value the sniffer's fallback used to persist, so it is the
+  // one recognised type a "don't write the guess" change can wrongly swallow.
+  // A real JPEG still has to be written (#281).
+  it("still writes image/jpeg when the bytes really are a JPEG", async () => {
+    store.setDoc(
+      "files",
+      "f-jpg",
+      createTestFile({ userId, storagePath: "files/user-1/d.jpg", fileType: undefined })
+    );
+    blobs.set("files/user-1/d.jpg", JPEG_BYTES);
+
+    const result = await call();
+
+    expect(result.updated).toBe(1);
+    expect(result.unidentified).toBe(0);
+    expect(file("f-jpg").fileType).toBe("image/jpeg");
   });
 
   it("leaves a record whose bytes match no magic number with no fileType (#281)", async () => {
