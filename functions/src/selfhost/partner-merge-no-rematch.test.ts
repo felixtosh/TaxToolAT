@@ -128,6 +128,43 @@ describe("selfhost hardening: a Merge does not re-run file matching (#306)", () 
     expect(byName.partnerMatchedBy).toBe("auto");
   });
 
+  it("re-matches nothing when a Merge takes a loser already merged into another", async () => {
+    await seedPair();
+    await db.collection("partners").doc("p-second").set(
+      basePartner("Alpha Hosting AG", { ibans: [] }),
+    );
+    await drainTriggers();
+
+    // First merge builds the chain: p-loser is now a Merged Partner of p-second.
+    await mergeUserPartnersInternal(
+      db as unknown as FirebaseFirestore.Firestore,
+      USER,
+      { survivorId: "p-second", loserIds: ["p-loser"] },
+    );
+    await drainTriggers();
+
+    // Second merge takes BOTH, so p-loser is written twice by one merge: once
+    // as a chained tombstone repointed at the survivor, once as this merge's
+    // own tombstone. The second of those carries the id it already holds, so
+    // the marker does not recognise it — a merged-away Partner is inactive by
+    // then and the trigger leaves it alone regardless, but the file below is
+    // what the criterion is about and it must stay untouched either way.
+    await mergeUserPartnersInternal(
+      db as unknown as FirebaseFirestore.Firestore,
+      USER,
+      { survivorId: "p-survivor", loserIds: ["p-loser", "p-second"] },
+    );
+    await drainTriggers();
+
+    expect((await db.collection("partners").doc("p-loser").get()).data()!.mergedInto)
+      .toBe("p-survivor");
+
+    const waiting = (await db.collection("files").doc("f-waiting").get()).data()!;
+    expect(waiting.partnerId ?? null).toBeNull();
+    expect(waiting.partnerSuggestions ?? null).toBeNull();
+    expect(waiting.partnerMatchedAt ?? null).toBeNull();
+  });
+
   it("still re-matches a hand-edited alias on a Partner a Merge wrote before", async () => {
     await seedPair();
     await mergeUserPartnersInternal(
