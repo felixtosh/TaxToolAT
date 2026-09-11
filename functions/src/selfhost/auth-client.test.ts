@@ -1347,6 +1347,39 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
     expect(tab.getAuth().currentUser?.uid).toBe(UID);
   });
 
+  it("#279: a 429 is the provider throttling, not an answer that went missing", async () => {
+    // The other way into the transient branch from below the 5xx line, and a
+    // different code path to the 400 above: isSessionRefused short-circuits on
+    // the status, without reading a body. The provider declined to look at the
+    // grant, so nothing was spent and rt-1 is presented again — this pins the
+    // bottom edge of the `>= 500` gate (#279).
+    const spent: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        spent.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
+        return new Response("slow down", { status: 429 });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    for (let i = 0; i < 2; i++) {
+      await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+        code: "auth/network-request-failed",
+      });
+    }
+    expect(spent).toEqual(["rt-1", "rt-1"]);
+    expect(readStored(w)?.refresh_unconfirmed).toBeUndefined();
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+  });
+
   it("#279: a 401 is a definite refusal — no mark, and the session ends as before", async () => {
     const spent: string[] = [];
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1406,6 +1439,31 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
     expect(stored).toMatchObject({ refresh_token: "rt-2" });
     expect(stored?.refresh_unconfirmed).toBeUndefined();
     expect(spent).toEqual(["rt-1"]);
+  });
+
+  it("#279: a 502 after another tab signed out leaves storage empty", async () => {
+    // The other half of markRefreshUnconfirmed's no-op, seen from the 5xx door:
+    // a peer signed out while our grant was in flight, so there is no set left
+    // to stamp. Writing the mark anyway would resurrect the very tokens the
+    // sign-out just removed.
+    const spent: string[] = [];
+    let w!: FakeWindow;
+
+    const fetchImpl = failingGrantFetch(502, spent, () => {
+      w.localStorage.removeItem(TOKENS_KEY);
+    });
+
+    w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/network-request-failed",
+    });
+    expect(spent).toEqual(["rt-1"]);
+    expect(readStored(w)).toBeNull();
   });
 
   it("#279: a refresh that finally succeeds clears the mark a 5xx left", async () => {
