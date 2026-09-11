@@ -211,7 +211,7 @@ describe("characterization: runExtraction extraction + counterparty", () => {
         vatPercent: 20,
         vatPercent_raw: "20%",
         lineItems: [
-          { description: "Cable", quantity: 2, unitPrice: 5000, vatPercent: 20, vatAmount: 2000, amount: 12000 },
+          { description: "Cable", vatPercent: 20, vatAmount: 2000, amount: 12000 },
         ],
         confidence: 0.87,
         issuer: {
@@ -232,9 +232,10 @@ describe("characterization: runExtraction extraction + counterparty", () => {
         recipient_raw: { name: "House of Bandits GmbH" },
       },
       additionalFields: [
-        { label: "Invoice Number", value: "2024-001", rawValue: "Rechnung Nr. 2024-001" },
-        { label: "", value: "dropped" },
-        { label: "Due Date", value: "2025-01-15" },
+        { key: "invoiceNumber", label: "Invoice Number", value: "2024-001", rawValue: "Rechnung Nr. 2024-001" },
+        { key: "invoiceNumber", label: "", value: "dropped" },
+        { key: "tableNumber", label: "Tischnummer", value: "12" },
+        { key: "dueDate", label: "Due Date", value: "2025-01-15" },
       ],
     });
 
@@ -280,7 +281,7 @@ describe("characterization: runExtraction extraction + counterparty", () => {
 
     // line items reconcile exactly with the document total
     expect(doc.extractedLineItems).toEqual([
-      { description: "Cable", quantity: 2, unitPrice: 5000, vatPercent: 20, vatAmount: 2000, amount: 12000 },
+      { description: "Cable", vatPercent: 20, vatAmount: 2000, amount: 12000 },
     ]);
     expect(doc.extractedAmount).toBe(12000);
     expect(doc.extractedVatAmount).toBe(2000);
@@ -311,10 +312,12 @@ describe("characterization: runExtraction extraction + counterparty", () => {
       recipient: { name: "House of Bandits GmbH", vatId: null, address: null, iban: null, website: null },
     });
 
-    // additional fields: empty-label entry dropped, rawValue falls back to value
+    // additional fields: empty-label entry dropped, rawValue falls back to
+    // value, and a key outside the closed vocabulary never reaches the record
+    // — the Tischnummer is gone (#252)
     expect(doc.extractedAdditionalFields).toEqual([
-      { label: "Invoice Number", value: "2024-001", rawValue: "Rechnung Nr. 2024-001" },
-      { label: "Due Date", value: "2025-01-15", rawValue: "2025-01-15" },
+      { key: "invoiceNumber", label: "Invoice Number", value: "2024-001", rawValue: "Rechnung Nr. 2024-001" },
+      { key: "dueDate", label: "Due Date", value: "2025-01-15", rawValue: "2025-01-15" },
     ]);
 
     // both phases logged token usage
@@ -516,7 +519,7 @@ describe("characterization: runExtraction line-item reconciliation", () => {
     // now they survive for human repair, the file is flagged, and the
     // top-level keeps the document's own extraction (spec §6).
     expect(doc.extractedLineItems).toEqual([
-      { description: "Teilposten", quantity: null, unitPrice: null, vatPercent: 19, vatAmount: 798, amount: 5000 },
+      { description: "Teilposten", vatPercent: 19, vatAmount: 798, amount: 5000 },
     ]);
     expect(doc.lineItemsUnreconciled).toBe(true);
     expect(doc.extractedAmount).toBe(11900);
@@ -543,12 +546,44 @@ describe("characterization: runExtraction line-item reconciliation", () => {
 
     const doc = await fileDoc("f-filter");
     expect(doc.extractedLineItems).toEqual([
-      { description: "Widget A", quantity: null, unitPrice: null, vatPercent: 20, vatAmount: 200, amount: 1200 },
-      { description: "Widget B", quantity: null, unitPrice: null, vatPercent: 10, vatAmount: 45, amount: 500 },
+      { description: "Widget A", vatPercent: 20, vatAmount: 200, amount: 1200 },
+      { description: "Widget B", vatPercent: 10, vatAmount: 45, amount: 500 },
     ]);
     expect(doc.extractedAmount).toBe(1700);
     expect(doc.extractedVatAmount).toBe(245);
     expect(doc.extractedVatPercent).toBeNull(); // mixed 20% / 10%
+  });
+
+  it("an Austrian Beleg's Zwischensumme/Trinkgeld/Summe rows are filtered too (#252)", async () => {
+    const fileData = await seedFile("f-beleg");
+    q({
+      extracted: {
+        amount: 2250, // the VAT-bearing Summe; the tip is its own field (#172)
+        tipAmount: 250,
+        confidence: 0.9,
+        lineItems: [
+          { description: "2x Wiener Schnitzel", amount: 1800, vatPercent: 10, vatAmount: 164 },
+          { description: "3x Bier 0,5l", amount: 450, vatPercent: 20, vatAmount: 75 },
+          { description: "Zwischensumme", amount: 2250 },
+          { description: "Trinkgeld", amount: 250 },
+          { description: "Summe", amount: 2500 },
+        ],
+      },
+    });
+    await runExtraction("f-beleg", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-beleg");
+    // Before #252 not one of the three German summary words matched, so all
+    // five rows survived, summed to 7250 against a 2250 document and the file
+    // was flagged unreconciled with a perfectly good itemisation on it.
+    expect(doc.extractedLineItems).toEqual([
+      { description: "2x Wiener Schnitzel", vatPercent: 10, vatAmount: 164, amount: 1800 },
+      { description: "3x Bier 0,5l", vatPercent: 20, vatAmount: 75, amount: 450 },
+    ]);
+    expect(doc.lineItemsUnreconciled).toBe(false);
+    expect(doc.extractedAmount).toBe(2250);
+    expect(doc.extractedTipAmount).toBe(250);
+    expect(doc.extractedVatPercent).toBeNull(); // mixed 10% / 20%
   });
 
   it("without a document total, net-looking line items get VAT added to the stored amount", async () => {
@@ -567,7 +602,7 @@ describe("characterization: runExtraction line-item reconciliation", () => {
     // so extractedAmount (1200) intentionally differs from the stored line item
     // amount (1000)
     expect(doc.extractedLineItems).toEqual([
-      { description: "Dev work", quantity: null, unitPrice: null, vatPercent: 20, vatAmount: 200, amount: 1000 },
+      { description: "Dev work", vatPercent: 20, vatAmount: 200, amount: 1000 },
     ]);
     expect(doc.extractedAmount).toBe(1200);
     expect(doc.extractedVatAmount).toBe(200);

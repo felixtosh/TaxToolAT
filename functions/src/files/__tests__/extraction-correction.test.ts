@@ -50,7 +50,7 @@ describe("buildExtractionCorrection", () => {
       amount: 318000,
       vatAmount: 53000,
       lineItems: [
-        { description: "Grafikdesign", quantity: null, unitPrice: null, vatPercent: 20, vatAmount: 54000, amount: 324000 },
+        { description: "Grafikdesign", vatPercent: 20, vatAmount: 54000, amount: 324000 },
       ],
     });
 
@@ -154,8 +154,8 @@ describe("buildExtractionCorrection", () => {
     });
 
     expect(updates.extractedLineItems).toEqual([
-      { description: "Item 1", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 1000 },
-      { description: "spaced", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 500 },
+      { description: "Item 1", vatPercent: null, vatAmount: 0, amount: 1000 },
+      { description: "spaced", vatPercent: null, vatAmount: 0, amount: 500 },
     ]);
   });
 

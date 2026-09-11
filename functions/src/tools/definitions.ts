@@ -377,7 +377,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         lineItems: {
           type: ["array", "null"],
           description:
-            "Replace the itemisation wholesale. Each item: description, amount (cents, GROSS — the amount includes its own VAT), vatPercent, vatAmount (cents), and optionally quantity and unitPrice.",
+            "Replace the itemisation wholesale. A row is a rate group with a label, not a bill of goods — four fields, no quantity and no unit price. Each item: description, amount (cents, GROSS — the amount includes its own VAT), vatPercent, vatAmount (cents).",
           items: {
             type: "object",
             properties: {
@@ -385,8 +385,6 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
               amount: { type: "number" },
               vatPercent: { type: ["number", "null"] },
               vatAmount: { type: "number" },
-              quantity: { type: ["number", "null"] },
-              unitPrice: { type: ["number", "null"] },
             },
             required: ["amount"],
           },

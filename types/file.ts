@@ -35,14 +35,14 @@ export interface ExtractedEntityRaw {
 }
 
 /**
- * A single extracted invoice line item.
+ * A single extracted invoice line item — a rate-group fallback with a human
+ * label, not a bill of goods (#252). `quantity` and `unitPrice` are gone:
+ * nothing ever computed with them. Outgoing invoice line items are a
+ * different object (`types/invoice.ts`) and keep both.
  * Monetary fields are stored in cents.
  */
 export interface ExtractedLineItem {
   description: string;
-  quantity?: number | null;
-  /** Net unit price before VAT (in cents) */
-  unitPrice?: number | null;
   /** VAT rate for this item (0-100), null when unknown */
   vatPercent: number | null;
   /** VAT amount for this item (in cents) */
@@ -859,10 +859,22 @@ export interface ExtractedFieldLocation {
 
 /**
  * An additional field extracted from a document beyond the standard invoice fields.
- * Used for arbitrary data like invoice numbers, due dates, references, etc.
+ * Used for invoice numbers, due dates, references, etc.
+ *
+ * Extraction only ever writes a field whose `key` is in the closed vocabulary
+ * (#252). `key` is optional here because two other kinds of record exist: rows
+ * a person typed into the panel by hand, and rows stored before the vocabulary
+ * closed.
  */
 export interface ExtractedAdditionalField {
-  /** Human-readable label for the field (e.g., "Invoice Number", "Due Date") */
+  /**
+   * Canonical key from the extraction vocabulary — "invoiceNumber",
+   * "customerNumber", "dueDate", "paymentTerms", "orderNumber",
+   * "deliveryNoteNumber", "referenceNumber", "poNumber".
+   */
+  key?: string;
+
+  /** The label as the document prints it (e.g., "Rechnungsnummer", "Due Date") */
   label: string;
 
   /** The extracted value */

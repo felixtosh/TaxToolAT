@@ -38,6 +38,8 @@ import { syncDocumentationStateForTransactions } from "../documents/syncDocument
 
 /** An extra field the extractor kept but nothing else reads structurally. */
 interface EditedAdditionalField {
+  /** Canonical key from the extraction vocabulary (#252); absent on a row a person added. */
+  key?: string;
   label: string;
   value: string;
   rawValue?: string;
@@ -209,6 +211,9 @@ function normalizeAdditionalFields(value: unknown): Array<Record<string, string>
     .map((raw) => (raw ?? {}) as Partial<EditedAdditionalField>)
     .filter((field) => typeof field.label === "string" && typeof field.value === "string")
     .map((field) => ({
+      // The canonical key rides along unchanged: a save edits the value, it
+      // does not reclassify the field (#252). A row a person added has none.
+      ...(typeof field.key === "string" && field.key ? { key: field.key } : {}),
       label: (field.label as string).trim(),
       value: (field.value as string).trim(),
       rawValue:

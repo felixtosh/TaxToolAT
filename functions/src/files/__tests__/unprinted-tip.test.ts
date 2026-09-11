@@ -91,8 +91,8 @@ const RATE_GROUPS = [
 ];
 
 const LINE_ITEMS = [
-  { description: "Mittagsmenü", quantity: 2, unitPrice: 1925, vatPercent: 10, vatAmount: 350, amount: 3850 },
-  { description: "Getränke", quantity: 3, unitPrice: 410, vatPercent: 20, vatAmount: 205, amount: 1230 },
+  { description: "Mittagsmenü", vatPercent: 10, vatAmount: 350, amount: 3850 },
+  { description: "Getränke", vatPercent: 20, vatAmount: 205, amount: 1230 },
 ];
 
 function seed() {

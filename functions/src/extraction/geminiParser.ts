@@ -485,9 +485,41 @@ export interface ExtractedRawText {
 }
 
 /**
+ * The closed vocabulary `additionalFields` is allowed to carry (#252).
+ *
+ * The bag used to be open — the prompt asked for "any other identifiers or
+ * metadata", so the model offered a Tischnummer because it is printed in the
+ * header where invoice numbers live, and a table number is not an identifier
+ * of the document at all.
+ *
+ * Matching is on the KEY and never on the label prose. A German/English
+ * synonym table over labels rots and fails OPEN: an unrecognised label is
+ * kept, and Tischnummer comes back. A closed key vocabulary fails closed,
+ * which is the point. Enforced here rather than requested in the prompt,
+ * because a prompt is a request and this has to survive a model swap.
+ */
+export const ADDITIONAL_FIELD_KEYS = [
+  "invoiceNumber",
+  "customerNumber",
+  "dueDate",
+  "paymentTerms",
+  "orderNumber",
+  "deliveryNoteNumber",
+  "referenceNumber",
+  "poNumber",
+] as const;
+
+export type AdditionalFieldKey = (typeof ADDITIONAL_FIELD_KEYS)[number];
+
+const ADDITIONAL_FIELD_KEY_SET: ReadonlySet<string> = new Set(ADDITIONAL_FIELD_KEYS);
+
+/**
  * Additional field extracted from document
  */
 export interface ExtractedAdditionalField {
+  /** Canonical key, one of ADDITIONAL_FIELD_KEYS. */
+  key: AdditionalFieldKey;
+  /** The label as the document PRINTS it — "Rechnungsnummer", not the key. */
   label: string;
   value: string;
   rawValue?: string;
@@ -495,8 +527,6 @@ export interface ExtractedAdditionalField {
 
 interface GeminiLineItem {
   description?: string | null;
-  quantity?: number | string | null;
-  unitPrice?: number | string | null;
   vatPercent?: number | string | null;
   vatAmount?: number | string | null;
   amount?: number | string | null;
@@ -518,10 +548,6 @@ function normalizeLineItems(lineItems: GeminiLineItem[] | null | undefined): Ext
         ? item.description.trim()
         : "";
 
-      const quantity = toFiniteNumber(item?.quantity);
-      const normalizedQuantity = quantity === null ? null : quantity;
-
-      let unitPrice = toCents(item?.unitPrice);
       const vatPercent = normalizeVatPercent(item?.vatPercent);
       let vatAmount = toCents(item?.vatAmount);
 
@@ -532,19 +558,8 @@ function normalizeLineItems(lineItems: GeminiLineItem[] | null | undefined): Ext
         vatAmount = 0;
       }
 
-      if (unitPrice === null && normalizedQuantity && normalizedQuantity !== 0) {
-        const amountLooksNet = vatPercent !== null && vatPercent > 0
-          ? Math.abs(Math.round((amount * vatPercent) / 100) - vatAmount) <
-            Math.abs(Math.round((amount * vatPercent) / (100 + vatPercent)) - vatAmount)
-          : false;
-        const netAmount = amountLooksNet ? amount : amount - vatAmount;
-        unitPrice = Math.round(netAmount / normalizedQuantity);
-      }
-
       return {
         description: description || `Item ${index + 1}`,
-        quantity: normalizedQuantity,
-        unitPrice,
         vatPercent,
         vatAmount,
         amount,
@@ -697,9 +712,14 @@ CRITICAL RULES:
 
 LINE ITEM EXTRACTION (IMPORTANT):
 - Extract ALL line items from the document
+- A line item is exactly four fields: "description", "vatPercent", "vatAmount"
+  and "amount". Do NOT return a quantity or a unit price - nothing reads them
 - Only extract TOP-LEVEL billable rows from the main items table
 - Do NOT extract nested/tier rows, explanatory rows, gray helper rows, "First 1", "2 and above", etc.
 - Do NOT extract summary rows like Subtotal, Total, VAT, Amount paid, Payment history
+- The same rule in German: never a "Zwischensumme", "Summe", "Gesamt",
+  "Gesamtbetrag", "Rechnungsbetrag", "Netto", "Brutto", "MwSt.", "USt.",
+  "Umsatzsteuer" or "Trinkgeld" row
 - If no itemization is visible, create exactly ONE line item for the total
 - Return all monetary amounts in cents
 - Set "vatPercent" on every row the document's rate applies to. The rate counts
@@ -815,8 +835,6 @@ JSON structure:
     "lineItems": [
       {
         "description": "USB-C Cable",
-        "quantity": 2,
-        "unitPrice": 999,
         "vatPercent": 20,
         "vatAmount": 333,
         "amount": 1998
@@ -859,18 +877,23 @@ JSON structure:
     }
   },
   "additionalFields": [
-    {"label": "Invoice Number", "value": "INV-2024-001", "rawValue": "INV-2024-001"},
-    {"label": "Due Date", "value": "2025-01-15", "rawValue": "15.01.2025"},
-    {"label": "Reference", "value": "PO-12345", "rawValue": "PO-12345"}
+    {"key": "invoiceNumber", "label": "Rechnungsnummer", "value": "INV-2024-001", "rawValue": "INV-2024-001"},
+    {"key": "dueDate", "label": "Fällig am", "value": "2025-01-15", "rawValue": "15.01.2025"},
+    {"key": "poNumber", "label": "Bestellnummer", "value": "PO-12345", "rawValue": "PO-12345"}
   ]
 }
 
-Additional fields: Extract any other useful fields from the document like:
-- Invoice number, reference number, PO number
-- Due date, payment terms
-- Customer/client number
-- Order number, delivery note number
-- Any other identifiers or metadata
+ADDITIONAL FIELDS ("additionalFields", IMPORTANT):
+- A CLOSED list. Return a field ONLY when its "key" is one of exactly these:
+  "invoiceNumber", "customerNumber", "dueDate", "paymentTerms",
+  "orderNumber", "deliveryNoteNumber", "referenceNumber", "poNumber"
+- "label" is the wording the DOCUMENT prints, in its own language
+  ("Rechnungsnummer", "Kundennummer", "Zahlungsziel") - it is what a person
+  reads, so do not translate or normalise it
+- Anything else the document prints - a table number ("Tischnummer"), a till
+  or server id, a loyalty number, any other metadata - is NOT an additional
+  field. Leave it out; a field with a key outside the list is discarded
+- Never invent a key to make a field fit
 
 JSON only, no markdown, no explanation.`;
 
@@ -951,6 +974,7 @@ JSON only, no markdown, no explanation.`;
       website_raw?: string | null;
     };
     additionalFields?: Array<{
+      key?: string;
       label: string;
       value: string;
       rawValue?: string;
@@ -1082,10 +1106,14 @@ JSON only, no markdown, no explanation.`;
     recipient: recipientRaw,
   };
 
-  // Extract additional fields
-  const additionalFields: ExtractedAdditionalField[] = (parsed.additionalFields || [])
-    .filter((f) => f && f.label && f.value)
+  // Extract additional fields. The key must be in the closed vocabulary —
+  // anything else (a Tischnummer, a loyalty number, a table of "metadata")
+  // is dropped here rather than trusted to the prompt (#252).
+  const offeredFields = (parsed.additionalFields || []).filter((f) => f && f.label && f.value);
+  const additionalFields: ExtractedAdditionalField[] = offeredFields
+    .filter((f) => typeof f.key === "string" && ADDITIONAL_FIELD_KEY_SET.has(f.key))
     .map((f) => ({
+      key: f.key as AdditionalFieldKey,
       label: f.label,
       value: f.value,
       rawValue: f.rawValue || f.value,
@@ -1093,6 +1121,12 @@ JSON only, no markdown, no explanation.`;
 
   if (additionalFields.length > 0) {
     console.log(`  [Gemini] Extracted ${additionalFields.length} additional fields`);
+  }
+  if (offeredFields.length > additionalFields.length) {
+    console.log(
+      `  [Gemini] Dropped ${offeredFields.length - additionalFields.length} additional ` +
+      "field(s) whose key is outside the closed vocabulary"
+    );
   }
 
   return {
