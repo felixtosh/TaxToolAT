@@ -4,12 +4,17 @@
  * One-time callable that sets `fileType` on every file record missing one,
  * sniffed from the stored bytes via the same sniffer extraction already uses
  * (#248). Idempotent — skips files that already have a fileType.
+ *
+ * Only a magic number is written. Bytes the sniffer cannot name are left with no
+ * `fileType` and counted as `unidentified`, because a persisted guess is sticky:
+ * it is invisible to the query that finds records needing repair and to the next
+ * run of this pass (#281).
  */
 
 import { FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { createCallable } from "../utils/createCallable";
-import { sniffMimeType } from "../extraction/geminiParser";
+import { sniffMimeTypeStrict } from "../extraction/geminiParser";
 
 interface BackfillFileTypesRequest {
   // empty — operates on all files for the calling user
@@ -19,6 +24,12 @@ interface BackfillFileTypesResponse {
   success: boolean;
   updated: number;
   skipped: number;
+  /**
+   * Records whose object downloaded fine but whose bytes match no magic number.
+   * Kept out of `skipped` because it is a materially different outcome for an
+   * operator: the blob is there and readable, we simply cannot name it (#281).
+   */
+  unidentified: number;
 }
 
 export const backfillFileTypesCallable = createCallable<
@@ -35,6 +46,7 @@ export const backfillFileTypesCallable = createCallable<
     const bucket = getStorage().bucket();
     let updated = 0;
     let skipped = 0;
+    let unidentified = 0;
 
     for (const fileDoc of filesSnap.docs) {
       const fileData = fileDoc.data();
@@ -63,7 +75,17 @@ export const backfillFileTypesCallable = createCallable<
         continue;
       }
 
-      const fileType = sniffMimeType(buffer, fileData.fileType as string | undefined);
+      // Strict, not `sniffMimeType`: that one falls back to image/jpeg for bytes
+      // it cannot name, which is fine for a transient extraction call and wrong
+      // to persist — it would stamp a guess as a fact, hide the record from the
+      // "missing fileType" query that found it, and be skipped by the next run
+      // of this very pass (#281). Absent is the honest value.
+      const fileType = sniffMimeTypeStrict(buffer);
+      if (!fileType) {
+        console.warn(`[backfillFileTypes] File ${fileDoc.id} at ${storagePath} matched no known magic number, leaving fileType unset`);
+        unidentified++;
+        continue;
+      }
 
       await fileDoc.ref.update({
         fileType,
@@ -74,8 +96,8 @@ export const backfillFileTypesCallable = createCallable<
       updated++;
     }
 
-    console.log(`[backfillFileTypes] Done: updated=${updated}, skipped=${skipped}`);
+    console.log(`[backfillFileTypes] Done: updated=${updated}, skipped=${skipped}, unidentified=${unidentified}`);
 
-    return { success: true, updated, skipped };
+    return { success: true, updated, skipped, unidentified };
   }
 );
