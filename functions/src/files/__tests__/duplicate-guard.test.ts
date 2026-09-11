@@ -15,6 +15,10 @@
  * path's record shape into the write point instead, and `no path writes to
  * files except through the write point` is what keeps those two honest.
  *
+ * That walk covers `app` as well now. The Chrome extension's upload route is
+ * the seventh path and writes through the same point; driving it needs the root
+ * dependency tree, so its test is src/api-smoke/browser-upload-duplicate.test.ts.
+ *
  * Byte-level only: same bytes, same hash. Two different scans of one invoice
  * are two documents here — that is #162.
  *
@@ -22,7 +26,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { readFileSync, readdirSync, statSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { createHash } from "crypto";
 import { join } from "path";
 import { store, createMockFirestore } from "../../test/setup";
@@ -327,32 +331,62 @@ describe("no path writes to files except through the write point", () => {
   const CREATES_A_FILE =
     /collection\(\s*(?:"files"|'files'|FILES_COLLECTION)\s*\)(?:\s*\.doc\([^)]*\))?\s*\.(?:add|set)\(/;
 
-  it("has exactly one `files` write in functions/src", () => {
-    const root = join(__dirname, "..", "..");
+  // The two Gmail routes dedupe on a field called `fileHash`, not
+  // `contentHash`, so their records are invisible to the write point's lookup
+  // and routing them means first deciding what happens to that field — a
+  // rename with a data question attached. That is #328. Until it lands they
+  // are named here one by one, so the hole is exactly two files wide and a
+  // third writer cannot hide in it.
+  const ROUTED_BY_328 = [
+    join("app", "api", "gmail", "attachment", "route.ts"),
+    join("app", "api", "gmail", "convert-to-pdf", "route.ts"),
+  ];
+
+  const repoRoot = join(__dirname, "..", "..", "..", "..");
+
+  it("has exactly one `files` write across functions/src and app", () => {
     const offenders: string[] = [];
 
     const walk = (dir: string) => {
-      for (const entry of readdirSync(dir)) {
-        const path = join(dir, entry);
-        if (statSync(path).isDirectory()) {
-          if (entry === "node_modules" || entry === "__tests__") continue;
+      // withFileTypes, so the entry's kind comes from the one directory read
+      // rather than a second stat() of a path that could have changed between
+      // the two calls (CodeQL js/file-system-race).
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === "node_modules" || entry.name === "__tests__") continue;
           walk(path);
           continue;
         }
-        if (!entry.endsWith(".ts") || entry.endsWith(".test.ts")) continue;
+        if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) continue;
         if (path.endsWith(join("files", "createFileRecord.ts"))) continue;
+
+        const relative = path.slice(repoRoot.length + 1);
+        if (ROUTED_BY_328.includes(relative)) continue;
 
         const source = readFileSync(path, "utf8");
         if (CREATES_A_FILE.test(source)) {
-          offenders.push(path.slice(root.length + 1));
+          offenders.push(relative);
         }
       }
     };
 
-    walk(root);
+    // Walking `functions/src` alone left app/api free to write its own way —
+    // which is where the Chrome extension's upload did, hash in hand, no guard.
+    walk(join(repoRoot, "functions", "src"));
+    walk(join(repoRoot, "app"));
 
     // A seventh path that writes its own way is a seventh path with no guard.
     expect(offenders).toEqual([]);
+  });
+
+  it("still sees the two writes #328 leaves out", () => {
+    // The allow-list is only honest if the files on it would otherwise fail.
+    // When one of them stops writing `files` itself, this fails and the entry
+    // comes off the list rather than quietly covering a path that moved.
+    for (const relative of ROUTED_BY_328) {
+      expect(CREATES_A_FILE.test(readFileSync(join(repoRoot, relative), "utf8"))).toBe(true);
+    }
   });
 
   it("catches the write shapes it is meant to catch", () => {
