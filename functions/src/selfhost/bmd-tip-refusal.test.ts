@@ -154,6 +154,43 @@ describe("bmd tip refusal (#194): the fall-through", () => {
     // still line up with generateFileMapping's numbering.
     expect(csv.split("\n")[1].split(";")[3]).toBe("2026000002");
   });
+
+  it("sums the tip across every document on the transaction, and names them all", () => {
+    // Two Belege settled on one card payment, 27,00 read as Trinkgeld on each.
+    // Neither tip on its own reaches the 54,00 charged; together they are the
+    // whole of it, and the figure the guard compares is the SUM.
+    const half = (id: string, fileName: string): FileForExport => ({
+      id,
+      fileName,
+      extractedAmount: 2540,
+      extractedTipAmount: 2700,
+      extractedRateGroups: [
+        { rate: 10, net: 1750, vat: 175, gross: 1925 },
+        { rate: 20, net: 512, vat: 103, gross: 615 },
+      ],
+    });
+    const files = new Map([
+      ["f-a", half("f-a", "beleg-a.pdf")],
+      ["f-b", half("f-b", "beleg-b.pdf")],
+    ]);
+    const tx: TransactionForExport = {
+      id: "t-two",
+      date: DATE,
+      amount: -5400,
+      fileIds: ["f-a", "f-b"],
+    };
+
+    const { csv, skipped } = generateBuchungenCsvWithReport([tx], files, new Map());
+
+    expect(bookedRows(csv)).toEqual([]);
+    // Both documents carry the figure, so both are named — correcting one of
+    // them is not enough to get the transaction booked.
+    expect(skipped.map((s) => s.fileName)).toEqual(["beleg-a.pdf", "beleg-b.pdf"]);
+    expect(skipped[0].reason).toBe(
+      "tip (54,00) is not less than the bank amount (54,00); " +
+        "correct the tip on this document and re-run"
+    );
+  });
 });
 
 describe("bmd tip refusal (#194): what must not change", () => {
@@ -167,6 +204,19 @@ describe("bmd tip refusal (#194): what must not change", () => {
       { gross: 1230, vat: 205, rate: 20 },
       { gross: 320, vat: 0, rate: 0 },
     ]);
+  });
+
+  it("books a tip one cent under the bank amount — the guard stops at `>=`", () => {
+    // The boundary from the safe side. 53,99 of a 54,00 charge read as
+    // Trinkgeld is nonsense too, but it is the conservative nonsense this
+    // ticket leaves alone: it understates the VAT base instead of stretching
+    // the document's rates over money the document taxes at nothing.
+    const { csv, skipped } = run(mealTx(-5400), mealBeleg(5399));
+
+    expect(skipped).toEqual([]);
+    const rows = bookedRows(csv);
+    expect(rows.reduce((s, r) => s + r.gross, 0)).toBe(5400);
+    expect(rows[rows.length - 1]).toEqual({ gross: 5399, vat: 0, rate: 0 });
   });
 
   it("books a document without a tip across the full bank amount", () => {
