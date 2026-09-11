@@ -105,6 +105,23 @@ describe("summary rows on an Austrian Beleg", () => {
     expect(r.lineItems.map((i) => i.description)).toEqual(["Bürostuhl", "Rabatt Aktion"]);
   });
 
+  it("keeps a negative discount row while the structural pass drops the total", () => {
+    // The other discount cases never reach the structural pass: their rows
+    // already add up, so it returns before looking at anything. Here they do
+    // not — "Totale" is in no pattern list — so the arithmetic runs with a
+    // negative row in the list and has to leave it alone.
+    const items = [
+      { description: "Bürostuhl", vatPercent: 20, vatAmount: 200, amount: 1200 },
+      { description: "Rabatt Aktion", vatPercent: 20, vatAmount: -33, amount: -200 },
+      { description: "Totale", vatPercent: null, vatAmount: 0, amount: 1000 },
+    ];
+
+    const r = reconcileLineItemsWithDocumentTotal(items, 1000);
+
+    expect(r.unreconciled).toBe(false);
+    expect(r.lineItems.map((i) => i.description)).toEqual(["Bürostuhl", "Rabatt Aktion"]);
+  });
+
   it("keeps a discount row that happens to equal the sum above it", () => {
     // -20,00 is exactly what the two rows above add up to, which is the
     // arithmetic a subtotal has. A negative row is never a subtotal, so the

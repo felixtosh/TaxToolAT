@@ -270,10 +270,12 @@ describe("characterization: geminiParser.parseWithGemini", () => {
   });
 
   it("a row is four fields: a quantity and a unit price the model still sends are dropped (#252)", async () => {
+    // The prompt no longer asks for either, but a model that ignores the
+    // prompt must not put them back into the stored shape.
     q({
       extracted: {
         lineItems: [
-          { description: "Cable", vatPercent: 20, vatAmount: 200, amount: 1200 },
+          { description: "Cable", quantity: 2, unitPrice: 500, vatPercent: 20, vatAmount: 200, amount: 1200 },
         ],
       },
     });

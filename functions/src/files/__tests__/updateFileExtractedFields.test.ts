@@ -255,6 +255,27 @@ describe("updateFileExtractedFieldsCallable", () => {
     ]);
   });
 
+  it("carries the canonical additional-field key through a save (#252)", async () => {
+    seedFile();
+
+    // A save edits the value; it never reclassifies the field. A row a person
+    // typed into the panel has no key and does not acquire one.
+    await call(
+      unchangedSave({
+        details: {
+          additionalFields: [
+            { key: "invoiceNumber", label: "Rechnungsnummer", value: "2024-001" },
+            { label: "Notiz", value: "Beleg nachgereicht" },
+          ],
+        },
+      })
+    );
+    expect(file().extractedAdditionalFields).toEqual([
+      { key: "invoiceNumber", label: "Rechnungsnummer", value: "2024-001", rawValue: "2024-001" },
+      { label: "Notiz", value: "Beleg nachgereicht", rawValue: "Beleg nachgereicht" },
+    ]);
+  });
+
   it("refuses a value the builder cannot read instead of writing it", async () => {
     seedFile();
 
