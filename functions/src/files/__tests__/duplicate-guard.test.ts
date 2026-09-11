@@ -320,7 +320,14 @@ describe("every ingestion path writes through it", () => {
 // ---------------------------------------------------------------------------
 
 describe("no path writes to files except through the write point", () => {
-  it("has exactly one `files` collection add in functions/src", () => {
+  // Both shapes that put a new document in `files`: `.add(record)` and
+  // `.doc(...).set(record)`. Matching only the first would let a seventh path
+  // reintroduce the bug by writing the other way round, which is the one thing
+  // this test exists to stop.
+  const CREATES_A_FILE =
+    /collection\(\s*(?:"files"|'files'|FILES_COLLECTION)\s*\)(?:\s*\.doc\([^)]*\))?\s*\.(?:add|set)\(/;
+
+  it("has exactly one `files` write in functions/src", () => {
     const root = join(__dirname, "..", "..");
     const offenders: string[] = [];
 
@@ -328,7 +335,7 @@ describe("no path writes to files except through the write point", () => {
       for (const entry of readdirSync(dir)) {
         const path = join(dir, entry);
         if (statSync(path).isDirectory()) {
-          if (entry === "node_modules" || entry === "__tests__" || entry === "selfhost") continue;
+          if (entry === "node_modules" || entry === "__tests__") continue;
           walk(path);
           continue;
         }
@@ -336,7 +343,7 @@ describe("no path writes to files except through the write point", () => {
         if (path.endsWith(join("files", "createFileRecord.ts"))) continue;
 
         const source = readFileSync(path, "utf8");
-        if (/collection\((?:"files"|FILES_COLLECTION)\)\s*\.add\(/.test(source)) {
+        if (CREATES_A_FILE.test(source)) {
           offenders.push(path.slice(root.length + 1));
         }
       }
@@ -346,5 +353,18 @@ describe("no path writes to files except through the write point", () => {
 
     // A seventh path that writes its own way is a seventh path with no guard.
     expect(offenders).toEqual([]);
+  });
+
+  it("catches the write shapes it is meant to catch", () => {
+    // Without this the walk above is unfalsifiable: a pattern that matches
+    // nothing passes just as quietly as a codebase with one write point.
+    expect(CREATES_A_FILE.test('db.collection("files").add(record)')).toBe(true);
+    expect(CREATES_A_FILE.test('db.collection(FILES_COLLECTION).add(record)')).toBe(true);
+    expect(CREATES_A_FILE.test("db.collection('files').add(record)")).toBe(true);
+    expect(CREATES_A_FILE.test('db.collection("files").doc().set(record)')).toBe(true);
+    expect(CREATES_A_FILE.test('db.collection("files").doc(id).set(record)')).toBe(true);
+    // Reads and updates are not writes of a new File.
+    expect(CREATES_A_FILE.test('db.collection("files").doc(id).get()')).toBe(false);
+    expect(CREATES_A_FILE.test('db.collection("files").where("userId", "==", u)')).toBe(false);
   });
 });
