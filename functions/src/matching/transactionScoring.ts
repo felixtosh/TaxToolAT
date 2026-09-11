@@ -45,6 +45,23 @@ export const SCORING_CONFIG = {
   HARD_FACTS_BONUS_CLOSE: 15,
   /** Minimum confidence to show as suggestion */
   SUGGESTION_THRESHOLD: 50,
+  /**
+   * A qualified invoice-number hit (#137). An invoice number is a globally
+   * unique token, so a hit is proof rather than a hint: 50 is a suggestion on
+   * its own (SUGGESTION_THRESHOLD), and 40 + 50 = 90 carries a cent-exact
+   * amount past AUTO_MATCH_THRESHOLD with no other signal. Deliberately the
+   * floor that satisfies both and no more — the weight auto-connects, so what
+   * counts as "qualified" (MIN_INVOICE_NUMBER_LENGTH plus a delimited match)
+   * is what keeps it safe.
+   */
+  INVOICE_NUMBER_MATCH: 50,
+  /**
+   * Characters an extracted invoice number needs before it can earn
+   * INVOICE_NUMBER_MATCH (#137). Some issuers number invoices in four digits,
+   * and a four-digit token turning up somewhere in a bank string is
+   * coincidence. Below this it keeps the pre-#137 score of 5.
+   */
+  MIN_INVOICE_NUMBER_LENGTH: 6,
   /** Days to search before/after file date */
   DATE_RANGE_DAYS: 30,
   /** Max suggestions to store per file */
@@ -160,6 +177,12 @@ export interface FileMatchingData {
   extractedPartner?: string | null;
   extractedIban?: string | null;
   extractedText?: string | null;
+  /**
+   * The document's own invoice number (#137). The needle for the reference
+   * source: a globally unique token, so finding it in the bank's text
+   * identifies the pair rather than merely hinting at it.
+   */
+  extractedInvoiceNumber?: string | null;
   partnerId?: string | null;
   precisionSearchHint?: {
     transactionId: string;
@@ -185,6 +208,8 @@ export interface TransactionData {
    */
   _original?: { rawRow?: Record<string, string> | null } | null;
   name?: string;
+  /** The user's own booking text. Part of the reference haystack (#137). */
+  description?: string | null;
   partner?: string;
   partnerName?: string;
   partnerId?: string;
@@ -457,25 +482,108 @@ export function calculateDateScore(
   return { score: 0, source: null };
 }
 
+/** A token this short is a coincidence wherever it lands. Pre-#137 floor. */
+const MIN_REFERENCE_LENGTH = 3;
+
+/** Pre-#137 weight: a containment hit that nothing has qualified as proof. */
+const WEAK_REFERENCE_SCORE = 5;
+
+const ALPHANUMERIC = /[\p{L}\p{N}]/u;
+
+/** The fields a Transaction states about itself in words, for #137's search. */
+export type TransactionSearchFields = Pick<
+  TransactionData,
+  "name" | "description" | "partner" | "reference" | "_original"
+>;
+
+/**
+ * Everything the Transaction says about itself, lowercased into one haystack
+ * (#137). Not `reference` alone: on the observed Magenta line the bank's
+ * Payment Reference column landed in `name`, so the invoice number was on the
+ * record the whole time, in a field the scorer never read. The preserved raw
+ * row is in for the same reason — a column the import did not map to a field
+ * is still the bank's own text.
+ */
+export function transactionSearchText(txData: TransactionSearchFields): string {
+  const parts: (string | null | undefined)[] = [
+    txData.name,
+    txData.description,
+    txData.partner,
+    txData.reference,
+  ];
+  const rawRow = txData._original?.rawRow;
+  if (rawRow) parts.push(...Object.values(rawRow));
+  return parts
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+}
+
+/**
+ * Is `needle` in `haystack` bounded by a non-alphanumeric character or a
+ * string edge? `2145` sits inside `SG5RF2145` without being delimited by it,
+ * and a weight that auto-connects must not fire on an accident like that.
+ */
+function containsDelimited(haystack: string, needle: string): boolean {
+  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + 1)) {
+    const before = at > 0 ? haystack[at - 1] : "";
+    const after = haystack[at + needle.length] ?? "";
+    if (!ALPHANUMERIC.test(before) && !ALPHANUMERIC.test(after)) return true;
+  }
+  return false;
+}
+
+/**
+ * The invoice-number Match Source (#137).
+ *
+ * Searches from the Transaction towards the File: does the Transaction's text
+ * contain the File's `extractedInvoiceNumber`? The pre-#137 test asked the
+ * opposite — does the document's text contain the whole bank string — which a
+ * line like "Magenta Mobil Rechnung 4711000123 vom 05.01.2026 - Details unter
+ * mein.magenta.at" can never satisfy, because no invoice prints the bank's
+ * marketing.
+ *
+ * A qualified hit scores INVOICE_NUMBER_MATCH. Qualified means BOTH bars:
+ * at least MIN_INVOICE_NUMBER_LENGTH characters, AND a delimited match. Below
+ * either bar the hit keeps the pre-#137 WEAK_REFERENCE_SCORE rather than
+ * scoring zero — it is still weak evidence, just not proof.
+ *
+ * The conditional date bonus is untouched by #137; #135 owns date scoring.
+ */
 export function calculateReferenceScore(
-  extractedText: string,
-  reference: string,
+  fileData: Pick<FileMatchingData, "extractedText" | "extractedInvoiceNumber">,
+  txData: TransactionSearchFields,
   currentDateScore: number
 ): {
   score: number;
   dateBonus: number;
   source: TransactionMatchSource | null;
 } {
-  if (!reference || reference.length < 3) {
-    return { score: 0, dateBonus: 0, source: null };
+  const dateBonus = currentDateScore < 15 ? 10 : 0;
+
+  const invoiceNumber = (fileData.extractedInvoiceNumber ?? "").trim().toLowerCase();
+  if (invoiceNumber.length >= MIN_REFERENCE_LENGTH) {
+    const txText = transactionSearchText(txData);
+    if (txText.includes(invoiceNumber)) {
+      const qualified =
+        invoiceNumber.length >= SCORING_CONFIG.MIN_INVOICE_NUMBER_LENGTH &&
+        containsDelimited(txText, invoiceNumber);
+      return {
+        score: qualified ? SCORING_CONFIG.INVOICE_NUMBER_MATCH : WEAK_REFERENCE_SCORE,
+        dateBonus,
+        source: "reference",
+      };
+    }
   }
 
-  const normalizedText = extractedText.toLowerCase();
-  const normalizedRef = reference.toLowerCase();
-
-  if (normalizedText.includes(normalizedRef)) {
-    const dateBonus = currentDateScore < 15 ? 10 : 0;
-    return { score: 5, dateBonus, source: "reference" };
+  // The pre-#137 direction, kept at its old weight. It cannot fire on the
+  // Magenta line, but a File extracted before the invoice-number field existed
+  // — or one the extractor found no number on — has nothing else, and #137 is
+  // meant to be monotone upward: no pair that scores today may stop scoring.
+  const reference = (txData.reference ?? "").trim().toLowerCase();
+  const extractedText = (fileData.extractedText ?? "").toLowerCase();
+  if (reference.length >= MIN_REFERENCE_LENGTH && extractedText.includes(reference)) {
+    return { score: WEAK_REFERENCE_SCORE, dateBonus, source: "reference" };
   }
 
   return { score: 0, dateBonus: 0, source: null };
@@ -655,6 +763,8 @@ export function toTransactionData(
     // Carries the bank-stated original amount for #112.
     _original: data._original,
     name: data.name,
+    // #137: part of the text the invoice number is searched for in.
+    description: data.description,
     partner: data.partner,
     partnerName: data.partnerName,
     partnerId: data.partnerId,
@@ -677,6 +787,8 @@ export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMa
     extractedPartner: data.extractedPartner,
     extractedIban: data.extractedIban,
     extractedText: data.extractedText,
+    // #137: the needle for the reference source.
+    extractedInvoiceNumber: data.extractedInvoiceNumber,
     partnerId: data.partnerId,
     precisionSearchHint: data.precisionSearchHint,
     documentType: data.documentType,
@@ -825,13 +937,11 @@ export function scoreTransaction(
     }
   }
 
-  // 5. Reference scoring (0-5, with date bonus)
-  if (fileData.extractedText && txData.reference) {
-    const result = calculateReferenceScore(
-      fileData.extractedText,
-      txData.reference,
-      dateScore
-    );
+  // 5. Reference scoring: a qualified invoice number is worth
+  // INVOICE_NUMBER_MATCH (#137), anything weaker the pre-#137 5, both with the
+  // conditional date bonus.
+  if (fileData.extractedInvoiceNumber || (fileData.extractedText && txData.reference)) {
+    const result = calculateReferenceScore(fileData, txData, dateScore);
     referenceScore = result.score;
     if (result.dateBonus) {
       dateScore = Math.min(25, dateScore + result.dateBonus);
