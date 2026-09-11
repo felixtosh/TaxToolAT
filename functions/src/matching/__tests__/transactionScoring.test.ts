@@ -1169,6 +1169,22 @@ describe("calculateReferenceScore", () => {
     expect(result.source).toBe("reference");
   });
 
+  it("qualifies a number of exactly MIN_INVOICE_NUMBER_LENGTH characters", () => {
+    // The floor is inclusive: one character below it scores 5 (above), one
+    // character above it scores the high weight, and the boundary itself is
+    // the case an off-by-one in the comparison would move.
+    const atFloor = "A".repeat(SCORING_CONFIG.MIN_INVOICE_NUMBER_LENGTH - 1) + "7";
+    expect(atFloor.length).toBe(SCORING_CONFIG.MIN_INVOICE_NUMBER_LENGTH);
+
+    expect(
+      calculateReferenceScore(
+        file({ extractedInvoiceNumber: atFloor }),
+        tx({ name: `Rechnung ${atFloor} vom 05.01.2026` }),
+        0
+      ).score
+    ).toBe(SCORING_CONFIG.INVOICE_NUMBER_MATCH);
+  });
+
   it("counts a string edge as a delimiter, an alphanumeric neighbour as not one", () => {
     // Both edges
     expect(calculateReferenceScore(file(), tx({ name: INVOICE_NUMBER }), 0).score).toBe(
@@ -1182,6 +1198,22 @@ describe("calculateReferenceScore", () => {
     expect(
       calculateReferenceScore(file(), tx({ name: `RG${INVOICE_NUMBER} 2026` }), 0).score
     ).toBe(5);
+    // Glued on the trailing side only — both neighbours have to be checked,
+    // not just the leading one.
+    expect(
+      calculateReferenceScore(file(), tx({ name: `RG ${INVOICE_NUMBER}A 2026` }), 0).score
+    ).toBe(5);
+  });
+
+  it("ignores whitespace around the extracted number", () => {
+    // Extractors hand back what the document printed, padding included.
+    expect(
+      calculateReferenceScore(
+        file({ extractedInvoiceNumber: `  ${INVOICE_NUMBER}\n` }),
+        tx({ name: MAGENTA_LINE }),
+        0
+      ).score
+    ).toBe(SCORING_CONFIG.INVOICE_NUMBER_MATCH);
   });
 
   it("scores nothing when the transaction's text does not carry the number", () => {
