@@ -433,15 +433,14 @@ export async function updateFileDirection(
  * Editable additional field (label + value pair)
  */
 export interface EditableAdditionalField {
+  /** Canonical extraction key (#252), carried through a save unchanged. */
+  key?: string;
   label: string;
   value: string;
 }
 
 export interface EditableLineItem {
   description: string;
-  quantity: string;
-  /** Currency units (not cents) */
-  unitPrice: string;
   vatPercent: string;
   /** Currency units (not cents) */
   vatAmount: string;
@@ -494,9 +493,6 @@ function normalizeEditableLineItems(lineItems: EditableLineItem[] | undefined): 
         return null;
       }
 
-      const quantity = parseNumberInput(item.quantity);
-      let unitPrice = parseCurrencyToCents(item.unitPrice);
-
       const rawVatPercent = parseNumberInput(item.vatPercent);
       const vatPercent = rawVatPercent !== null && rawVatPercent >= 0 && rawVatPercent <= 100
         ? rawVatPercent
@@ -510,19 +506,8 @@ function normalizeEditableLineItems(lineItems: EditableLineItem[] | undefined): 
         vatAmount = 0;
       }
 
-      if (unitPrice === null && quantity && quantity !== 0) {
-        const amountLooksNet = vatPercent !== null && vatPercent > 0
-          ? Math.abs(Math.round((amount * vatPercent) / 100) - vatAmount) <
-            Math.abs(Math.round((amount * vatPercent) / (100 + vatPercent)) - vatAmount)
-          : false;
-        const netAmount = amountLooksNet ? amount : amount - vatAmount;
-        unitPrice = Math.round(netAmount / quantity);
-      }
-
       return {
         description: item.description.trim() || `Item ${index + 1}`,
-        quantity,
-        unitPrice,
         vatPercent,
         vatAmount,
         amount,
@@ -658,6 +643,7 @@ export async function updateFileExtractedFields(
   const additionalFields = fields.additionalFields
     .filter((f) => f.label.trim() && f.value.trim())
     .map((f) => ({
+      ...(f.key ? { key: f.key } : {}),
       label: f.label.trim(),
       value: f.value.trim(),
       rawValue: f.value.trim(), // use edited value as raw

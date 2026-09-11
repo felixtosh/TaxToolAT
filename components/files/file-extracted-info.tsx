@@ -185,13 +185,12 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   // Initialize edit fields from file data
   const startEditing = () => {
     const existingAdditional = (file.extractedAdditionalFields || []).map((f) => ({
+      key: f.key,
       label: f.label,
       value: f.value,
     }));
     const existingLineItems = (file.extractedLineItems || []).map((item) => ({
       description: item.description,
-      quantity: item.quantity != null ? item.quantity.toString() : "",
-      unitPrice: item.unitPrice != null ? (item.unitPrice / 100).toFixed(2) : "",
       vatPercent: item.vatPercent != null ? item.vatPercent.toString() : "",
       vatAmount: item.vatAmount != null ? (item.vatAmount / 100).toFixed(2) : "",
       amount: (item.amount / 100).toFixed(2),
@@ -260,7 +259,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
 
   const updateLineItemField = (
     index: number,
-    key: "description" | "quantity" | "unitPrice" | "vatPercent" | "vatAmount" | "amount",
+    key: "description" | "vatPercent" | "vatAmount" | "amount",
     value: string
   ) => {
     setEditedFields((prev) => ({
@@ -278,8 +277,6 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
         ...(prev.lineItems || []),
         {
           description: "",
-          quantity: "",
-          unitPrice: "",
           vatPercent: "",
           vatAmount: "",
           amount: "",
@@ -846,18 +843,6 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                           />
                           <div className="grid grid-cols-2 gap-2">
                             <Input
-                              value={item.quantity}
-                              onChange={(e) => updateLineItemField(index, "quantity", e.target.value)}
-                              className="h-8 text-sm"
-                              placeholder="Qty"
-                            />
-                            <Input
-                              value={item.unitPrice}
-                              onChange={(e) => updateLineItemField(index, "unitPrice", e.target.value)}
-                              className="h-8 text-sm"
-                              placeholder="Unit price"
-                            />
-                            <Input
                               value={item.vatPercent}
                               onChange={(e) => updateLineItemField(index, "vatPercent", e.target.value)}
                               className="h-8 text-sm"
@@ -903,10 +888,6 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                         <div key={index} className="rounded border p-2">
                           <div className="text-sm">{item.description || "—"}</div>
                           <div className="text-xs text-muted-foreground flex flex-wrap gap-3 mt-1 tabular-nums">
-                            {item.quantity != null && <span>Qty: {item.quantity}</span>}
-                            {item.unitPrice != null && (
-                              <span>Unit: {formatDocumentAmount(item.unitPrice, file.extractedCurrency)}</span>
-                            )}
                             <span>VAT: {item.vatPercent != null ? `${item.vatPercent}%` : "—"}</span>
                             <span>Amount: {formatDocumentAmount(item.amount, file.extractedCurrency)}</span>
                           </div>

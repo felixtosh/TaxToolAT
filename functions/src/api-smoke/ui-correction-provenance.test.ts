@@ -174,8 +174,6 @@ describe("updateFileExtractedFields (client operation)", () => {
         lineItems: [
           {
             description: "Consulting",
-            quantity: "1",
-            unitPrice: "2650,00",
             vatPercent: "20",
             vatAmount: "530,00",
             amount: "3180,00",

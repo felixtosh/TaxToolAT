@@ -113,8 +113,6 @@ describe("File Cloud Functions", () => {
             extractedLineItems: [
               {
                 description: "Consulting",
-                quantity: 1,
-                unitPrice: 50000,
                 vatPercent: 20,
                 vatAmount: 10000,
                 amount: 50000,

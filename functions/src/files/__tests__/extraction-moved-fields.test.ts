@@ -27,8 +27,6 @@ const storedDate = (iso: string) => ({ toDate: () => new Date(`${iso}T00:00:00Z`
 
 const ITEM = {
   description: "Consulting",
-  quantity: 2,
-  unitPrice: 50000,
   vatPercent: 20,
   vatAmount: 20000,
   amount: 100000,
@@ -102,6 +100,17 @@ describe("selectMovedCorrections", () => {
     expect(selectMovedCorrections({ lineItems: repaired }, storedRecord)).toEqual({
       lineItems: repaired,
     });
+  });
+
+  it("a stored row's quantity and unit price are not part of the comparison (#252)", () => {
+    // The pair left the shape because nothing computed with them, and the
+    // comparison is where their absence pays: a re-extraction that reads
+    // "2 x 9,99" as "1 x 19,98" for the identical money used to mark the row
+    // hand-corrected, which a later re-extraction then refused to repair.
+    const stored = { extractedLineItems: [{ ...ITEM, quantity: 2, unitPrice: 50000 }] };
+
+    expect(selectMovedCorrections({ lineItems: [{ ...ITEM, quantity: 1, unitPrice: 100000 }] }, stored))
+      .toEqual({});
   });
 
   it("treats a re-ordered itemisation as a correction", () => {

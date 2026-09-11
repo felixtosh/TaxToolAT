@@ -250,35 +250,36 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     const res = await parseWithGemini(BUF, "application/pdf");
     expect(res.extracted.lineItems).toEqual([
       // characterization: "123,45" (cents string) → 123.45 → rounds to 123 cents
-      { description: "A", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 123 },
+      { description: "A", vatPercent: null, vatAmount: 0, amount: 123 },
       // characterization: "1.234,56" → "1.234.56" → NaN → the whole item is dropped
       // characterization: "1,234" (German thousands) parses as 1.234 → 1 cent
-      { description: "C", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 1 },
+      { description: "C", vatPercent: null, vatAmount: 0, amount: 1 },
       // characterization: empty description falls back to "Item N" using the
       // ORIGINAL index (4th input item), even though item B was dropped
-      { description: "Item 4", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 500 },
+      { description: "Item 4", vatPercent: null, vatAmount: 0, amount: 500 },
     ]);
   });
 
-  it("derives missing vatAmount from gross amount and infers unit price (gross interpretation)", async () => {
-    q({ extracted: { lineItems: [{ description: "Cable", quantity: 2, amount: 1200, vatPercent: 20 }] } });
+  it("derives a missing vatAmount from the gross amount", async () => {
+    q({ extracted: { lineItems: [{ description: "Cable", amount: 1200, vatPercent: 20 }] } });
     const res = await parseWithGemini(BUF, "application/pdf");
-    // vatAmount = round(1200 * 20 / 120) = 200; net = 1000; unitPrice = 500
+    // vatAmount = round(1200 * 20 / 120) = 200
     expect(res.extracted.lineItems).toEqual([
-      { description: "Cable", quantity: 2, unitPrice: 500, vatPercent: 20, vatAmount: 200, amount: 1200 },
+      { description: "Cable", vatPercent: 20, vatAmount: 200, amount: 1200 },
     ]);
   });
 
-  it("infers unit price from net amount when vatAmount indicates the amount is net", async () => {
+  it("a row is four fields: a quantity and a unit price the model still sends are dropped (#252)", async () => {
     q({
       extracted: {
-        lineItems: [{ description: "Hours", quantity: 4, amount: 1000, vatPercent: 20, vatAmount: 200 }],
+        lineItems: [
+          { description: "Cable", vatPercent: 20, vatAmount: 200, amount: 1200 },
+        ],
       },
     });
     const res = await parseWithGemini(BUF, "application/pdf");
-    // 200 == round(1000*20/100) → amount looks NET → unitPrice = 1000/4 = 250
     expect(res.extracted.lineItems).toEqual([
-      { description: "Hours", quantity: 4, unitPrice: 250, vatPercent: 20, vatAmount: 200, amount: 1000 },
+      { description: "Cable", vatPercent: 20, vatAmount: 200, amount: 1200 },
     ]);
   });
 
@@ -286,7 +287,7 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     q({ extracted: { lineItems: [{ description: "X", amount: 999, vatPercent: 150 }] } });
     const res = await parseWithGemini(BUF, "application/pdf");
     expect(res.extracted.lineItems).toEqual([
-      { description: "X", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 999 },
+      { description: "X", vatPercent: null, vatAmount: 0, amount: 999 },
     ]);
   });
 
@@ -294,7 +295,7 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     q({ rawText: "", lineItems: [{ description: "top", amount: 100 }] });
     const res = await parseWithGemini(BUF, "application/pdf");
     expect(res.extracted.lineItems).toEqual([
-      { description: "top", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 100 },
+      { description: "top", vatPercent: null, vatAmount: 0, amount: 100 },
     ]);
   });
 
@@ -640,16 +641,66 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     q({
       extracted: {},
       additionalFields: [
-        { label: "Invoice Number", value: "INV-1", rawValue: "No. INV-1" },
-        { label: "", value: "dropped" },
-        { label: "no-value" },
-        { label: "Due Date", value: "2025-01-01" },
+        { key: "invoiceNumber", label: "Invoice Number", value: "INV-1", rawValue: "No. INV-1" },
+        { key: "invoiceNumber", label: "", value: "dropped" },
+        { key: "invoiceNumber", label: "no-value" },
+        { key: "dueDate", label: "Due Date", value: "2025-01-01" },
       ],
     });
     const res = await parseWithGemini(BUF, "application/pdf");
     expect(res.additionalFields).toEqual([
-      { label: "Invoice Number", value: "INV-1", rawValue: "No. INV-1" },
-      { label: "Due Date", value: "2025-01-01", rawValue: "2025-01-01" },
+      { key: "invoiceNumber", label: "Invoice Number", value: "INV-1", rawValue: "No. INV-1" },
+      { key: "dueDate", label: "Due Date", value: "2025-01-01", rawValue: "2025-01-01" },
+    ]);
+  });
+
+  it("additionalFields: a key outside the closed vocabulary is dropped — Tischnummer (#252)", async () => {
+    q({
+      extracted: {},
+      additionalFields: [
+        { key: "tableNumber", label: "Tischnummer", value: "12" },
+        { key: "loyaltyNumber", label: "Kundenkarte", value: "778899" },
+        { key: "customerNumber", label: "Kundennummer", value: "K-42" },
+      ],
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.additionalFields).toEqual([
+      { key: "customerNumber", label: "Kundennummer", value: "K-42", rawValue: "K-42" },
+    ]);
+  });
+
+  it("additionalFields: a field with NO key is dropped — the vocabulary fails closed (#252)", async () => {
+    q({
+      extracted: {},
+      additionalFields: [
+        { label: "Tischnummer", value: "12" },
+        { label: "Rechnungsnummer", value: "2024-001" },
+      ],
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.additionalFields).toEqual([]);
+  });
+
+  it("additionalFields: a whitelisted key keeps the label the document PRINTS (#252)", async () => {
+    q({
+      extracted: {},
+      additionalFields: [
+        { key: "invoiceNumber", label: "Rechnungsnummer", value: "2024-001", rawValue: "Rechnungs-Nr. 2024-001" },
+        { key: "dueDate", label: "Fällig am", value: "2025-01-15", rawValue: "15.01.2025" },
+        { key: "paymentTerms", label: "Zahlungsziel", value: "30 Tage netto" },
+      ],
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    // The key is what is matched; the printed label is never translated or normalised.
+    expect(res.additionalFields).toEqual([
+      {
+        key: "invoiceNumber",
+        label: "Rechnungsnummer",
+        value: "2024-001",
+        rawValue: "Rechnungs-Nr. 2024-001",
+      },
+      { key: "dueDate", label: "Fällig am", value: "2025-01-15", rawValue: "15.01.2025" },
+      { key: "paymentTerms", label: "Zahlungsziel", value: "30 Tage netto", rawValue: "30 Tage netto" },
     ]);
   });
 

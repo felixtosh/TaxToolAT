@@ -167,18 +167,8 @@ function normalizeExtractedLineItems(
         ? Math.round(item.vatAmount)
         : 0;
 
-      const normalizedQuantity = typeof item.quantity === "number" && Number.isFinite(item.quantity)
-        ? item.quantity
-        : null;
-
-      const normalizedUnitPrice = typeof item.unitPrice === "number" && Number.isFinite(item.unitPrice)
-        ? Math.round(item.unitPrice)
-        : null;
-
       return {
         description: item.description?.trim() || `Item ${index + 1}`,
-        quantity: normalizedQuantity,
-        unitPrice: normalizedUnitPrice,
         vatPercent: normalizedVatPercent,
         vatAmount: normalizedVatAmount,
         amount: Math.round(item.amount),

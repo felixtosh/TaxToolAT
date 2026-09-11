@@ -126,12 +126,6 @@ function normalizeLineItems(lineItems: unknown, field: string): ExtractedLineIte
         typeof item.description === "string" && item.description.trim()
           ? item.description.trim()
           : `Item ${index + 1}`,
-      quantity:
-        typeof item.quantity === "number" && Number.isFinite(item.quantity) ? item.quantity : null,
-      unitPrice:
-        typeof item.unitPrice === "number" && Number.isFinite(item.unitPrice)
-          ? Math.round(item.unitPrice)
-          : null,
       vatPercent,
       vatAmount,
       amount,
@@ -480,8 +474,6 @@ function lineItemsMatch(proposed: unknown, stored: unknown): boolean {
     const other = right[index];
     return (
       item.description === other.description &&
-      item.quantity === other.quantity &&
-      item.unitPrice === other.unitPrice &&
       item.vatPercent === other.vatPercent &&
       item.vatAmount === other.vatAmount &&
       item.amount === other.amount

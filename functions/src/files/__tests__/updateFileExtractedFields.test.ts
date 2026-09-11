@@ -69,8 +69,6 @@ function call(data: Record<string, unknown>) {
 
 const ITEM = {
   description: "Consulting",
-  quantity: 1,
-  unitPrice: 265000,
   vatPercent: 20,
   vatAmount: 53000,
   amount: 265000,
@@ -196,9 +194,9 @@ describe("updateFileExtractedFieldsCallable", () => {
     // guard — the flag it tests and the printed rate-group block that is its
     // other escape — turning a refused file into silently over-claimed VAT.
     const capturedRows = [
-      { description: "goods A", quantity: 1, unitPrice: 3000, vatPercent: 20, vatAmount: 500, amount: 3000 },
-      { description: "goods B", quantity: 1, unitPrice: 4500, vatPercent: 20, vatAmount: 750, amount: 4500 },
-      { description: "goods C", quantity: 1, unitPrice: 1500, vatPercent: 20, vatAmount: 250, amount: 1500 },
+      { description: "goods A", vatPercent: 20, vatAmount: 500, amount: 3000 },
+      { description: "goods B", vatPercent: 20, vatAmount: 750, amount: 4500 },
+      { description: "goods C", vatPercent: 20, vatAmount: 250, amount: 1500 },
     ];
     const printedBlock = [{ rate: 20, net: 6750, vat: 1350, gross: 8100 }];
     seedFile({
