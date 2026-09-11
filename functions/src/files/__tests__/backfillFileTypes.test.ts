@@ -4,6 +4,10 @@
  * (see geminiParser's sniffMimeType); this backfill runs that same sniffer
  * once over every file record still missing the field, so every other
  * consumer (download headers, matching, the agent tools) stops lying too.
+ *
+ * #281: only a magic-number match is persisted. Bytes the sniffer cannot name
+ * keep no `fileType` and are counted separately, because the sniffer's
+ * image/jpeg fallback is a guess and a persisted guess cannot be found again.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -42,7 +46,12 @@ const userId = "user-1";
 
 function call() {
   return (backfillFileTypesCallable as unknown as {
-    run: (r: never) => Promise<{ success: boolean; updated: number; skipped: number }>;
+    run: (r: never) => Promise<{
+      success: boolean;
+      updated: number;
+      skipped: number;
+      unidentified: number;
+    }>;
   }).run({ data: {}, auth: { uid: userId } } as never);
 }
 
@@ -50,6 +59,9 @@ const file = (id: string) => store.getDoc("files", id) as Record<string, unknown
 
 const PDF_BYTES = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(20)]);
 const PNG_BYTES = Buffer.concat([Buffer.from([0x89]), Buffer.from("PNG"), Buffer.alloc(20)]);
+// An OOXML container (.docx/.xlsx): a real file, readable, and not one of the
+// magic numbers the sniffer knows. sniffMimeType would call it image/jpeg.
+const DOCX_BYTES = Buffer.concat([Buffer.from("PK\u0003\u0004"), Buffer.alloc(20)]);
 
 beforeEach(() => {
   store.clear();
@@ -70,6 +82,7 @@ describe("backfillFileTypesCallable", () => {
     expect(result.success).toBe(true);
     expect(result.updated).toBe(1);
     expect(result.skipped).toBe(0);
+    expect(result.unidentified).toBe(0);
     expect(file("f-pdf").fileType).toBe("application/pdf");
   });
 
@@ -84,7 +97,55 @@ describe("backfillFileTypesCallable", () => {
     const result = await call();
 
     expect(result.updated).toBe(1);
+    expect(result.unidentified).toBe(0);
     expect(file("f-img").fileType).toBe("image/png");
+  });
+
+  it("leaves a record whose bytes match no magic number with no fileType (#281)", async () => {
+    store.setDoc(
+      "files",
+      "f-docx",
+      createTestFile({ userId, storagePath: "files/user-1/c.docx", fileType: undefined })
+    );
+    blobs.set("files/user-1/c.docx", DOCX_BYTES);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await call();
+    const lines = warn.mock.calls.map((args) => String(args[0]));
+    warn.mockRestore();
+
+    expect(result.updated).toBe(0);
+    expect(result.unidentified).toBe(1);
+    // Not folded into `skipped`: the blob downloaded fine, it is just unnameable.
+    expect(result.skipped).toBe(0);
+    expect(file("f-docx").fileType).toBeUndefined();
+    expect(lines.some((line) => line.includes("f-docx") && line.includes("magic number"))).toBe(
+      true
+    );
+  });
+
+  it("an unidentifiable record does not stop the identifiable ones (#281)", async () => {
+    store.setDoc(
+      "files",
+      "f-docx",
+      createTestFile({ userId, storagePath: "files/user-1/c.docx", fileType: undefined })
+    );
+    store.setDoc(
+      "files",
+      "f-pdf",
+      createTestFile({ userId, storagePath: "files/user-1/a.pdf", fileType: undefined })
+    );
+    blobs.set("files/user-1/c.docx", DOCX_BYTES);
+    blobs.set("files/user-1/a.pdf", PDF_BYTES);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await call();
+    warn.mockRestore();
+
+    expect(result.updated).toBe(1);
+    expect(result.unidentified).toBe(1);
+    expect(file("f-pdf").fileType).toBe("application/pdf");
+    expect(file("f-docx").fileType).toBeUndefined();
   });
 
   it("is idempotent: a record that already has a fileType is left alone", async () => {
@@ -129,6 +190,7 @@ describe("backfillFileTypesCallable", () => {
     expect(result.success).toBe(true);
     expect(result.updated).toBe(1);
     expect(result.skipped).toBe(1);
+    expect(result.unidentified).toBe(0);
     expect(file("f-ok").fileType).toBe("application/pdf");
     expect(file("f-gone").fileType).toBeUndefined();
   });
@@ -144,9 +206,10 @@ describe("backfillFileTypesCallable", () => {
 
     expect(result.updated).toBe(0);
     expect(result.skipped).toBe(1);
+    expect(result.unidentified).toBe(0);
   });
 
-  it("after the backfill, no file of the calling user is missing a fileType", async () => {
+  it("after the backfill, no file with recognisable bytes is missing a fileType", async () => {
     store.setDoc(
       "files",
       "f1",

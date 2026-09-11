@@ -310,6 +310,26 @@ function extractJsonFromResponse(text: string): string | null {
  * a guard would faithfully pass through.
  */
 export function sniffMimeType(buffer: Buffer, declared?: string): string {
+  const sniffed = sniffMimeTypeStrict(buffer);
+  if (sniffed) return sniffed;
+
+  // Unrecognised bytes: trust a declared type that Gemini can actually accept,
+  // otherwise assume JPEG, which is what this module defaulted to before.
+  const d = typeof declared === "string" ? declared.trim() : "";
+  if (d === "application/pdf" || d.startsWith("image/")) return d;
+  return "image/jpeg";
+}
+
+/**
+ * The magic-number half of `sniffMimeType`, with no fallback: `undefined` means
+ * the bytes matched nothing we can name.
+ *
+ * `sniffMimeType` has to return a string because extraction needs *some* MIME
+ * type to hand the model, and that guess is transient — it is used for one call
+ * and discarded. A caller that PERSISTS the result must not store a guess as
+ * though it were a fact (#281), so it asks this instead and handles the absence.
+ */
+export function sniffMimeTypeStrict(buffer: Buffer): string | undefined {
   if (buffer.length >= 12) {
     if (buffer.subarray(0, 5).toString("latin1") === "%PDF-") return "application/pdf";
     if (buffer[0] === 0x89 && buffer.subarray(1, 4).toString("latin1") === "PNG")
@@ -324,11 +344,7 @@ export function sniffMimeType(buffer: Buffer, declared?: string): string {
       return "image/webp";
   }
 
-  // Unrecognised bytes: trust a declared type that Gemini can actually accept,
-  // otherwise assume JPEG, which is what this module defaulted to before.
-  const d = typeof declared === "string" ? declared.trim() : "";
-  if (d === "application/pdf" || d.startsWith("image/")) return d;
-  return "image/jpeg";
+  return undefined;
 }
 
 async function extractFirstPage(fileBuffer: Buffer, fileType: string): Promise<Buffer> {
