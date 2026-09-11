@@ -241,6 +241,15 @@ export type UnresolvedReason =
    * the wrong unit.
    */
   | "foreign-currency"
+  /**
+   * The summed `tipAmount` is not less than the bank line (#317), so it is
+   * not a tip: a Gesamt transcribed into the Trinkgeld field, or a bank line
+   * that is not the whole payment. Read as a reconcile total it makes every
+   * such transaction look like a partial payment and claims a scaled slice of
+   * the document's VAT; the BMD export refuses the same transaction (#194).
+   * Nothing is claimed until the figure is corrected. See `./tip`.
+   */
+  | "impossible-tip"
   | "needs-receipt";
 
 /** The pre-filing human checklist (spec §5). */

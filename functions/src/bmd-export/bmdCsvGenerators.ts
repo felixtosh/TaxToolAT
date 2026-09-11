@@ -13,6 +13,7 @@ import {
 } from "../types/bmd-export";
 import { buildUvaTransaction, type CategoryRecord, type FileRecord } from "../uva/adapter";
 import { deriveTransactionVat } from "../uva/transactionVat";
+import { assessTip } from "../uva/tip";
 import type { RateGroup } from "../uva/types";
 
 /**
@@ -317,37 +318,48 @@ function vatRowsFor(
     { filesById, categoriesById }
   );
 
+  const tip = assessTip(uvaTx.files, bankGross);
+
+  // A tip that is not smaller than the payment is impossible on the document —
+  // a Gesamt transcribed into the Trinkgeld field, or a bank line smaller than
+  // the tip (#194). It used to fall through to `splitByRate(bankGross, groups)`
+  // and stretch the rates over the whole charge, which is the exact export the
+  // #172 branch below exists to prevent, silently. Refuse instead: the
+  // transaction stays out of the CSV, the run still completes, and the reason
+  // names the field to correct.
+  //
+  // Since #317 the ladder itself stops on the same predicate, so the ordinary
+  // path arrives here as `unresolved`/`impossible-tip` — that is the UVA
+  // refusing to claim the transaction, and the export refuses it too rather
+  // than booking the 0% catch-all row at the bottom of this function. The
+  // `groups` check below still stands because two lanes bypass the reconcile
+  // and resolve anyway: an income line with `invoiceRateGroups`, and the D1
+  // defaulted-20 fallback.
+  const refuseImpossibleTip = (): VatRowsResult => ({
+    kind: "refused",
+    fileIds: tip.tipFiles.map((f) => f.id),
+    reason:
+      `tip (${formatBmdAmount(tip.tip)}) is not less than the bank amount ` +
+      `(${formatBmdAmount(bankGross)}); correct the tip on this document and re-run`,
+  });
+
   const derived = deriveTransactionVat(uvaTx);
+  if (derived.kind === "unresolved" && derived.reason === "impossible-tip") {
+    return refuseImpossibleTip();
+  }
   if (derived.kind === "groups") {
+    if (tip.impossible) return refuseImpossibleTip();
     // A printed Trinkgeld is a Betriebsausgabe and no part of the VAT base
     // (#172), so it books as its own 0% row instead of being scaled into the
     // rate groups. Without this, splitByRate would stretch the document's
     // rates over the tip too and the export would state VAT the UVA does not
     // — the fork #66 divergence, reintroduced.
-    const tipFiles = (uvaTx.files ?? []).filter((f) => (f.tipAmount ?? 0) > 0);
-    const tip = tipFiles.reduce((s, f) => s + (f.tipAmount ?? 0), 0);
-    if (tip > 0) {
-      // A tip that is not smaller than the payment is impossible on the
-      // document — a Gesamt transcribed into the Trinkgeld field, or a bank
-      // line smaller than the tip (#194). It used to fall through to the line
-      // below and stretch the rates over the whole charge, which is the exact
-      // export the branch above exists to prevent, silently. Refuse instead:
-      // the transaction stays out of the CSV, the run still completes, and the
-      // reason names the field to correct.
-      if (tip >= bankGross) {
-        return {
-          kind: "refused",
-          fileIds: tipFiles.map((f) => f.id),
-          reason:
-            `tip (${formatBmdAmount(tip)}) is not less than the bank amount ` +
-            `(${formatBmdAmount(bankGross)}); correct the tip on this document and re-run`,
-        };
-      }
+    if (tip.tip > 0) {
       return {
         kind: "rows",
         rows: [
-          ...splitByRate(bankGross - tip, derived.groups),
-          { rate: 0, gross: tip, vat: 0 },
+          ...splitByRate(bankGross - tip.tip, derived.groups),
+          { rate: 0, gross: tip.tip, vat: 0 },
         ],
       };
     }
