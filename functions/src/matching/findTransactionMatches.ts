@@ -30,6 +30,8 @@ interface FileInfo {
   extractedPartner?: string | null;
   extractedIban?: string | null;
   extractedText?: string | null;
+  /** #137: the needle for the invoice-number match source. */
+  extractedInvoiceNumber?: string | null;
   partnerId?: string | null;
 }
 
@@ -135,6 +137,8 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
       extractedPartner?: string | null;
       extractedIban?: string | null;
       extractedText?: string | null;
+      /** #137: the needle for the invoice-number match source. */
+      extractedInvoiceNumber?: string | null;
       partnerId?: string | null;
       /** #104: absent on the raw fileInfo path, which has no stored record. */
       documentType?: DocumentType | null;
@@ -174,6 +178,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
         extractedPartner: docData.extractedPartner,
         extractedIban: docData.extractedIban,
         extractedText: docData.extractedText,
+        extractedInvoiceNumber: docData.extractedInvoiceNumber,
         partnerId: docData.partnerId,
         documentType: docData.documentType,
       };
@@ -188,6 +193,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
         extractedPartner: fileInfo!.extractedPartner,
         extractedIban: fileInfo!.extractedIban,
         extractedText: fileInfo!.extractedText,
+        extractedInvoiceNumber: fileInfo!.extractedInvoiceNumber,
         partnerId: fileInfo!.partnerId,
       };
     }
@@ -309,6 +315,8 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           extractedPartner: fileData.extractedPartner,
           extractedIban: fileData.extractedIban,
           extractedText: fileData.extractedText,
+          // #137: the needle for the invoice-number match source.
+          extractedInvoiceNumber: fileData.extractedInvoiceNumber,
           partnerId: fileData.partnerId,
           documentType: fileData.documentType,
         },
@@ -320,6 +328,8 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           // Carries the bank-stated original amount for #112.
           _original: txData._original,
           name: txData.name,
+          // #137: part of the text the invoice number is searched for in.
+          description: txData.description,
           partner: txData.partner,
           partnerName: txData.partnerName,
           partnerId: txData.partnerId,

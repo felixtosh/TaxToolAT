@@ -2562,6 +2562,9 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
       extractedPartner: fileData.extractedPartner,
       extractedIban: fileData.extractedIban,
       extractedText: fileData.extractedText,
+      // #137: the needle for the invoice-number match source. Both surfaces
+      // have to score the same file the same way.
+      extractedInvoiceNumber: fileData.extractedInvoiceNumber,
       partnerId: fileData.partnerId,
       documentType: fileData.documentType,
     },
@@ -2571,6 +2574,8 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
       date: txData.date,
       currency: txData.currency,
       name: txData.name,
+      // #137: part of the text the invoice number is searched for in.
+      description: txData.description,
       partner: txData.partner,
       partnerName: txData.partnerName,
       partnerId: txData.partnerId,
