@@ -215,6 +215,10 @@ interface StoredTokens {
    * consumes the token when it ISSUES the response, not when we read it, so a
    * lost response leaves this one possibly dead server-side. Stored so the state
    * survives a reload and is visible to the other tabs on this origin.
+   *
+   * A 5xx on the grant is the same state reached through a different door: the
+   * answer may have been issued and then lost in the proxy, so it is marked too
+   * (#279). A 4xx is not — that is the provider answering about the grant.
    */
   refresh_unconfirmed?: string;
 }
@@ -797,6 +801,15 @@ async function refreshViaSession(tokens: StoredTokens): Promise<string> {
       // The backend, or something in front of it, is having a moment. Keep the
       // session: the next call retries, and nothing is lost but this attempt
       // (fork #77).
+      if (res.status >= 500 && tokens.refresh_token) {
+        // A 5xx can just as well be an answer that WAS issued and then died on
+        // the way back, so anything single-use in this set may already be spent
+        // (#279) — the same reasoning the grant path applies below. The session
+        // token itself is not single-use, so re-presenting it costs nothing and
+        // it is never marked (#216); a refresh_token riding along in the same
+        // set is, and it gets the mark the grant path would stamp on it.
+        markRefreshUnconfirmed(tokens.refresh_token);
+      }
       throw new AuthError(
         "auth/network-request-failed",
         `Session refresh failed transiently (${res.status}).`,
@@ -839,8 +852,10 @@ async function refreshTokens(tokens: StoredTokens, attempt = 0): Promise<string>
     return tokens.id_token;
   }
   if (tokens.refresh_unconfirmed === tokens.refresh_token) {
-    // We presented this token once and never heard back, so it may already be
-    // spent: a rotating provider consumes it when it ISSUES the answer we lost.
+    // We presented this token once and never got an answer carrying a grant —
+    // the response was lost (#216), or a 5xx came back in its place (#279) — so
+    // it may already be spent: a rotating provider consumes it when it ISSUES
+    // the answer we never saw.
     // Re-presenting it is the replay that fills the provider's log with
     // suspicious_request until the session dies (#216). Whether the provider
     // rotates is unknowable before the first rotation, so this holds for all.
@@ -920,6 +935,17 @@ async function refreshTokens(tokens: StoredTokens, attempt = 0): Promise<string>
       // Nothing here proves the session is dead — a 502 from the proxy in
       // front of the provider, a 503 while it restarts. Keep the tokens and
       // fail this attempt only; the next call retries (fork #77).
+      if (res.status >= 500) {
+        // But a 5xx does not prove the grant never happened either: the IdP
+        // rotates the token when it ISSUES the response, and that response can
+        // die in the proxy on the way back. Indistinguishable from "never
+        // processed" — the same irreducible ambiguity as a rejecting fetch, so
+        // the same answer: mark it, and never present it a second time (#279).
+        // 4xx stays unmarked: a 400/401 is the provider answering about the
+        // grant, not an answer that went missing (and `temporarily_unavailable`
+        // arriving with a 4xx is the provider saying it did not get that far).
+        markRefreshUnconfirmed(tokens.refresh_token);
+      }
       throw new AuthError(
         "auth/network-request-failed",
         `Token refresh failed transiently (${res.status}).`,
