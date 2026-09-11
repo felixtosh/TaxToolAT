@@ -804,7 +804,11 @@ export interface FileCreateData {
   storagePath: string;
   downloadUrl: string;
   thumbnailUrl?: string;
-  contentHash?: string;
+  /**
+   * SHA-256 of the uploaded bytes. Required: the write refuses a File without
+   * one, because a record with no hash can never be recognised as a copy (#182).
+   */
+  contentHash: string;
 
   // Source tracking
   sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body" | "fibuki_invoice";

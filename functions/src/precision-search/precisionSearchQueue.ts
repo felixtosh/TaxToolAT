@@ -28,6 +28,7 @@ import {
 } from "./generateSearchQueries";
 import { ResolvedEffectiveCycle } from "../matching/billingCycle";
 import { convertHtmlToPdf } from "./htmlToPdf";
+import { createFileRecord } from "../files/createFileRecord";
 import {
   scoreAttachmentMatch,
   ScoreAttachmentInput,
@@ -721,10 +722,13 @@ async function createFileFromAttachment(
     fileData.precisionSearchHint = precisionSearchHint;
   }
 
-  const fileRef = await db.collection("files").add(fileData);
+  // Through the shared write point (#182): the duplicate branch above is a
+  // read taken before the download and the storage upload, so a concurrent
+  // search can create the File in between.
+  const { fileId } = await createFileRecord(db, fileData);
 
-  console.log(`[PrecisionSearch] Created file: ${attachment.filename} (${fileRef.id})${precisionSearchHint ? ` [hint: tx ${precisionSearchHint.transactionId}]` : ""}`);
-  return fileRef.id;
+  console.log(`[PrecisionSearch] Created file: ${attachment.filename} (${fileId})${precisionSearchHint ? ` [hint: tx ${precisionSearchHint.transactionId}]` : ""}`);
+  return fileId;
 }
 
 /**
@@ -845,10 +849,10 @@ async function createFileFromHtmlPdf(
     fileData.precisionSearchHint = precisionSearchHint;
   }
 
-  const fileRef = await db.collection("files").add(fileData);
+  const { fileId } = await createFileRecord(db, fileData);
 
-  console.log(`[PrecisionSearch] Created HTML-converted PDF: ${filename} (${fileRef.id})${precisionSearchHint ? ` [hint: tx ${precisionSearchHint.transactionId}]` : ""}`);
-  return fileRef.id;
+  console.log(`[PrecisionSearch] Created HTML-converted PDF: ${filename} (${fileId})${precisionSearchHint ? ` [hint: tx ${precisionSearchHint.transactionId}]` : ""}`);
+  return fileId;
 }
 
 // ============================================================================

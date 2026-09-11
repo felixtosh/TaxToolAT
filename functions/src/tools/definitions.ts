@@ -463,7 +463,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "upload_file",
-    description: "Upload a file from a URL or base64 data",
+    description: "Upload a file from a URL or base64 data. Byte-identical re-uploads create nothing: the existing file is returned with duplicate: true.",
     requiredFeature: "fileUpload",
     inputSchema: {
       type: "object",

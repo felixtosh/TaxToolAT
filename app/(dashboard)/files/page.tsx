@@ -30,6 +30,7 @@ import {
   fileDeleteConfirmation,
   bulkFileDeleteConfirmation,
 } from "@/lib/files/delete-confirmation";
+import { createDropReentryGuard } from "@/lib/files/drop-reentry-guard";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
 import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
 import {
@@ -404,37 +405,52 @@ function FilesContent() {
     [ctx, calculateFileHash]
   );
 
+  // The page's one upload pipeline serves both drop targets — the full-page
+  // dropzone and the dialog's zone inside it — so a drop that reaches both
+  // arrives here twice. The guard is a ref because React state settles a
+  // render too late to refuse the second dispatch (#182).
+  const dropGuard = useRef(createDropReentryGuard()).current;
+
   // Handle multiple file drops
   const handleFileDrop = useCallback(
     async (acceptedFiles: File[]) => {
       if (acceptedFiles.length === 0) return;
 
-      // Create upload status entries
-      const newUploads: FileUploadStatus[] = acceptedFiles.map((file, index) => ({
-        id: `${Date.now()}-${index}`,
-        fileName: file.name,
-        progress: 0,
-        status: "uploading" as const,
-      }));
+      const claim = dropGuard.claim(acceptedFiles);
+      if (!claim) return;
 
-      setUploads(newUploads);
-      setShowUploadProgress(true);
+      try {
+        setIsUploadDialogOpen(false);
 
-      // Upload all files in parallel
-      const uploadPromises = acceptedFiles.map((file, index) =>
-        uploadSingleFile(file, newUploads[index].id)
-      );
+        // Create upload status entries
+        const newUploads: FileUploadStatus[] = acceptedFiles.map((file, index) => ({
+          id: `${Date.now()}-${index}`,
+          fileName: file.name,
+          progress: 0,
+          status: "uploading" as const,
+        }));
 
-      const results = await Promise.all(uploadPromises);
+        setUploads(newUploads);
+        setShowUploadProgress(true);
 
-      // Select first successfully uploaded file
-      const firstSuccessfulId = results.find((id) => id !== null);
-      if (firstSuccessfulId) {
-        const params = buildFileSearchParams(filters, searchValue, firstSuccessfulId);
-        router.push(`/files?${params.toString()}`, { scroll: false });
+        // Upload all files in parallel
+        const uploadPromises = acceptedFiles.map((file, index) =>
+          uploadSingleFile(file, newUploads[index].id)
+        );
+
+        const results = await Promise.all(uploadPromises);
+
+        // Select first successfully uploaded file
+        const firstSuccessfulId = results.find((id) => id !== null);
+        if (firstSuccessfulId) {
+          const params = buildFileSearchParams(filters, searchValue, firstSuccessfulId);
+          router.push(`/files?${params.toString()}`, { scroll: false });
+        }
+      } finally {
+        dropGuard.release(claim);
       }
     },
-    [uploadSingleFile, router, filters, searchValue]
+    [uploadSingleFile, router, filters, searchValue, dropGuard]
   );
 
   // Dismiss upload progress
@@ -793,16 +809,6 @@ function FilesContent() {
     router.push(newUrl, { scroll: false });
   }, [router, searchParams]);
 
-  const handleUploadComplete = useCallback(
-    (fileId: string) => {
-      setIsUploadDialogOpen(false);
-      // Select the newly uploaded file
-      const params = buildFileSearchParams(filters, searchValue, fileId);
-      router.push(`/files?${params.toString()}`, { scroll: false });
-    },
-    [router, filters, searchValue]
-  );
-
   // Multi-select: handle selection changes from table. The table sends the
   // full resulting set of selected IDs plus whether a plain (unmodified)
   // click produced it; resolveSelectionChange decides what the primary (URL)
@@ -1015,7 +1021,7 @@ function FilesContent() {
           <DialogHeader>
             <DialogTitle>Upload File</DialogTitle>
           </DialogHeader>
-          <FileUploadZone onUploadComplete={handleUploadComplete} />
+          <FileUploadZone onFilesAccepted={handleFileDrop} />
         </DialogContent>
       </Dialog>
 
