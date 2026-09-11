@@ -145,11 +145,19 @@ export async function POST(request: NextRequest) {
               fileIds: [...existingFileIds, fileId],
               updatedAt: Timestamp.now(),
             });
-            // Also update the file with the transaction connection
-            await db.collection(FILES_COLLECTION).doc(fileId).update({
-              transactionIds: [transactionId],
-              updatedAt: Timestamp.now(),
-            });
+            // Also update the file with the transaction connection. The
+            // File here can be one we already held (#182), and an existing
+            // File can already be connected — so the new Transaction is added
+            // to its transactionIds rather than replacing them, which would
+            // strand every Transaction whose fileIds still point at it.
+            const fileRef = db.collection(FILES_COLLECTION).doc(fileId);
+            const connectedTo: string[] = (await fileRef.get()).data()?.transactionIds || [];
+            if (!connectedTo.includes(transactionId)) {
+              await fileRef.update({
+                transactionIds: [...connectedTo, transactionId],
+                updatedAt: Timestamp.now(),
+              });
+            }
           }
         }
       } catch (connectErr) {

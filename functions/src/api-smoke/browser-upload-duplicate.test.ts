@@ -112,6 +112,25 @@ describe("POST /api/browser/upload", () => {
     expect(tx.data()?.fileIds).toEqual([first.fileId]);
   });
 
+  it("keeps the connections the existing File already had", async () => {
+    // The duplicate is an existing File, so its transactionIds are not the
+    // empty list a fresh write starts from. Replacing them would leave tx-1
+    // pointing at a File that no longer points back.
+    const bytes = "%PDF-1.4 one invoice, two transactions";
+    store.seed("transactions", "tx-1", { userId: USER, fileIds: [] });
+    store.seed("transactions", "tx-2", { userId: USER, fileIds: [] });
+
+    const first = (await (
+      await post(upload(bytes, { transactionId: "tx-1" }))
+    ).json()) as { fileId: string };
+    await post(upload(bytes, { transactionId: "tx-2" }));
+
+    const file = await store.collection("files").doc(first.fileId).get();
+    expect(file.data()?.transactionIds).toEqual(["tx-1", "tx-2"]);
+    const txOne = await store.collection("transactions").doc("tx-1").get();
+    expect(txOne.data()?.fileIds).toEqual([first.fileId]);
+  });
+
   it("keeps another user's identical bytes apart", async () => {
     const bytes = "%PDF-1.4 one invoice";
 
