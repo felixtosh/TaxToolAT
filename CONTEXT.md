@@ -219,9 +219,9 @@ _Avoid (de)_: Rechnungsaussteller (every issuer, including the Partner), Plattfo
 **Extraction**:
 The structured facts read off a File — entities, dates, amounts, line items, rate groups
 — together with how they were obtained. One File has one current Extraction.
-_Deutsch_: Auslesung
+_Deutsch_: Extraktion
 _Avoid_: parse, OCR result, AI output
-_Avoid (de)_: OCR, KI-Ergebnis, Erkennung
+_Avoid (de)_: OCR, KI-Ergebnis, Erkennung, Erfassung (manual entry at the Tax Advisor's desk)
 
 **Line Item**:
 One priced row transcribed from a File's body.
@@ -282,7 +282,7 @@ a different scorer), *extraction confidence* (how sure the extractor is — wort
 two contradictory Uber readings both reported 100), and a Global Partner's *data
 confidence* (how much the crowdsourced record is trusted).
 _Deutsch_: Sicherheit, never bare either — Zuordnungssicherheit, Partnersicherheit,
-Auslesesicherheit, Stammdatensicherheit
+Extraktionssicherheit, Stammdatensicherheit
 _Avoid_: probability, rating, accuracy, a bare "confidence"
 _Avoid (de)_: Wahrscheinlichkeit, Genauigkeit, Konfidenz
 
@@ -371,10 +371,10 @@ What a No-document Category means for the UVA: `exempt-class` (zero input VAT by
 `documented-elsewhere` (outside the report's scope), or `needs-document` (still on the
 chase list — an Eigenbeleg never creates an input VAT deduction). Stored today as
 `needs-receipt`.
-_Deutsch_: USt-Behandlung — ohne Vorsteuer (kraft Gesetz), anderweitig dokumentiert,
-Beleg fehlt
+_Deutsch_: UVA-Wirkung — kein Vorsteuerabzug, nicht UVA-relevant, Beleg ausständig
 _Avoid_: tax code, VAT status
-_Avoid (de)_: Steuercode, Steuerschlüssel (the Tax Advisor's BMD codes, downstream of us)
+_Avoid (de)_: USt-Behandlung, Steuercode, Steuerschlüssel (the Tax Advisor's BMD codes,
+downstream of us)
 
 **Documentation State**:
 How well a Transaction is evidenced — its Nachweis, not the noun "document": `invoice`,
