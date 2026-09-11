@@ -31,7 +31,10 @@
  *   the survivor's new identifying data would now hit and leaves the existing
  *   reviewed rematch path (`partner_rematch_report`) to act on that. Silent
  *   re-attribution of bookings is what makes people stop trusting the
- *   operation.
+ *   operation. Nor does it let a trigger re-run the Match behind its back:
+ *   every Partner document written here — survivor, losers, rewritten
+ *   tombstones — is stamped with this merge's `mergeWriteId`, which is what
+ *   `onPartnerUpdate` reads to stand down (#306, `mergeWriteMarker.ts`).
  * - It does not touch what an issued Invoice froze at issue time. Only the
  *   pointer beside the frozen recipient block moves, for every Invoice status,
  *   because the snapshot is the document of record either way.
@@ -48,6 +51,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { newMergeWriteId, stampMergeWrite } from "./mergeWriteMarker";
 import {
   matchTransaction,
   normalizeIban,
@@ -710,7 +714,8 @@ async function rewriteChainedTombstones(
   userId: string,
   loserId: string,
   survivorId: string,
-  now: Timestamp
+  now: Timestamp,
+  mergeWriteId: string
 ): Promise<number> {
   const snapshot = await db
     .collection(PARTNERS)
@@ -720,10 +725,11 @@ async function rewriteChainedTombstones(
 
   await commitInChunks(
     db,
-    snapshot.docs.map((doc) => ({
-      ref: doc.ref,
-      updates: { mergedInto: survivorId, updatedAt: now },
-    }))
+    snapshot.docs.map((doc) => {
+      const updates: Doc = { mergedInto: survivorId, updatedAt: now };
+      stampMergeWrite(updates, mergeWriteId);
+      return { ref: doc.ref, updates };
+    })
   );
 
   return snapshot.size;
@@ -854,6 +860,9 @@ export async function mergeUserPartnersInternal(
   }
 
   const now = Timestamp.now();
+  // Every Partner write below carries this id, so `onPartnerUpdate` recognises
+  // all of them as this merge's own and re-runs no file matching (#306).
+  const mergeWriteId = newMergeWriteId();
   const { survivorUpdates, mergedSurvivor, conflictsByLoserId, aliasesAdded } =
     mergePartnerFields(survivorDoc, loserDocs, now);
 
@@ -862,6 +871,7 @@ export async function mergeUserPartnersInternal(
   // already moved, which is re-runnable; the other order would leave live
   // references aimed at a Partner nothing lists.
   survivorUpdates.updatedAt = now;
+  stampMergeWrite(survivorUpdates, mergeWriteId);
   await refs[0].update(survivorUpdates);
 
   const repointed = {
@@ -879,7 +889,7 @@ export async function mergeUserPartnersInternal(
     repointed.files += await repointByPartnerId(db, FILES, userId, loser.id, survivorId, now);
     repointed.invoices += await repointInvoices(db, userId, loser.id, survivorId, now);
     repointed.mergedPartners += await rewriteChainedTombstones(
-      db, userId, loser.id, survivorId, now
+      db, userId, loser.id, survivorId, now, mergeWriteId
     );
   }
 
@@ -899,6 +909,7 @@ export async function mergeUserPartnersInternal(
       mergedAt: now,
       updatedAt: now,
     };
+    stampMergeWrite(updates, mergeWriteId);
     if (conflicts && conflicts.length > 0) {
       // Appended, so a Partner merged away twice keeps both rounds.
       const existing = readList(loser, "mergeConflicts");

@@ -43,4 +43,7 @@ wanted.
 - A merge does not re-run the Match. It reports how many unmatched Transactions the
   survivor's new identifying data would now hit and leaves the existing reviewed rematch
   path to act on it, because silent re-attribution of bookings is what makes users stop
-  trusting the operation.
+  trusting the operation. A trigger does not get to re-run it either: every Partner
+  document a merge writes — survivor, losers, rewritten tombstones — carries that merge's
+  `mergeWriteId`, and `onPartnerUpdate` stands down on a write that brings one. A manual
+  edit, carrying no new id, still re-matches (#306).

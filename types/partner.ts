@@ -493,6 +493,15 @@ export interface UserPartner {
   mergedAt?: Timestamp;
 
   /**
+   * The id of the Merge that last wrote this Partner — one id per merge,
+   * carried by the survivor, every loser and every Merged Partner the merge
+   * rewrote. `onPartnerUpdate` skips its file re-match when a write brings an
+   * id the document did not already hold, which is how a merge-caused write is
+   * told apart from a hand-edited alias (#306).
+   */
+  mergeWriteId?: string;
+
+  /**
    * Single values this Partner held that the survivor already had and kept.
    * A consolidation exists to preserve identifying data, so a loser's value
    * that lost a straight conflict is recorded here rather than dropped.
