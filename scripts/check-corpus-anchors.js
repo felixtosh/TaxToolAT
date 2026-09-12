@@ -47,8 +47,8 @@ const SKIP_PREFIXES = ["functions/lib/", "lib/data/generated-"];
 const FORBIDDEN = [
   {
     name: "Paperless document id",
-    pattern: new RegExp(["paperless", "ap", "\\d{2,}"].join("-"), "i"),
-    fix: "name the fixture for what it is — f-insurance-11pct, f-multi-rate-meal",
+    pattern: new RegExp(["paperless", "ap", "1\\d{3}"].join("-"), "i"),
+    fix: "use an obviously invented number (paperless-ap-0042) or describe the document",
   },
   {
     name: "outgoing invoice number",
@@ -57,7 +57,7 @@ const FORBIDDEN = [
   },
   {
     name: "FiBu document reference",
-    pattern: new RegExp(["FIBU", "\\d{8}"].join("_")),
+    pattern: new RegExp(["FIBU", "\\d{8}"].join("[ _-]")),
     fix: "describe the document instead — f-discount-to-zero",
   },
   {
