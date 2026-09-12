@@ -547,6 +547,41 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted.invoiceNumber).toBe("bad\\zescape");
   });
 
+  it("leaves an escaped quote that ENDS a value untouched (#283)", async () => {
+    // The boundary the lookahead sits on: here the `\"` is followed by the real
+    // closing quote, which is neither structural nor a token start, so the
+    // string runs on as it should. A rescue here would eat the rest of the
+    // response. The second case is the same `\"` before a `,` that #231 pins,
+    // with the next token an escaped quote rather than a key.
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "he said \\"hi\\""}}',
+    );
+    expect((await parseWithGemini(BUF, "application/pdf")).extracted.address).toBe(
+      'he said "hi"',
+    );
+
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "A\\", \\"B", "amount": 5}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe('A", "B');
+    expect(res.extracted.amount).toBe(5);
+  });
+
+  it("does not re-double a correctly escaped backslash before the close (#283)", async () => {
+    // `\\"` is the pair the lookahead must never split: the first backslash
+    // escapes the second, and only then does the quote close. Reading the
+    // second one as a data backslash would double it again and store TWO
+    // literal backslashes — a corruption that still parses, so nothing else
+    // would catch it. Nothing was guessed at either, so #275 stays quiet.
+    q('{"extracted": {"invoiceNumber": "bad\\zescape", "address": "C:\\\\temp\\\\"}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe("C:\\temp\\");
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
   it("names the rescued field through #275's signal, with no second flag (#283)", async () => {
     // The lookahead is a guess like the `\t` one, so it rides the same channel.
     q('{"extracted": {"address": "C:\\Users\\", "amount": 500}}');
