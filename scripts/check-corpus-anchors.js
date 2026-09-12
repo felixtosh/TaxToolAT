@@ -5,7 +5,7 @@
  *
  * Both repositories are public. Test fixtures were written against a real
  * bookkeeping corpus, and the fastest way to write one is to name the document
- * it came from: `paperless-ap-1004`, `IV-26-1170`, `FIBU_20260109-8624`. Those
+ * it came from: `paperless-ap-NNNN`, `IV-YY-NNNN`, `FIBU_YYYYMMDD-NNNN`. Those
  * identifiers resolve to nothing for a reader — they are only meaningful
  * inside the self-hosted instance they were copied from, which is exactly what
  * makes them a leak rather than documentation.
