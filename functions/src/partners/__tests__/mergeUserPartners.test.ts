@@ -878,6 +878,32 @@ describe("Partner Merge", () => {
       expect(partnerDoc("survivor").identitySourceField).toBe("personalEntity");
     });
 
+    it("marks a survivor that swallows two identity Partners for one of them", async () => {
+      seedPartner("survivor", { name: "Felix" });
+      seedPartner("loser-personal", { name: "F. Mustermann", identitySourceField: "personalEntity" });
+      seedPartner("loser-company", { name: "Felix GmbH", identitySourceField: "company:c1" });
+      store.setDoc(`users/${USER}/settings`, "userData", {
+        personalEntity: { id: "pe", type: "person", name: "Felix", partnerId: "loser-personal" },
+        companies: [{ id: "c1", type: "company", name: "Felix GmbH", partnerId: "loser-company" }],
+      });
+
+      const result = await merge("survivor", ["loser-personal", "loser-company"]);
+
+      // Both entities name the survivor now; the marker names the first of
+      // them rather than whichever entity the loop reached last.
+      expect(result.repointed.identityReferences).toBe(2);
+      expect(partnerDoc("survivor").identitySourceField).toBe("personalEntity");
+      // The marker the survivor did not take is a value its own beat, so it is
+      // recorded on that loser's Merged Partner.
+      expect(partnerDoc("loser-company").mergeConflicts).toEqual([
+        {
+          field: "identitySourceField",
+          value: "company:c1",
+          survivorValue: "personalEntity",
+        },
+      ]);
+    });
+
     it("mints no marker for a deprecated identityPartnerIds pointer", async () => {
       seedPartner("survivor", { name: "Acme GmbH" });
       seedPartner("loser", { name: "Acme Gmbh", identitySourceField: "name" });

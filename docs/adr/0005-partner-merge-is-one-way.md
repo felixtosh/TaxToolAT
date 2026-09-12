@@ -7,8 +7,9 @@ HTML entity in a supplier name — and nothing in the product could fold two int
 **Merge** now does: the caller names the survivor and one or more losers, the survivor
 keeps the values it has and fills its empty ones from the losers, the losers' names join
 its aliases, and every Transaction, File, Invoice, identity entity and queued
-invoice-fetch item pointing at a loser is repointed. Each loser stays as a **Merged Partner**: inactive, carrying `mergedInto`,
-hidden from the Partner list, so an ID handed out before the merge still resolves.
+invoice-fetch item pointing at a loser is repointed. Each loser stays as a **Merged
+Partner**: inactive, carrying `mergedInto`, hidden from the Partner list, so an ID
+handed out before the merge still resolves.
 
 There is no unmerge. Offering one would mean recording every reference that moved, in an
 audit collection built for an operation whose whole purpose is removing a record nobody

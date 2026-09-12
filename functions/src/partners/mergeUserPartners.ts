@@ -51,8 +51,9 @@
  *   because the snapshot is the document of record either way.
  * - It does not touch Notifications. They record events that already happened,
  *   and rewriting them would rewrite history. The same holds for the other
- *   records of something that already ran: `workerRuns` transcripts and
- *   `aiUsage` metadata.
+ *   records of something that already ran: `workerRuns` transcripts, `aiUsage`
+ *   metadata, and the `searchParams.partnerId` a precision search stamped on
+ *   the `transactions/{id}/searches` attempt it logged.
  * - It does not repoint a queued `partner_file_batch` worker request. Its
  *   `triggerContext.partnerId` is accompanied by a prompt naming the loser in
  *   prose, so moving the pointer alone would leave the two disagreeing, and
@@ -475,9 +476,11 @@ export function mergePartnerFields(
     string,
     Array<{ field: string; value: unknown; survivorValue: unknown }>
   >();
-  // `identitySourceField` is not filled from a loser, but a loser's marker the
-  // survivor did not take is still a value the merge dropped, so it is recorded
-  // on the Merged Partner like any other.
+  // `identitySourceField` is not filled from a loser, but where the survivor
+  // ends up holding one of its own, a differing loser marker is a value that
+  // marker beat, so it is recorded on the Merged Partner like any other. A
+  // marker no survivor value beat is not a conflict: it stays readable on the
+  // Merged Partner's own document, which is where it already was.
   const conflictFields = ["vatId", ...SINGLE_VALUE_FIELDS, "identitySourceField"];
 
   for (const loser of losers) {
