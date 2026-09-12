@@ -46,7 +46,13 @@ async function main(): Promise<void> {
 
   console.log(`stripping quantity/unitPrice from extractedLineItems${dryRun ? " (dry run)" : ""}`);
 
-  const report = await stripLineItemFields({ dryRun, backupDir: backupDir ?? "" });
+  let report;
+  try {
+    report = await stripLineItemFields({ dryRun, backupDir: backupDir ?? "" });
+  } catch (err) {
+    console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(2);
+  }
 
   console.log(
     `\ndone: ${report.documentsTouched}/${report.documentsScanned} documents touched, ` +
