@@ -8,6 +8,7 @@
  * - calculateReferenceScore (the invoice-number match source)
  * - scoreTransaction with and without scoring weights
  * - namesMatch fuzzy comparison
+ * - derivePartnerAliases pulling in the linked Global Partner (#138)
  */
 
 import { describe, it, expect } from "vitest";
@@ -21,6 +22,7 @@ import {
   namesMatch,
   normalizeName,
   normalizeIban,
+  derivePartnerAliases,
   formatScoreBreakdown,
   SCORING_CONFIG,
   BillingCycleHint,
@@ -906,6 +908,135 @@ describe("scoreTransaction", () => {
       // Partner ID match = 25, but date = 0 → partner reduced to 60% = 15
       expect(result.breakdown.partner).toBe(15);
     });
+  });
+});
+
+// ============================================================================
+// derivePartnerAliases (#138)
+// ============================================================================
+
+describe("derivePartnerAliases", () => {
+  // Minimal fake covering only what derivePartnerAliases reads: a doc lookup
+  // by id, and a two-clause equality query (source + vatId) over
+  // globalPartners — the same shape generatePromotionCandidates.ts already
+  // queries with.
+  function fakeDb(docs: Array<{ id: string; data: Record<string, unknown> }>) {
+    const globalPartners = {
+      doc: (id: string) => ({
+        get: async () => {
+          const found = docs.find((d) => d.id === id);
+          return { exists: !!found, data: () => found?.data };
+        },
+      }),
+      where: (field: string, _op: string, value: unknown) => {
+        const filters: Array<[string, unknown]> = [[field, value]];
+        const query = {
+          where: (field2: string, _op2: string, value2: unknown) => {
+            filters.push([field2, value2]);
+            return query;
+          },
+          limit: () => query,
+          get: async () => ({
+            docs: docs
+              .filter((d) => filters.every(([f, v]) => d.data[f] === v))
+              .map((d) => ({ id: d.id, data: () => d.data })),
+          }),
+        };
+        return query;
+      },
+    };
+    return {
+      collection: (name: string) => {
+        if (name !== "globalPartners") throw new Error(`fakeDb: unexpected collection "${name}"`);
+        return globalPartners;
+      },
+    } as unknown as FirebaseFirestore.Firestore;
+  }
+
+  it("behaves exactly as today for a Partner with no globalPartnerId", async () => {
+    const db = fakeDb([]);
+    const result = await derivePartnerAliases(db, { name: "Acme GmbH", aliases: ["Acme"] });
+    expect(result).toEqual(["Acme GmbH", "Acme"]);
+  });
+
+  it("folds in the linked Global Partner's name and aliases", async () => {
+    const db = fakeDb([
+      {
+        id: "gp-1",
+        data: { name: "Acme Corp", aliases: ["Acme International"], source: "manual" },
+      },
+    ]);
+    const result = await derivePartnerAliases(db, {
+      name: "Acme GmbH",
+      aliases: ["Acme"],
+      globalPartnerId: "gp-1",
+    });
+    expect(result).toEqual(["Acme GmbH", "Acme", "Acme Corp", "Acme International"]);
+  });
+
+  it("a Partner linked to a VIES-derived Global Partner reaches a curated preset's aliases sharing its VAT id (Magenta/T-Mobile)", async () => {
+    const db = fakeDb([
+      {
+        id: "vies_atu45011703",
+        data: {
+          name: "T-Mobile Austria GmbH",
+          aliases: [],
+          source: "external_registry",
+          vatId: "ATU45011703",
+        },
+      },
+      {
+        id: "preset_magenta_telekom",
+        data: {
+          name: "Magenta Telekom",
+          aliases: ["Magenta", "T-Mobile Austria"],
+          source: "preset",
+          vatId: "ATU45011703",
+        },
+      },
+    ]);
+
+    const aliases = await derivePartnerAliases(db, {
+      name: "T-Mobile Austria GmbH",
+      aliases: [],
+      globalPartnerId: "vies_atu45011703",
+    });
+
+    expect(aliases).toContain("Magenta");
+
+    // The right reason: a real substring hit on the brand name itself, not
+    // the "mobil" ⊂ "t-mobile" word-overlap accident this pair used to rely
+    // on (that accident is a separate failure surface, split out as #271).
+    const txName = "Magenta Mobil Rechnung 08/2026";
+    expect(namesMatch("Magenta", txName)).toEqual({ match: true, score: 18 });
+  });
+
+  it("Yesss/A1: reaches an alias the substring accident would never have fired on", async () => {
+    const db = fakeDb([
+      {
+        id: "gp-a1",
+        data: { name: "A1 Telekom Austria AG", aliases: ["A1", "Yesss"], source: "preset" },
+      },
+    ]);
+
+    const aliases = await derivePartnerAliases(db, {
+      name: "A1 Telekom Austria AG",
+      aliases: [],
+      globalPartnerId: "gp-a1",
+    });
+
+    const txName = "YESSS SIM Aufladung 10 EUR";
+    // Confirms there is no accident here to confound the result: the
+    // partner's own name has no substring/word overlap with the bank line.
+    expect(namesMatch("A1 Telekom Austria AG", txName).match).toBe(false);
+
+    const result = calculatePartnerScore(
+      { extractedPartner: null, partnerId: null },
+      { id: "tx-yesss", amount: -1000, date: ts("2024-06-15"), name: txName, partnerId: undefined },
+      aliases
+    );
+    expect(result.source).toBe("partner");
+    expect(result.score).toBeGreaterThan(0);
   });
 });
 
