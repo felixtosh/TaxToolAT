@@ -309,3 +309,30 @@ describe("the transaction bound, when the tip was never printed", () => {
     );
   });
 });
+
+describe("the total the bound is measured against", () => {
+  // `buildCorrectedFileUpdate` measures the record as it will be AFTER this
+  // write, which matters because the two figures move together: the reason a
+  // tip does not fit is often that the total beside it is the one that is
+  // wrong, and correcting both in one call is the ordinary repair.
+
+  it("is the one this correction leaves, not the one on the record", async () => {
+    // 600,00 against a stored total of 3,00 is refused above; raising the
+    // total in the same call is what makes it a 600,00 tip on a 1.000,00 bill.
+    await mcp({ amount: 100000, tipAmount: 60000 });
+
+    expect(file().extractedTipAmount).toBe(60000);
+    expect(file().extractedTipBound).toEqual({ bound: "document", total: 100000 });
+  });
+
+  it("refuses against the corrected total when the same call lowers it", async () => {
+    seed({ extractedAmount: 100000 });
+
+    await expect(mcp({ amount: 300, tipAmount: 500 })).rejects.toThrow(
+      "tipAmount 5.00 must be less than the document total it is measured against, 3.00."
+    );
+
+    expect(file().extractedAmount).toBe(100000);
+    expect(file().extractedTipAmount).toBeNull();
+  });
+});
